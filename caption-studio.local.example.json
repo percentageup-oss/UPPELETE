@@ -1,0 +1,5 @@
+{
+  "ffmpegPath": "/absolute/path/to/ffmpeg",
+  "ffprobePath": "/absolute/path/to/ffprobe",
+  "whisperCliPath": "/absolute/path/to/whisper-cli"
+}

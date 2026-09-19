@@ -1,0 +1,22 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "hevc",
+      "codec_long_name": "H.265 / HEVC",
+      "profile": "Main",
+      "codec_type": "video",
+      "codec_tag_string": "hvc1",
+      "width": 1920,
+      "height": 1080,
+      "level": 120,
+      "r_frame_rate": "24000/1001",
+      "avg_frame_rate": "24000/1001",
+      "time_base": "1/24000",
+      "start_time": "0.000000",
+      "duration": "2.502500",
+      "side_data_list": [{ "rotation": -90 }]
+    }
+  ],
+  "format": { "duration": "2.502500" }
+}

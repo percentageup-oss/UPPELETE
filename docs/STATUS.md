@@ -1,0 +1,1806 @@
+# Status
+
+## 2026-09-19 — Multi-clip foundation: schema 4, clip API, clip commands (Phase 2a)
+
+First of six green-at-each-step sub-steps of the multi-clip plan (2a schema/commands → 2b playback
+across clips → 2c timeline clip blocks and video drop → 2d multi-input export → 2e per-video
+transcription/silence/waveforms → 2f cleanup). This slice replaces the single source `media` and
+kept-range `segments` with a **video asset kind and an ordered `clips` list**, but the UI is
+deliberately still single-clip: it plays, cuts and exports the sequence's *primary* video through a
+compat shim. The full data-model contract is the new "Schema 4" section of [EDITING.md](EDITING.md).
+
+**Schema** (`src/core/edit.ts`, `src/core/model.ts`): `projectSchema` is now `schemaVersion: 4` — no
+`media`, no `segments`; `projectAssetSchema.kind` adds `'video'`; `clips: { id, assetId, startUs,
+endUs }[]` where **array order is sequence order** and a range may repeat or overlap. Every
+source-time item (cue, overlay, blur region, sound effect) gains an optional `mediaAssetId`, required
+by `superRefine` only once `clips.length > 0`, so an SRT-first project stays valid. Schema 3 is kept
+verbatim as `projectSchemaV3`. `migrateV3` turns `media` into a video asset, `segments` (or one
+whole-video clip for the identity edit) into clips that keep their ids, and stamps every item;
+`loadProject(value, newId)` now reports `migratedFrom: 1 | 2 | 3 | null`. A migrated media whose
+duration was never probed (schema 1/2 files) keeps its asset but gets no clip; the first relink that
+reports a duration adds the whole-video clip (`asset-update`).
+
+**Pure clip API** (`src/core/sequence.ts`, beside the unchanged segment functions):
+`SourcePoint = { clipId, assetId, sourceUs }` (the clip id disambiguates a repeated range),
+`sequenceDurationOfClips`, `clipSequenceStartUs`, `sequencePointOf`, `sourceToSequenceForAsset`,
+`sequenceToSourcePoint`, `spansInSequenceForAsset`, `nextClipPoint` (+ `SEQUENCE_END`), and the editing
+functions `insertClip/splitClipAt/removeClip/joinClipWithNext/moveClip/resizeClip/normalizeClips`
+(no sort), `splitClipsByKeptRanges` (silence removal), `restoreFullClips`, `refitClipsToDuration`,
+`cuesInSequenceForClips` (one SRT cue per **contiguous run** of spans). New `src/core/projectClips.ts`
+holds the project-level helpers (`primaryVideoAsset`, `legacySegmentsOf`, `hasCuts`,
+`assetDurations`, `sequenceAssetIds`, `bindUnboundItems`, `defaultBindingAssetId`,
+`videoAssetUsers`) — placed there rather than in `model.ts` to keep the schema module free of
+editing concepts.
+
+**Commands** (`src/core/itemCommands.ts`): new `clip-add` (imports the video and inserts the clip in
+one undo step, dedupes by fingerprint like `overlay-add`, stamps unbound items when it opens an
+empty sequence, refuses an unprobed duration), `clip-move/resize/split/delete/join-next`,
+`clips-set`, `clips-restore`. `trim-*`, `segment-*` and `segments-set` are **removed** rather than
+left refusing: the only UI that reached them was silence removal and "Restore removed ranges", which
+now use `clips-set`/`clips-restore`. `item-move/resize/delete` accept kind `'clip'` (renamed from
+`'segment'`). `asset-remove` refuses a video still used by clips or bound items and says how many.
+`asset-update` on a video refits its clips when the duration changes (a whole-video clip follows the
+new length; others are clamped). Bounds and overlap warnings are per video (`CommandContext.
+assetDurationUs`, `defaultAssetId`); a cue/item created without a video is bound to the sequence's
+only video (or the explicit default). Merging captions, or moving a word, across two videos is
+refused. Issue kinds `segment-order`/`segment-empty` became `clip-order`/`clip-empty`.
+
+**Electron**: `project:open` resolves the video through the same per-asset loop as images and audio and
+no longer returns a separate `media` resolution; `projectForSave` and `project:save`/`project:write`
+lost the `mediaPath` parameter; `media:relink` is gone (`assets:relink` accepts video and checks it
+with `classifyMedia`). Export IPC is unchanged: it is fingerprint-based, and manifest v2 is built from
+the primary video's clips via `legacySegmentsOf`, so an identity project (one whole-video clip) still
+produces no `segments` and the same argv as before.
+
+**App shim** (`src/App.tsx`): `primary`/`segments` are derived from the project instead of stored;
+the video's runtime URL is keyed by **fingerprint** (not asset id) so undoing a relink or replace points
+the player back at the right file; `mediaPath`, `mediaDurationUs` state and the history-rewriting
+`replaceMedia` are gone.
+
+**Behaviour changes to know about**: opening a video is now one undoable step (Undo removes the video
+from the project; Redo restores it playing); replacing the open video and relinking it are undoable
+`asset-update`s instead of rewriting every history snapshot; a video whose duration cannot be probed
+cannot be opened (clear error) instead of opening with an unbounded timeline; a schema-3 file loads
+and migrates but is **not** rewritten until you Save (autosave waits), and once saved as schema 4 an
+older build can no longer open it.
+
+**Verification**: `npm run check` (typecheck, 90 test files / 870 tests, production build) passes;
+`electron scripts/export-parity.mjs` → 200 caption cases, 0 mismatches. Driven end to end on real
+Electron on macOS (dev mode, over CDP with real file-drop events, so preload `webUtils` → main probe →
+`clip-add` all ran): drop a video → opens and plays; Undo → back to "Your video appears here"; Redo →
+plays again; drop a second video → "Replace the open video?" → replace → the new file plays; Undo →
+the first file plays again with its own duration; Redo → the second; SRT dropped first then a video →
+the two captions survive open/undo/redo; zero console errors throughout. **Not exercised**: native
+dialogs (Open Video, Open/Save Project), opening a real schema-3 `.cstudio` file through the UI
+(migration is covered by unit tests only), autosave to disk, and Windows.
+
+**Known limits until 2b–2f**: the UI still plays, edits and exports only the primary video — a project
+can hold clips of several videos only through commands (nothing in the UI creates them yet), and the
+timeline/preview/export show just the primary video's clips; Timeline still speaks `segments`, and
+export is still manifest v2; `clip-delete` still refuses to remove the last clip (revisit in 2c);
+transcription/alignment/silence still target the primary video.
+
+**Next**: 2b — playback across clips (`SourcePoint` playhead, one `<video>` per distinct video asset,
+`createSequencePlaybackController`), measuring and documenting the cross-video boundary gap.
+
+## 2026-09-19 — Left rail, media bin, drag-and-drop (Phase 1 of the left-rail plan)
+
+Replaced the fixed transcript column with a CapCut-style icon rail — Media/Captions/Overlays/
+Transitions tabs plus a Settings button — and added a media bin so images, audio and a replacement
+video can be imported by button or OS drag-and-drop, then placed by dragging onto the timeline/stage
+or an "Add at playhead" button. Full contract in [EDITING.md](EDITING.md)'s new "Left rail, media
+bin and drag-and-drop" section; IPC additions in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+**Pure core**: `src/core/assetKind.ts` gained `classifyMedia` (adds a `'video'` outcome) and
+`isSubtitleFileName`; `classifyAsset` is now a wrapper that still refuses video, so every existing
+caller/test is unchanged. New `src/core/dragPayload.ts` (the bin-drag payload, mirrored into a
+module variable since `dragover` cannot read `DataTransfer.getData`), `src/core/timelineDrop.ts`
+(`dropTimeAt`, `dropPlanForAsset` — image → overlay, audio → refused, video → replace-source) and
+`src/core/assetImport.ts` (`InspectedFile`, `findAssetByFingerprint`).
+
+**Electron**: new `electron/assetInspect.ts` (`inspectFileForBin`, dependency-injected for tests)
+backs two new IPC channels, `assets:import-files` and `assets:inspect-dropped`; the latter resolves
+dropped `File`s to paths inside the sandboxed preload via `webUtils.getPathForFile`, so the renderer
+never handles a path for a bin import.
+
+**Components**: `LeftRail.tsx` (roving-tabindex tablist, copied from `InspectorTabs.tsx`, which lost
+its Templates tab — now Edit/Style only), `MediaBin.tsx`, `CaptionsPanel.tsx` (transcript list moved
+out of `App.tsx` unchanged, empty state now shows Transcribe/Import SRT), `OverlaysPanel.tsx`,
+`TransitionsPanel.tsx` (wraps the unchanged `TemplatesPanel.tsx`). `Timeline.tsx` gained
+`onDropAsset`/`onDropFiles` and a `.drop-indicator`.
+
+**Decisions carried from the plan**: audio dropped directly onto the timeline is refused ("Sound
+effects arrive in ticket V3") — the existing "Add at playhead" button still works, since it reuses
+the same `audio-add` command the shipped `SfxScheduler` already plays; only the new arbitrary-point
+timeline-drag gesture is held back pending V3's own validation. An SRT import never silently
+replaces existing captions (`ReplaceCaptionsReview`). Video import always goes through the existing
+single-source replace flow (`ReplaceVideoReview` when a video is already open) — Phase 1 keeps
+`projectAssetSchema.kind` as `'image' | 'audio'` only; multi-clip sequencing (the plan's Phase 2) is
+not part of this slice.
+
+**Verification**: `npm run typecheck`, `npm test` (789 passing; two typecheck errors pre-date this
+change — `src/App.tsx`'s `AudioContext`/`AudioContextLike` mismatch and three `itemCommands.ts`
+narrowing errors in `resolveInlineAsset` call sites — both unrelated to this slice and left as-is).
+`npx vite build` succeeds. Verified interactively in a real Chromium instance (headless, driven over
+CDP — the desktop Electron binary in this sandbox is a stub and would not launch): all four rail
+panels render and switch correctly with zero console errors; screenshots were not saved. Desktop
+Electron (native dialogs, OS drag-and-drop, IPC) was not exercised — that needs a real macOS/Windows
+run, which this sandboxed session could not do.
+
+**Next**: Phase 2 (multi-clip sequencing, schema 4) if wanted; otherwise a real desktop smoke test of
+this slice (import PNG via button and via Finder drop; drag it to the timeline; drag an MP3 →
+refused notice; drop `.srt` with existing cues → confirmation; drop `.mp4` on the empty stage →
+opens; rail keyboard Up/Down/Home/End; Settings button; Transitions tab changes caption motion live).
+
+## 2026-09-19 — Play/Pause no longer reports a false "Playback could not start"
+
+Reported after a transcription: pressing Play on an `.mp4` that had played moments earlier showed
+**Playback could not start for this media**, with no codec banner. The notice came from a single
+`video.play().catch(...)` in `src/App.tsx` that discarded the rejection, so every failure read the
+same. `play()` rejects with `AbortError` whenever a `pause()`, seek or new load lands before the
+play actually starts — and the app provoked exactly that from the Space shortcut in two ways: a
+held key auto-repeats `keydown` (play → pause → play…, no `event.repeat` guard), and a focused
+`<video controls>` handles Space itself while the window-level handler toggled a second time (the
+existing guard skipped `button, summary, a, [role="button"]` but not `video`). Transcription never
+touches the element or its `media://` URL; it just makes clicking the player and hitting Space the
+obvious next move.
+
+Fix: `describePlayFailure` in `src/core/codecSupport.ts` (tested) returns null for `AbortError`
+(nothing to report; the element is in the state of the last call) and otherwise names the real
+DOMException plus the element's own `MediaError` via `describeMediaError`. `togglePlayback` uses it
+and logs the exception with `readyState`/`networkState` to the console, so a genuine failure is now
+diagnosable instead of guessed at. The keydown handler ignores `event.repeat` for playback (arrows
+keep repeating to scrub) and leaves a focused player to its native controls.
+
+## 2026-09-18 — Overlay stage editing, stacking and clone
+
+Closed the gap V2 deliberately left open (`docs/EDITING.md`'s V2 "Out of scope" note): image
+overlays can now be dragged/resized directly on the preview, stacked and reordered, and cloned with
+Alt+drag — on both the stage and the timeline — instead of only through four bare x/y/width/height
+number fields. Full contract in `docs/EDITING.md`'s new "Overlay stage editing, stacking and clone"
+section.
+
+**Pure core** (new `src/core/overlayRect.ts`): `moveRect`/`resizeRect` (handle-anchored, corners
+keep aspect unless Shift frees it, clamped to the composition, 16-unit minimum), `nudgeRect`,
+`roundRect`, `centerRect` and `overlayLanes` (the timeline's interval packing for overlapping
+overlays, last-in-array on top). `src/core/itemCommands.ts`: `overlay-add` now appends instead of
+sorting by `startUs`, so array order is the stacking order everywhere it already gets painted in
+that order (`CompositionLayers.tsx`, `plan.ts`'s export manifest) — a new overlay lands on top, like
+any editor's new layer. New `overlay-reorder` command (forward/backward/front/back); a no-op spends
+no undo step.
+
+**Stage**: new `src/OverlayStageEditor.tsx`, a sibling of `CaptionStage` inside `.video-frame`,
+reusing `projectCaptionViewport` so its hit boxes/handles sit exactly on the painted overlay; only
+overlay hit boxes are `pointer-events: auto`, so the native video controls stay clickable. Move/
+resize draft and commit through the same `onRectDraft`/`onRectCommit` pair the inspector's fields
+already used. Alt+drag on a body clones (a synthetic overlay with a new id, shown by `App.tsx`'s
+`visibleOverlays` appending rather than replacing); release adds it as a new overlay, one undo step.
+Escape mid-gesture cancels. Arrow keys nudge the selected overlay (Shift = 10 units).
+
+**Inspector** (`src/OverlayInspector.tsx`): opacity is now a full-width 0–100% slider (was squeezed
+into the shared ~50px control column); position/size is a 2×2 X/Y/W/H grid with a Lock aspect
+toggle and Center/Center H/Center V/Fit frame quick actions; a Layer row (Bring forward/Send
+backward, shown with 2+ overlays) drives `overlay-reorder`; Duplicate and Add image… actions were
+added alongside Delete. The Edit tab's no-selection state also gained an Add image overlay button,
+so the feature doesn't require the menu to discover.
+
+**Timeline** (`src/Timeline.tsx`): the Overlays track now packs overlapping overlays into separate
+lanes (`overlayLanes`), growing only when overlays actually overlap — an unedited project or one
+with no overlapping overlays draws at the same height V2 shipped. Alt+drag on a block clones in
+time the same way the stage clones in space (`onOverlayDragCommit`'s new `{ clone?: boolean }`).
+Blocks are labelled by their asset's name once there's more than one, instead of the constant
+"Image overlay".
+
+**Token budget for this ticket: no new test files or test cases were written**, matching V2's own
+policy for this area. The existing suite (750 tests, unchanged in count) was kept green throughout;
+`npm run typecheck`, `npm test` and `npm run build` (including the `dist-worker/` bundle) all pass.
+Verification is the user's own manual checklist (drag/resize/clamp on the stage, opacity slider,
+stacking order and reorder, Alt-clone on both stage and timeline, keyboard nudge, Escape-cancel,
+export of a multi-overlay project) — **not run this session**.
+
+**Limitations / next**: no automated coverage of `overlayRect.ts`, `OverlayStageEditor.tsx` or the
+timeline's lane packing/clone path — a future pass should add it if this area sees more churn. The
+Layer row only offers one-step forward/backward, not drag-to-reorder. Blur regions (V4) will want
+the same stage-manipulation surface; `OverlayStageEditor` was kept overlay-specific rather than
+generalized now, to avoid designing that abstraction against only one caller.
+
+## 2026-09-18 — X3: preview/export parity and sync validation
+
+Closed Phase G's milestone gate. New `scripts/export-parity.mjs` (`npm run parity:export`) is a
+repeatable suite that synthesizes its own sources with the pinned FFmpeg (a static SMPTE-bars/tone
+pattern so any inter-frame pixel change is attributable to the caption layer, not scene motion) and
+runs the real production path (`electron . --export-smoke` → `ExportService` → job scheduler → media
+worker → the separate GPU export host → the pinned FFmpeg pair) — never a second caption
+implementation, and never faking a step. `electron/exportIpc.ts`'s `runExportSmoke` gained an
+optional `manifestPath` (a full, validated `ExportManifest` from disk, superseding the SRT-only v1
+manifest) and now returns the real `ExportPlan` alongside the outcome, both reused by the suite
+rather than re-derived.
+
+Two independent checks: **caption-layer parity** reuses X1's own preview-vs-export-host invariant
+(`renderPreview`/`renderOffscreen`) across every manifest this suite builds — five presets, portrait
+and landscape, the project's own Malayalam/English shaping fixtures — asserted at **200/200 cases,
+0 differing bytes**. **Composited-frame parity** compares the real encoded MP4 frame against a
+straight-alpha composite of that same caption render over a clean backdrop frame from the same
+encode, across **180 real exports** including a rotated source (real `-display_rotation 90` input
+option and stream copy — no GPL encoder, `ffprobe` confirms the side data, output dimensions swapped
+as planned) and a genuinely variable-rate source (`avg_frame_rate` measured diverging from a constant
+`r_frame_rate`). Mean absolute channel delta inside the caption's bounding box averaged 2.09 (worst
+6.74), globally 0.92 (worst 2.72) — measured h264/yuv420p quantization noise (a caption-free region
+of the same backdrop measures ~1.6 MSE between arbitrary frames), not a rendering discrepancy; per
+ADR 0003 this is reported, not claimed bit-identical. A 240 s long-pause/beep source showed audio
+onset 2 ms early and consistent (not drifting) on all four beeps, and caption onset at exactly the
+planned frame every time. Full numbers, the machine/build identity and every case are in
+`docs/decisions/evidence/x3-parity-2026-09-17.json`; `docs/CAPTION_RENDERER.md` and
+[ADR 0004](decisions/0004-mp4-export-profile.md) carry the summary.
+
+The onset-detection heuristic itself needed a real fix mid-session: an early version flagged "any
+pixel differs" as caption onset, which on encoded video is indistinguishable from ordinary encoder
+quantization noise and produced a false, suspiciously exact "captions lag audio by 3 frames" result
+on every cue; visually inspecting the actual extracted frames (frame 147: no caption; frame 150,
+the true cue start: caption fully visible) showed the detector was wrong, not the pipeline. Fixed by
+requiring a channel-delta threshold measured well above the real noise floor over a real fraction of
+the caption's own bounding box — documented in the script as the reason, not left as a magic number.
+
+Verification: `npm run typecheck` passes. Per this session's direction, `npm test`/vitest was
+deliberately not run for this ticket — the parity suite itself is the verification `npm run
+parity:export` on macOS arm64 (Apple M4 Pro), one clean run, 0 job failures, 0 assertion failures.
+This session did not add or run unit/integration tests; a couple of the nested `--export-smoke`
+child processes failed transiently (empty stdout despite exiting 0, a pipe-flush race rather than an
+export failure — the same manifest succeeded when retried) during earlier iterations, addressed with
+one bounded retry in the suite rather than in the production smoke path.
+
+Limitations: only macOS arm64 was measured (matching every export ticket so far); Windows has no
+export path yet. Composited-frame deltas are reported in aggregate across all presets/layouts, not
+broken out per source, in this run. The rotated and VFR fixtures are synthesized locally (FFmpeg
+`-display_rotation`/`setpts`), not captured from a real device, though `planFromMedia`'s rotation
+math is separately verified in `src/export/plan.test.ts` against a real ffprobe capture
+(`tests/fixtures/ffprobe-rotated.json`). Mark X3 complete in `tickets.md`.
+
+## 2026-09-18 — V2: image overlays
+
+Implemented ticket V2 (`docs/EDITING.md`, `tickets.md`): import a still image, place it on the stage
+as a time-ranged overlay, edit it in a new inspector and export it in the MP4 — the substrate V1 laid
+down (schema 3's `assets`/`overlays`, the item command union, generic timeline items, manifest v2)
+is now reachable end to end.
+
+**Pure core** (new `src/core/assetKind.ts`, `src/core/overlayDefaults.ts`; `src/core/itemCommands.ts`):
+`classifyAsset` accepts a still-image codec with no audio stream and refuses anything else (a video
+renamed to `.png` is still refused); `overlay-add` gained an optional `asset` so importing an image and
+placing its first overlay is one undo step, deduping by the asset's sampled fingerprint when the same
+file is imported twice; a new `asset-update` command backs relinking. `electron/projectMedia.ts` gained
+`mediaPathFromUrl` (the inverse of `mediaUrlForPath`, now shared by main and the export host) and an
+`AssetResolution` type.
+
+**Main/IPC**: `assets:import`/`assets:relink` mirror the video open/relink dialogs, classifying the
+real probed streams rather than trusting the file extension. `project:open` now resolves every stored
+asset exactly like the source media (`candidatePaths` + `inspectMedia`), rewriting a resolved asset's
+reference in place and returning per-asset resolutions; a missing/mismatched asset is left alone and
+flagged instead. `export:start`'s manifest builder resolves each overlay's asset through the same
+`inspectedMedia` fingerprint registry as the source video and refuses the export, naming the asset,
+before the job starts if it is not registered.
+
+**Preview and timeline**: `CaptionPreview` takes an optional `layers` node rendered inside its scaled
+composition wrapper, below captions; new `src/captions/CompositionLayers.tsx` paints already-visible,
+already-resolved images (or a dashed placeholder naming the asset when its URL is unknown). New
+`src/OverlayInspector.tsx` (asset name/status/Relink, start/end, x/y/width/height, fit, opacity,
+delete). `src/Timeline.tsx` draws an **Overlays** track only when `project.overlays.length > 0` — an
+unedited project's layout is byte-for-byte what V1 shipped — dragging/resizing an overlay through the
+generic `dragRangeBy`/`itemDragBounds` path V1 built but never wired up, kept as a separate branch from
+the caption track's own `dragCueBy` path rather than merging them.
+
+**Export**: `src/export/frameRequest.ts`'s v1 schema became a `version` discriminated union with a new
+v2 carrying `overlays`; `frameRequestAt` only emits v2 for a frame that actually has a visible overlay,
+so an unedited project's export request traffic is unchanged. `frameHarness.tsx` renders
+`CompositionLayers` from the resolved request and its `ready()` gate now awaits every overlay
+`<img>`'s `decode()`, so a broken/slow asset fails the export loudly instead of silently omitting it.
+The export host (`scripts/export-host.mjs`) gained its own `media:` scheme, serving only the exact
+URLs the worker passes as `--asset <url>` argv (`workers/media/export.ts`) — FFmpeg's filtergraph is
+completely untouched by overlays (ADR 0003); `assertExportableManifest` no longer refuses `overlays`.
+
+**Token budget for this ticket: no new test files or test cases were written.** The existing suite
+(750 tests, unchanged in count) was kept green — `exportArguments.test.ts`'s overlay case flipped from
+"refuses" to "produces the identity filtergraph unchanged" — and `npm run typecheck`, `npm test` and
+`npm run build` (including the `dist-export/` bundle) all pass. Ticket V2's own listed test cases and
+the real-media export smoke are **not run this session**; verification is a manual checklist the user
+ran instead. `tickets.md` ticks V2 once that checklist is confirmed.
+
+**Limitations / next**: no automated coverage of the new IPC handlers, `CompositionLayers`, the
+overlay drag path or the v2 frame request — a future pass should add it if this area sees more churn.
+Dragging/resizing the overlay rect directly on the stage is out of scope (inspector fields only; V4's
+stage rect tool is the natural place to add it for every rect-carrying item at once). Audio assets are
+deferred to V3, which reuses `assets:import`/`assets:relink`'s existing `kind` parameter.
+
+## 2026-09-18 — Remove Silence (automatic cuts) and V6's export half
+
+Added a DaVinci-Resolve-style **Remove Silence** feature: a new **Timeline** menu (after **File**,
+alongside Export — a distinct native "Edit" menu already owns Undo/Cut/Copy/Paste, so this got its
+own name rather than colliding with it) with **Remove Silence…** opening a dialog to pick a dB
+threshold, minimum silence length and padding, detect, review a one-line summary (cut count, time
+removed, new length), and apply — and **Restore Removed Ranges** to undo it back to the identity edit.
+This is the first UI in the app that produces `segments`, and it reaches FFmpeg: cuts now export for
+real, ahead of V6's own manual cut/join tools (`docs/EDITING.md`, `tickets.md`).
+
+**Detection** (`src/core/silenceRemoval.ts`, `workers/media/silence.ts`): reuses
+`LongSilenceDetector`/`samplesToUs` from `src/core/speechGating.ts` (already streaming, exact, and
+proven by transcription's own silence-gating) over 16 kHz mono PCM extracted the same way
+`audio.ts` does for transcription — no new dependency. `keptRangesFromSilences` shrinks each detected
+silence by the padding on both sides before subtracting it from the media, merges the result, and
+never returns an empty edit (all-silent audio keeps everything and reports nothing to remove).
+Detection has no disk cache, unlike waveform extraction, because its result depends on
+user-adjustable threshold/minimum-silence parameters and a re-run costs a few seconds.
+
+**One new command, not a new edit path**: `segments-set` (`src/core/itemCommands.ts`) replaces the
+whole segment list atomically through `normalizeSegments` (promoted from `sequence.ts`'s private
+`normalize`), collapsing a single whole-media range back to the identity edit (`segments: undefined`)
+so Remove Silence and manual split/delete/join (V6) share one normalisation rule and one undo history
+entry each. Applying seeks the playhead through the *new* ranges (not the stale pre-command closure —
+a bug caught before it shipped) so it never lands inside a range that just became a cut.
+
+**Export reaches FFmpeg for cuts** (`workers/media/exportArguments.ts`): `assertExportableManifest`
+no longer refuses `segments`; `exportFilterGraph` prepends one `trim`/`setpts` chain per kept segment
+into a `concat` (and the same for `atrim`/audio) before the existing CFR/scale/pad normalisation,
+exactly the skeleton documented in `docs/EDITING.md`. The identity edit (no segments, or one segment
+covering the whole planned range) produces byte-for-byte the same filtergraph string as before —
+verified by the pre-existing snapshot tests, unchanged. Output duration and frame count now come from
+`exportOutputDurationUs`/`exportFrameCountFor` (`src/export/plan.ts`, new; `exportFrameCount(plan)` is
+kept as a thin wrapper so every existing identity caller is untouched) — the sum of kept segments, not
+the full planned range. A graph whose inline size would exceed the Windows argv-safe 8 KiB limit is
+written to a `filtergraph.txt` in the job's temp directory and passed via `-filter_complex_script`
+instead (silence removal on a real recording easily produces 100+ segments).
+
+**Timeline** (`src/Timeline.tsx`, new `src/core/waveformSlice.ts`): the waveform now draws one `<svg>`
+per kept segment — `slicePeaks` reuses the single extracted waveform's existing peak buckets rather
+than re-extracting audio, so a cut removes the silent stretch from the drawing instead of squeezing
+the whole waveform into a shorter span. Thin `.cut-marker`s sit on the video track at each cut instant
+with the removed duration as a tooltip. A transcript row for a cue that falls entirely inside a
+removed range now shows a "Removed by cut" badge (`spansInSequence(cue, segments).length === 0`, the
+contract `docs/EDITING.md` already specified). An identity edit (no cuts) renders exactly as before:
+one waveform `<svg>`, no markers, no badges.
+
+Verification: strict TypeScript across every file this feature touched, with no new errors introduced
+(a handful of pre-existing errors in `electron/transcriptionService.test.ts`/`scripts/transcription-
+smoke.ts`, from a concurrently-developed translation feature, are unrelated and untouched by this
+work); the full suite (**750 tests across 82 files**) passes. The renderer/Electron/worker production
+builds and a real desktop smoke were not run this session (no display in this environment).
+New/updated coverage: `silenceRemoval.test.ts` (padding shrink/merge, edge silences, all-silent media,
+overlap/out-of-range rejection), `silence.test.ts` (synthetic tone-silence-tone WAV, no-silence,
+no-audio-stream), `itemCommands.test.ts` (`segments-set` round-trip, identity collapse, empty-list
+rejection), `protocol.test.ts` (new `detectSilence` task/result), `appMenu.test.ts` (Timeline menu
+commands), `SilenceRemovalDialog.test.tsx` (media-not-ready gate, controls + disabled Apply, existing-
+cuts warning), `waveformSlice.test.ts` (bucket-span slicing, clamping, out-of-range), `Timeline.test.tsx`
+(one waveform svg with no cuts vs. two with one cut, cut-marker tooltip text), `exportArguments.test.ts`
+(N-segment trim/concat wiring for video and audio, no-audio variant, sequence-duration `-t`/`-frames:v`,
+`-filter_complex_script` substitution), `export.test.ts` (sequence-duration frame count with cuts,
+200-segment graph spilling to a script file in the job directory).
+
+**Limitations**: no real-media smoke test this session — detection thresholds, the FFmpeg trim/concat
+output and the waveform/cut-marker placement are verified by the automated suite and by argument-level
+parity with the identity path, not by a running window or a real encode. No per-silence keep/skip list
+(the user chose a summary-only dialog over DaVinci's per-clip checklist); no detection-result caching
+across dialog sessions. The manual cut-at-playhead/delete-segment/join-with-next tools, segment
+handles on the video track, and V6's own real-media smoke test remain open (`tickets.md`).
+
+Next: a desktop smoke pass (open a video with pauses, Remove Silence at the defaults, confirm ruler/
+playback/waveform/cut markers/undo, export and `ffprobe` the MP4 and SRT against the sequence
+duration), then V6's manual cut/join UI reusing the same `segments-set`-adjacent commands.
+
+## 2026-09-18 — Translate captions with Gemini during transcription
+
+Added an opt-in **"Translate to"** dropdown to the Transcribe dialog, for both engines. When a
+target language is chosen, recognized text is sent to Gemini (`gemini-3.8-flash`) for translation
+after recognition, and captions are created in the translated language instead of the spoken one.
+
+**Pipeline** (`electron/geminiTranslation.ts`, `electron/transcriptionService.ts`): a new
+`translating` job phase runs after recognition and before the scheduler's commit gate, sending
+segment texts in batches of up to 60 to `ai.models.generateContent` with a JSON schema response.
+Every batch line must come back exactly once, identified by its original index, or the whole batch
+is rejected (`MALFORMED_OUTPUT`) rather than risking silent misalignment between translated text and
+segment timing. The existing `checkTranscriptScript` sanity check reruns against the requested
+target language and the translated text, so wrong-script output (e.g. Tamil script for a Malayalam
+target) fails as `UNEXPECTED_SCRIPT`, the same as it does for recognition. For whisper.cpp, only the
+recognized **text** is sent to Gemini — never audio — so translation needs the Gemini API key
+regardless of which engine transcribed.
+
+**Product constraints preserved**: the original, spoken-language recognition is always retained in
+`transcriptionRuns[].recognition`, even when captions carry translated text; translation provenance
+(`provider`, `model`, `targetLanguage`, `segmentCount`, token counts — never the key) is recorded
+alongside the run. Translated captions keep the recognizer's segment timing but always get
+**estimated** word timing and `needsReview: true`, since a translated word cannot correspond to the
+original audio's word position — never presented as aligned or audio-verified.
+
+**Renderer** (`src/TranscriptionPanel.tsx`): the dropdown (`src/core/translationLanguages.ts`'s
+curated `TRANSLATION_TARGETS`) appears for both engines, defaults to "None — keep spoken language",
+and is remembered in `localStorage` like the engine choice. Choosing a target folds into the
+existing Gemini-key gating (alert, disabled Start, "Add Gemini API key" button) and switches the
+Start button to "Transcribe and translate". A dedicated disclosure explains that only text is sent
+for translation and that translated captions need review. `App.tsx`'s transcription notice now
+mentions the target language, model and estimated timing when a translation was applied.
+
+Verification: `npm run check` passes (typecheck, **745 tests across 82 files**, renderer build,
+Electron main/preload bundle, worker build). New/updated coverage: `electron/geminiTranslation.test.ts`
+(batching, index/count mismatch, empty-text, cancellation passthrough, wrong-script, languages with
+no single expected script); `electron/transcriptionService.test.ts` (translation after whisper and
+after Gemini recognition, provenance, key reuse, skip when no target, cancellation mid-translation);
+`src/core/transcriptionApply.test.ts` (translated cues, estimated+needsReview words, retained
+source-language recognition, segment-count-mismatch guard); `src/core/transcriptionIpc.test.ts`
+(`translateTo` required, accepts a language code or `null`, rejects `auto`/locale tags, run schema
+accepts `translation`); `src/TranscriptionPanel.test.tsx` (dropdown present for both engines, key
+gating for a stored whisper+translate target, Start label switch).
+
+**Limitations**: not run against real audio in this slice — verified by the automated suite and
+argument-level provenance checks, not a live Gemini call. Translation targets are a curated list of
+15 ISO 639-1 codes (`src/core/translationLanguages.ts`), not the full set Gemini could plausibly
+translate into. Transliteration (writing translated/recognized speech in a non-native script) remains
+out of scope, unchanged from `docs/PRODUCT.md`.
+
+## 2026-09-17 — V1 edit foundation: schema 3, sequence time, generic timeline, item commands, manifest v2
+
+Completed the substrate every Phase I edit (V2-V6) builds on, adding **no new user-visible edit**.
+`docs/EDITING.md` was implemented as written rather than redesigned.
+
+**Schema 3** (`src/core/edit.ts`, `src/core/model.ts`): composition rect, asset, image overlay, blur
+region, audio clip and segment schemas. `media` stays singular; `assets`, `overlays`, `blurRegions`
+and `audioClips` default to `[]`; `segments` is optional with `min(1)`, so an absent list is the
+identity edit and an empty one is rejected. One ID namespace is enforced across cues, words, assets,
+every item and segments, `assetId` must reference an asset of the matching kind, and segments must be
+ascending, non-overlapping and inside the probed media duration. Assets reuse `projectMediaSchema`,
+so `electron/projectMedia.ts`'s portable relative paths now cover them on save. `loadProject` tries
+3 → 2 → 1 and `migratedFrom` is `1 | 2 | null`; 2 → 3 is a pure addition of the four empty lists.
+
+**Sequence time** (`src/core/sequence.ts`): one pure integer-microsecond mapper — `effectiveSegments`,
+`sequenceDurationUs`, `sourceToSequence`, `sequenceToSource`, `spansInSequence`, `nextKeptSourceUs`,
+`setTrim`, `splitSegmentAt`, `removeSegment`, `joinWithNext`, `cuesInSequence` — the identity function
+when `segments` is absent. Cues straddling a cut are clipped for display and export and are **never**
+split in storage, so undoing a cut restores every caption exactly.
+
+**Generic timeline**: `src/core/timelineItems.ts` defines `TimelineItem`, `Selection` and
+`TimelineTrack`; `src/core/timeline.ts` gained `cueDragBounds`/`dragRangeBy` with `dragCueBy` as a
+wrapper; `Timeline.tsx` builds its grid rows from a `tracks[]` list instead of the fixed CSS
+variables and drags a `TimelineItem`; `App.tsx` holds a `{kind, id}` selection with a derived
+`selectedCueId` for every existing caption read site. The ruler, playhead, seek, block positions,
+snap guide, zoom anchor, `durationUs`, transport clock and `seekBy` are sequence time; `currentUs`,
+cues, words, `captionFrame`, transcription and every media-worker request and cache key stay source
+time. A cut-skipping playback controller (`src/core/playbackController.ts`) rides the existing
+per-frame clock: `nextKeptSourceUs` either lets playback continue, seeks to the next kept start, or
+pauses past the end, issuing exactly one seek per gap.
+
+**Commands**: `src/core/itemCommands.ts` adds the second union (asset/overlay/blur/audio/item/trim/
+segment operations) sharing `CommandResult`/`ValidationIssue` with `captionCommands.ts`;
+`src/core/commands.ts`'s `applyEditCommand` dispatches both, so `App.tsx`'s single `runCommand` and
+`history.ts`'s whole-project snapshots give item edits the same undo/redo captions already have.
+`validateItems` runs after every item command. A rect taller than the current composition is a
+**warning** through `CommandContext.compositionHeight`, never a schema error, so relinking media with
+a different aspect can never make a saved project unloadable.
+
+**Export**: manifest v2 (`src/export/plan.ts`) is a strict superset of X2's v1, adding segments,
+overlays, output-pixel/sequence-time blur regions and sequence-time audio clips; both versions parse.
+`src/core/composition.ts` holds `displayDimensions` (extracted from `App.tsx`), `compositionToPixels`
+and `compositionScalarToPixels`, and main builds the manifest with them. `src/core/layerPlan.ts` maps
+each sequence frame to its source timestamp and a frame signature by **reusing** `captionFrame`
+(never reimplementing it), excluding `elapsedUs`, which changes every frame without changing a pixel.
+`workers/media/exportArguments.ts` is now a deterministic builder over the manifest.
+
+Per-frame motion preview updates at frame rate (the `requestVideoFrameCallback` clock introduced in
+R2.1), which is what makes the layer-plan signatures meaningful: the same evaluation drives preview
+and export.
+
+Verification: `npm run check` passes strict TypeScript, **695 tests across 77 files** (up from 591
+across 70), the renderer production build, the Electron main/preload bundle and the worker build.
+`src/core/timeline.test.ts` and `workers/media/exportArguments.test.ts` pass with **no change to any
+existing assertion** — they are the deliberate regression gates for the drag refactor and for X2
+export parity. New coverage: schema 2→3 and 1→3 migration, cross-kind duplicate IDs, overlay/clip
+asset-kind mismatches, unsorted/overlapping/empty/out-of-media segments; sequence identity,
+round-trips, cut-instant collapse, spans across two cuts, `nextKeptSourceUs` past the end,
+`cuesInSequence` clipping; `dragRangeBy` reproducing every `dragCueBy` case across a grid of modes,
+deltas and media bounds; item commands, rect-height warnings and `asset-in-use`; layer-plan frame
+times at 30000/1001 for indices 0, 1 and 10000, three spans for a static cue, word-pop signatures
+changing only inside their ramps; composition rotation/even rounding and rect scaling at 1080 and
+720; dynamic timeline rows and straddling-cue blocks; playback controller seeks and end-of-sequence
+pause; and `exportArguments` snapshots of both the argument array and the filtergraph.
+
+Deliberately scoped out of this ticket, so nothing is presented as working when it is not:
+**no new effect reaches FFmpeg.** The manifest builder reproduces X2's argument array byte for byte
+for an identity edit and **refuses** to build a command for cuts (V5/V6), blur (V4), sound effects
+(V3) or overlays (V2) rather than silently exporting an unedited video. The trim and segment commands
+exist and are tested but have no UI entry point until V5/V6.
+
+The export frame loop now reuses a rendered PNG whenever the next frame's signature is unchanged,
+which subsumes X2's gap-frame reuse (gap frames remain cached for the whole export). The frame count
+written to the encoder is unchanged; only the number of frames actually painted falls.
+
+**Limitations — the real-media smoke was not run in this slice, so V1 stays unchecked in
+`tickets.md`.** Everything above is verified by the automated suite and by argument-level parity, not
+by a real encode or a running window. Still outstanding, on macOS and Windows: reopen a real schema-2
+project and diff its cues; exercise drag, snap, split, merge and undo in the Electron window; export
+an unedited project with X2 before and after this change and compare the output hashes. Sequence-time
+conversion is exercised only by unit tests and by the identity path the app actually runs, because no
+V1 UI can create a cut. Snapping still computes in source time against a threshold derived from the
+sequence axis; that is exact for the identity edit and should be revisited in V6. Per-segment
+thumbnail strips and waveform slices (`waveformSlice.ts`) are V6's work.
+
+Next: V2 (image overlays) — asset import/resolve/relink IPC, `CompositionLayers`, the overlay track
+and inspector, and frame request v2 so the export host paints overlays into the caption layer.
+
+## 2026-09-17 — Caption word menu escapes the timeline clipping boundary
+
+Fixed the transcript word-action menu being cut off behind the timeline when a word near the bottom
+of the caption list was clicked. The menu now renders through a document-level React portal instead
+of inside the list's required scrolling/overflow boundary, uses fixed viewport coordinates, follows
+its clicked word during scrolling and resize, flips above bottom-edge words, and becomes internally
+scrollable in a window too short to show every action. Outside-click handling covers both the source
+caption row and the portalled menu.
+
+Verification: `npm run check` passed strict TypeScript, **570 tests across 64 files**, the production
+renderer build, Electron main/preload build and worker build. New pure placement regressions cover
+normal below-word placement, bottom-edge upward flipping, and horizontal/vertical viewport clamping.
+In the running macOS Electron app, clicking the first word in the final visible caption exposed the
+complete action menu as a top-level accessible menu rather than a descendant clipped by the caption
+list/timeline boundary. Windows was not tested.
+
+Next: repeat the bottom-caption interaction on Windows and at the minimum supported window height.
+
+## 2026-09-17 — Progressive reveal no longer hides the active/final word
+
+Fixed **Mint reveal** (and any progressive-word-reveal style whose emphasis face differs from the
+base face) never showing the current word — including the last word, which stays current until the
+cue ends. `CaptionView` punched the active word out of the base line whenever word regions carried a
+distinct emphasis measurement, but progressive reveal paints no word-effect overlay to replace it.
+The mask is now applied only when an overlay (word-pop / active-word highlight) actually repaints the
+word. Verification: new regression test in `src/captions/motion.test.tsx`; `npm run typecheck` and
+`npm test` (567 tests) pass; a Chromium render of an imported two-line Malayalam SRT cue with Mint
+reveal (portrait and landscape) showed every word, including the final `ആണ്.`, once its turn
+started. Tested on macOS only. Limitation: SRT word timings stay spread by letter count, not
+matched to the audio, until alignment is run.
+
+## 2026-09-17 — Word-motion templates now apply to real captions; Anek Malayalam pinned
+
+Fixed the mismatch that made **Mint reveal** animate in its template card but appear static on an
+imported caption. Template cards use an explicitly synthetic demo with complete word timings, while
+SRT cues normally have none; clicking a template previously changed only `captionStyle`, so the
+shared renderer correctly fell back to a static line. Applying a word-dependent built-in template is
+now one undoable project command that fills only missing word timing with `estimated` / Needs review
+entries, preserves existing model/aligned/manual word timing, and reports any cue too short to
+estimate. It also clears per-caption motion overrides, which otherwise silently masked the newly
+applied project template. Static and phrase-fade templates do not manufacture word timing.
+
+Added **Anek Malayalam** (the font family's official spelling) to the pinned offline font choices, so
+it appears in the default caption and emphasis dropdowns before Local Font Access is requested. The
+app still does not bundle or download the font; Chromium uses the installed system face when present
+and the existing Malayalam fallback stack otherwise.
+
+Verification: `npm run check` passed strict TypeScript, **563 tests across 62 files**, the production
+renderer build, Electron main/preload build and worker build. New regressions verify that Mint reveal
+creates review-labelled timing, preserves aligned timing, clears a stale cue override, commits the
+template style, and exposes Anek Malayalam in the default font catalog and rendered dropdown.
+`npm run smoke:captions` still reaches its pre-existing StylePanel harness failure: changing the
+primary-colour input is not observed by the harness (white before and after), before its motion checks
+run. macOS interactive preview/export and Windows were not tested in this slice.
+
+Next: repair the real-Chromium StylePanel smoke interaction, then visually compare Mint reveal in the
+live preview and an exported frame at the same source timestamps.
+
+## 2026-09-17 — Caption-list visibility, alignment and single-click actions
+
+Fixed the caption-list regression that rendered imported SRT rows blank until they were opened in
+the double-click editor. `locateWordSpans` intentionally returns an empty array for cues without word
+timing; the transcript JSX treated that truthy empty array as interactive content and rendered zero
+children. The new `interactiveTranscriptSpans` boundary returns `null` for that case, so the list now
+shows the authoritative imported cue text immediately and only creates per-word controls when real
+word entries exist. No word timing is estimated implicitly and imported text/timings remain unchanged.
+
+Redesigned the list toward the supplied reference: a wider transcript column; aligned numbered rows
+with stable dividers and a right-edge edit affordance; a compact, closed-by-default Caption Tools pill
+whose controls open as an overlay instead of overflowing the fixed header; and a floating word-action
+menu that opens on one click without changing row height. The menu exposes implemented emphasis,
+edit, line-break, split, previous/next-line and delete operations. Word clicks work in either timeline
+display mode, while double-click editing remains as a shortcut. Clicking outside closes the menu.
+
+Verification: `npm run check` passed strict TypeScript, **561 tests across 62 files**, the production
+renderer build, Electron main/preload build and worker build. Added focused Malayalam/mixed-script
+coverage for untimed imported-cue fallback and timed interactive spans. On the running macOS Electron
+app, visually verified all 16 imported Malayalam cues are visible without editing, rows and controls
+remain aligned, Caption Tools stays contained, a timed word opens the action menu on one click, and
+Edit from that menu opens the inline editor. The temporary timing estimate used for the interaction
+check was undone. Windows was not tested.
+
+Limitations: the action menu applies to cues with word entries; untimed imported cues correctly show
+their full text and use the row's edit button until the user explicitly supplies or estimates word
+timing. The app retains its product-required transcript / preview / inspector workspace rather than
+copying the reference application's navigation shell.
+
+Next: repeat the interaction pass on Windows and add browser-level regression coverage for menu
+placement near the bottom of a scrolled caption list.
+
+## 2026-09-16 — Templates-tab black-screen fix
+
+Fixed the renderer crash that blanked the entire app when opening **Templates** with the pointer over
+an animated template card. Chromium's first `requestAnimationFrame` timestamp can be fractionally
+earlier than a `performance.now()` sampled during the current frame; the preview loop previously
+converted that negative delta into a negative source-media timestamp, which the shared caption
+renderer correctly rejected. `templatePreviewTimestampUs` now clamps the initial delta to zero before
+looping the three-second synthetic demo, without relaxing the renderer's canonical-time validation.
+
+Verification: the focused Templates panel test passes with a regression case for an RAF timestamp
+that predates its start sample, strict TypeScript passes, and the running macOS Electron development
+app was reloaded and exercised by opening Templates and focusing the animated **Bold reveal** card.
+The template gallery remained mounted and DevTools reported no uncaught renderer errors. Windows was
+not tested in this slice.
+
+Next: retain an app-level error boundary as a separate resilience improvement so an unrelated future
+renderer exception produces an actionable recovery screen instead of an empty React root.
+
+## 2026-09-16 — Caption transition controls and word-boundary editing
+
+Completed: separated the timeline's **WORD/LINE** view preference from the caption display used by preview and export. Switching the timeline now never estimates timings, changes project caption output, or changes exported video. The new transcript-side **Caption Tools** panel controls full-caption/one-word video display, the five existing motion presets, project-wide or selected-caption motion overrides, 0.25×–4× transition speed, reset controls, and word/character grouping with a 1–6 line limit. Motion speed is stored in styles/presets, resolved per cue by the same source-time evaluator in preview and export, and affects the existing 200 ms fade/pop ramps without changing caption or word timestamps. Cues can carry an optional motion/speed override and retain it through splits and regrouping.
+
+Transcript rows now expose whole-word actions without nesting interactive controls: select a word, add a visual line break before it, split at its exact timed boundary, move the suffix into the next caption, move the prefix into the previous caption, or toggle emphasis. Double-clicking a transcript row opens an inline multiline editor: Enter adds a line, Cmd/Ctrl+Enter commits, Escape cancels, and IME composition is not intercepted. Structural edits use grapheme-safe word spans, retain usable IDs/timing/provenance, are validated and undoable, and preserve caption overrides. Regrouping retains the original outer cue range while leaving genuine gaps between derived captions; it remains an explicit action and never merges manually separated captions.
+
+Verification: `npm run check` passed: strict TypeScript, **558 tests across 61 files**, production renderer build, Electron main/preload build and worker build. Focused coverage includes timeline-only mode, Malayalam line breaks, timed word-boundary splitting/moving, speed ramps, and export motion overrides.
+
+Limitations: `npm run smoke:captions` starts successfully but currently fails its pre-existing StylePanel interaction assertion: changing the primary-colour input did not alter the observed renderer colour. The failure occurs in the smoke harness’s first existing control assertion, before its new controls run; it needs a focused harness/UI follow-up. Existing legacy `set-display` callers retain their prior estimate-on-word-display behavior for compatibility, while the editor exclusively uses the new non-mutating timeline command.
+
+Next: run the complete check and real-Chromium caption smoke, then perform a desktop interaction pass for the new controls on macOS and Windows.
+
+## 2026-09-16 — Inspector Text-tab redesign + emphasis Size/Glow/Styles
+
+Redesigned the right-side inspector's Style tab (relabelled **Text** in the tab strip — the tab `id`
+stays `style`, so no test/DOM id churned) into a clean, dark, sectioned panel matching the reference:
+hairline-divided collapsible sections with a real chevron icon, label/control/reset-button rows (the
+32px reset column is reserved even on rows without a reset, so every control lines up), stacked ▲▼
+steppers around a real `<select>`, accent-colored sliders with the unit inside the number box, pill and
+compact-icon segmented controls, a real toggle-switch component, and a pinned **Export** footer button.
+Shipped alongside three new emphasis-only appearance controls: static **Size** (1-2x scale on
+emphasized words, independent of word-pop's transient animation scale), **Glow** (its own color,
+reusing the base `glowRadius`), and **Styles** (Tt/T/t text-transform + underline, applied only to
+emphasized words).
+
+**Schema/renderer** (`src/captions/style.ts`, `src/captions/renderer.ts`, `src/captions/CaptionPreview.tsx`):
+four new `.default()`-ed `captionAppearanceSchema` fields (`emphasisScale`, `emphasisGlowEnabled`/
+`emphasisGlowColor`, `emphasisTextTransform`, `emphasisUnderline`) so old projects/presets parse
+unchanged. `captionStyleInputs` now builds `emphasisFont` whenever the family/weight/italic differ *or*
+`emphasisScale !== 1` *or* the resolved emphasis text-transform differs from the base, and composes a
+second `appearance.emphasisShadow` (depth→glow→drop-shadow, like the base `shadow`, but the glow layer
+uses `emphasisGlowColor` when the emphasis glow is on) — left `undefined` whenever it would be
+identical to the base shadow, so the common case inherits it for free. New exported
+`fittedEmphasisFont(inputs, fitted)` is the one place that re-derives the emphasis font from an
+already-fitted base font while preserving the *ratio* between them, replacing three call sites that
+used to hard-force the emphasis font back to the base font's exact size (which silently discarded
+`emphasisScale` the moment the max-lines fitting loop shrank the base font). `SelectedEmphasisLine` now
+paints `textShadow`/`textDecoration` per emphasis *run* instead of on the shared line `<div>` — which
+also fixes a preexisting bug where the base line's own `underline` never reached word runs on an
+emphasized line, since `text-decoration` doesn't inherit into an `inline-block` span.
+
+**Inspector UI** (`src/styles.css`, `src/style/controls.tsx`, new `src/style/icons.tsx`,
+`src/StylePanel.tsx`, `src/WordEmphasisPanel.tsx`, `src/InspectorTabs.tsx`, `src/App.tsx`): the whole
+inspector token system (`--ins-*` custom properties scoped to `.inspector-panel`) was rewritten in
+place, keeping every existing class name/id/`aria-label` the reference tests and the real-Chromium
+`smoke:captions` grid depend on (`#style-alignment button[title="left"]`, `#style-text-transform
+button[title="uppercase"]`, `#style-fill-mode button:nth-child(n)`, `#style-emphasis-face`,
+`#style-font-load`, `class="style-reset"`, …). `StylePanel.tsx` is reordered into
+FONTS→FORMAT→POSITION→COLOR→EMPHASIS→SPACING→EFFECTS with the new Size/Glow/Styles/Animation rows
+inside EMPHASIS; the emphasis font-family field changed from a free-text+datalist input to a `Stepper`
+offering "Same as caption font" plus the known families (a deliberate narrowing — arbitrary custom
+emphasis-family names are no longer typeable from the UI). The word picker
+(`WordEmphasisPanel`, heading now "Emphasize words") moved from the Text tab to the **Edit** tab,
+directly under the cue editor. `App.tsx`'s inspector `<aside>` dropped its visible "INSPECTOR / Caption"
+heading box for a `.sr-only` one (kept for `aria-labelledby`), and gained a sticky `.inspector-footer`
+with one accent **Export** button (video export when ready, SRT otherwise — the toolbar's own Export
+SRT/Export video/progress controls are unchanged, this is an additional shortcut) that swaps to the
+existing `describeJob` progress + Cancel while an export is running.
+
+Verification: `npm run typecheck` and `npm test` (**552 tests passing**, including new assertions in
+`captions/style.test.ts`, `captions/emphasis.test.tsx`, `StylePanel.test.tsx` and
+`InspectorTabs.test.tsx` for the new schema fields, `fittedEmphasisFont`/`emphasisShadow` composition,
+the new emphasis Size/Glow/Styles/Animation control ids, and the "Text" tab label) and `npm run build`
+(Vite + Electron main/preload + worker) all pass on **macOS arm64**. **Not run this session**:
+`npm run smoke:captions` — this sandbox's Electron install has no usable `BrowserWindow`/display
+(`SyntaxError: The requested module 'electron' does not provide an export named 'BrowserWindow'`),
+so the real-Chromium DOM-measurement/motion grid and the "controls driving the real preview" section
+were not exercised; nor was an interactive `npm run dev` pass or an export-parity frame comparison.
+Every id/title/class the smoke script's selectors depend on was preserved deliberately and cross-checked
+by reading `src/captions/visualSmoke.tsx`'s selectors against the new markup, but that is not a
+substitute for actually running it.
+
+Next: run `npm run smoke:captions` and a manual `npm run dev` pass on a machine with a real display to
+confirm the visual redesign and the new Size/Glow/Styles controls actually drive the preview correctly,
+then an export-parity check (an emphasized word at Size 1.5 + Glow, compared frame-for-frame against
+the live preview).
+
+## 2026-09-16 — R3 slice 1: WORD display drives preview/export, word select/add/delete
+
+Previously the timeline's `WORD`/`LINE` toggle only changed how the **timeline track** drew a cue —
+the video preview and export always showed the whole line, and imported/typed cues (`words: []`)
+rendered as an untimed placeholder in WORD mode until the user ran "Estimate all words & group" by
+hand. `WORD`/`LINE` is now a saved project setting (`captionDisplay: 'line' | 'word'`,
+`src/core/model.ts`) that the timeline, the live preview and MP4 export all read the same way.
+
+New shared pure module `src/captions/wordDisplay.ts`: `activeWordIndex(cue, timestampUs)` picks the
+word to show under a **hold-through-gaps** rule — each word's window runs from its own start to the
+next word's start (the first word's window absorbs any lead-in gap, the last word's window closes at
+the cue's own end), so the windows partition `[cue.startUs, cue.endUs)` exactly and word display never
+shows a blank frame while the enclosing cue is active. `wordDisplayCue(cue, index)` builds a synthetic
+one-word cue from the located span, re-basing the word's `textStart`/`textEnd` to `0`/`length` (an
+un-rebased word — copied with its line-relative offsets — fails `locateWordSpans` against its own
+one-word text and therefore fails `cueSchema`/`frameRequestSchema`; this was caught by a dedicated
+parity regression test before it could reach export). The shown text is always a whole token located by
+the existing `locateWordSpans`, so laying it out alone can neither split a Malayalam grapheme cluster
+nor fragment a shaping run — the renderer itself still never estimates timing. `displayCue(cue,
+display, timestampUs)` is the one function both `CaptionStage` (`App.tsx`) and `frameRequestAt`
+(`src/export/plan.ts`, new optional `manifest.display`) call, so preview and export make the identical
+choice for a given timestamp; `electron/exportIpc.ts` now forwards `project.captionDisplay` into the
+export manifest. `CaptionPreview` gained an optional `fontSample` prop (the enclosing line's text) so
+switching between a line's own words never re-triggers the font-loading effect, which previously blanked
+the caption for a frame on every text change.
+
+Toggling to WORD is one undoable command (`{ type: 'set-display', display, idPrefix }`,
+`src/core/captionCommands.ts`) that also fills in word timing for cues that have none — but only the
+missing part: a new `estimateMissingWordTimings` (`src/core/wordTiming.ts`) gap-fills untimed runs
+between already-timed words (or a cue boundary) instead of replacing a cue's whole word list, so a cue
+with one manually-fixed word keeps that word's provenance. Estimates stay labelled `estimated` /
+`needsReview` per the SRT/estimate invariant; a cue too short to estimate is skipped with a warning
+(`estimate-skipped`) and keeps showing as a full line. Toggling back to LINE only flips the flag — words
+are kept, so WORD→LINE→WORD does not re-estimate anything already timed. `update-text` grew an optional
+`estimateIfUntimed` flag, passed only while in WORD display, so a caption typed or edited in the
+inspector shows word-by-word immediately instead of waiting for the next mode toggle.
+
+Timeline: WORD mode's word blocks are now interactive — click/Enter selects a word (highlighted,
+`aria-pressed`) and seeks to it; a `+ Word` button (replaces `+ Line`'s label/title while in WORD mode)
+adds a 600 ms single-word cue at the playhead; Delete removes the selected word via a new `delete-word`
+command, which swallows one attached run of adjacent punctuation and exactly one adjacent whitespace run
+(never a line break), removes a now-orphaned line break if the word was alone on its line, and falls
+back to deleting the whole cue if it was the only word — all grapheme-safe and covered for Malayalam
+conjuncts, attached punctuation and repeated tokens (the earlier occurrence's timing/emphasis is kept,
+the later one dropped). No word-boundary dragging or manual per-word timing creation yet — that stays
+ticket R3's remaining scope.
+
+Verification: `npm run typecheck`, `npm test` (**537 tests passing**, up from 494 — new
+`src/captions/wordDisplay.test.ts`, plus additions to `wordTiming.test.ts`, `captionCommands.test.ts`,
+`model.test.ts`, `export/plan.test.ts` and `captions/motion.test.tsx`) and `npm run build` (Vite +
+Electron main/preload + worker) all pass on **macOS arm64**. This session did not run the interactive
+`npm run dev` app or an end-to-end export; manual verification (scrubbing WORD mode, the per-word
+presets on real video, and comparing an exported clip against the preview at matching timestamps) is
+still owed before calling this slice done end-to-end.
+
+Next: manual smoke of WORD display in the running app and a real export, then R3's remaining scope —
+draggable word boundaries and manual per-word timing creation.
+
+## 2026-09-16 — X2 cancellable MP4 export pipeline
+
+Completed X2: the media worker's `export` operation is now real and wired end to end.
+`workers/media/export.ts`'s `renderVideo` spawns the separate GPU export host (ADR 0003) and the
+pinned FFmpeg encoder as two owned child processes, streams one PNG caption frame per requested
+timestamp from the host into FFmpeg's `image2pipe` input, and reuses a single rendered transparent
+PNG for every gap frame (no active cue) instead of round-tripping the host for each one — the
+placeholder cue `frameRequestAt` builds for a gap always expires before the real timestamp, so the
+bytes are provably identical. Real `frame=` progress lines from FFmpeg's own `-progress pipe:1`
+stream become measured `frames` job progress. `exportSupport`/`src/core/exportSupport.ts`
+(`exportSupportFromConfiguration`) checks the exact pinned FFmpeg 9.0.1 profile plus
+`--enable-zlib`/`--enable-videotoolbox` and `process.platform === 'darwin'` before ever spawning a
+process — macOS only, honestly, not silently attempted elsewhere. `src/export/plan.ts` gained
+`fittedFrameRate` (keeps an already-in-band rational rate exact — `30000/1001` stays `30000/1001`,
+never rounded to `30`; halves a rate above 60 fps instead of discarding it) and `exportBitrate`
+(deterministic 5M/8M/16M by output pixel count); `frameRequestAt` now returns `{ request, active }`
+so the gap-reuse decision lives in one pure function, not duplicated in the worker.
+`workers/media/exportArguments.ts` builds one documented profile, `mp4-caption-renderer-v1`:
+`h264_videotoolbox` High profile `yuv420p` CFR at the plan's exact rational rate, AAC-LC 48 kHz
+stereo 192 kb/s always transcoded (never copied) so audio duration matches the requested range
+exactly, `-movflags +faststart`, `-map_metadata -1`, `-an` when the source has no audio. **A real
+bug found only by this ticket's own end-to-end smoke test**: FFmpeg 9.0.1's `-autorotate` CLI flag
+takes no explicit value — the original draft's `-autorotate 1` left a stray `1` token that FFmpeg's
+parser only reported once it reached the output file ("cannot be applied to output url 1"); fixed to
+the bare flag, confirmed against the real pinned binary, and `exportArguments.test.ts` now asserts
+the exact form. The pre-existing `Buffer<ArrayBufferLike>`/`Buffer<ArrayBuffer>` `tsc` error in
+`workers/media/exportProcesses.ts` (flagged unresolved by the concurrent X1 session) is fixed.
+
+Main-process wiring is new this ticket. `electron/jobs.ts` is one process-wide `JobScheduler`
+instance; `transcriptionIpc.ts` was switched from its own private scheduler onto this shared one, so
+transcription and export now actually arbitrate against each other (every job kind was already
+declared `'heavy'` in `src/core/jobs.ts`, but that promise was unfulfilled while each feature queued
+only against itself). `electron/exportService.ts` mirrors `TranscriptionService`: a job-owned
+`mkdtemp` directory holds the render manifest, the worker renders to `<destination>.<uuid>.tmp`
+beside the user's chosen destination (never the source path — checked before enqueueing), and only
+`ctx.enterCommit()` returning `true` triggers the atomic `rename()` onto the real destination — a
+cancellation that arrives after a valid encode exists but before that rename still discards the
+completed file, exercised for real (see verification). `electron/exportIpc.ts` registers
+`export:support`/`export:start`/`export:cancel` behind the same fingerprint-registered-media gate
+`transcriptionIpc.ts` already uses (never a renderer-supplied path), owns the native save dialog,
+and caches `checkExportSupport()` per app session the same way `checkProxySupport()` already does.
+`configuredToolchain()` (`electron/mediaWorker.ts`) now attaches `exportHost: { executable:
+process.execPath, scriptPath: dist-export/host.cjs }` whenever the FFmpeg pair is configured — the
+same Electron runtime pointed at the separate bundled host script (ADR 0003's separate-process
+design; **not** a packaged production launch path, which D2 must still solve). `--export-smoke`
+(env `CAPTION_STUDIO_EXPORT_SMOKE_PATH`/`_SRT`/`_OUTPUT`) is a permanent developer-only CLI branch
+in `electron/main.ts`, mirroring `--transcription-smoke`, that runs one real export through the
+production `ExportService` without any dialog.
+
+`src/App.tsx` adds the **Export Video** control: `exportState` (idle → checking-support →
+ready/unsupported/error, or running while a job is active) mirrors the existing `proxyState` pattern
+exactly. The control's support check runs once at mount, independent of loaded media — export
+support is a fixed platform/tool profile, not a per-file codec decision, so it is checked the same
+way regardless of whether media happens to be open yet. The button itself is rendered **only** when
+`checkExportSupport()` reports `supported: true` — never as a nonfunctional placeholder — and is
+disabled until media with a verified fingerprint is loaded; a running export shows real phase/percent
+progress (`describeJob`, exported from `TranscriptionPanel.tsx` for reuse rather than duplicated) and
+a Cancel button; success/cancel/failure produce a notice, and a user-dismissed save dialog silently
+returns to the ready state without an error.
+
+Verification: `npm run check` passes **484 tests across 58 files** (up from 478 before this ticket's
+own new files), strict TypeScript with the pre-existing worker `tsc` error now fixed, and all four
+production builds (Vite renderer, Electron main/preload via esbuild, the media-worker bundle, and the
+export-host/frame-harness bundle via `build-export.mjs`). New tests: `workers/media/
+exportArguments.test.ts` (exact argument array for audio/no-audio, `-n`, bitrate class, frame count/
+`-t` duration, no shell metacharacters), `src/export/plan.test.ts` (`frameSourceUs` exact BigInt
+values at 30000/1001 for indices 0/1/10000, `exportFrameCount` ceiling behavior, `fittedFrameRate`'s
+exact-rational/halving/fallback cases, `planFromMedia` against the real `ffprobe-rotated.json` and
+`ffprobe-vfr.json` fixtures — rotated dimensions swap, VFR prefers the nominal rate — and a 4K-source
+dimension cap, `frameRequestAt`'s half-open active/inactive boundary and always-expired gap
+placeholder), `src/core/exportSupport.test.ts` (pinned-profile/platform/flag/version rejection
+cases), `workers/media/export.test.ts` (14 cases: `PngReader` framing across split chunks/oversized/
+bad-signature/mid-frame-close, `exportSupport`, and `renderVideo` end to end against fake spawned
+host/encoder processes — full render with correct output validation, gap-frame reuse count, mid-loop
+cancellation stopping both processes and skipping output validation, encoder-failure diagnostic
+surfacing, monotonic `frame=` progress parsing, same-path rejection), and `electron/
+exportService.test.ts` (6 cases: manifest/temp/rename/cleanup on success, ordinary mid-flight
+cancellation, a cancellation that wins the commit-gate race after a real encode already exists,
+worker-failure leaving a pre-existing destination byte-identical, rejecting media with no probed
+metadata before starting any job, and queuing behind another heavy job on the shared scheduler).
+`workers/media/worker.test.ts`'s obsolete "export is unsupported" placeholder case was replaced with
+an `export`-operation entry in its existing "reports missing tool configuration" test.
+
+Real-media verification, **macOS 26.6.2 arm64** (Darwin 25.6.0), Apple M4 Pro, 12 cores, 24 GiB,
+Electron 44.3.0 / Chromium 152.0.7977.78, Node 24.20.0, through the actual production path
+(`electron . --export-smoke`, never a mocked encoder): the FFmpeg/ffprobe pair was rebuilt with
+`--enable-zlib` added to the M4 profile (needed for the PNG codec, absent under
+`--disable-autodetect`) — ffmpeg 21,991,192 bytes SHA-256 `cba780ef…6ed1916a59`, ffprobe 21,815,880
+bytes SHA-256 `6bab2ed9…41733d8222` (exact hashes in ADR 0004); `caption-studio.local.json` now
+points at this pair. A synthesized 10 s 1920×1080 30 fps H.264(`h264_videotoolbox`)/AAC source with a
+3-cue mixed Malayalam/English SRT exported to a real MP4 in ~5 s: `ffprobe` confirmed H.264 High
+`yuv420p` 1920×1080 CFR 30/1, AAC-LC 48 kHz stereo, duration exactly 10.000000 s, `faststart`, 300
+frames; `volumedetect` reported mean −24.1 dB / max −20.8 dB (real, non-silent audio); frames
+extracted at 0.5 s/2.0 s/5.0 s/8.5 s were visually inspected — the gap frame shows plain video with
+no caption, all three cues render in the correct position with correct text, Malayalam conjuncts/
+vowel signs in "ക്യാപ്ഷൻ"/"ടെസ്റ്റ്" are intact, and the mixed-script cue wraps onto two lines
+exactly as preview does; the source file's SHA-256 was unchanged afterward. A second real export of
+a genuinely-generated 30000/1001-rate 1280×720 4 s source produced output whose `ffprobe`-reported
+rate is **exactly `30000/1001`**, duration exactly 4.004000 s (120 real frames), confirming
+`fittedFrameRate` preserves the exact rational rate rather than rounding. A real mid-export
+cancellation (~1.5 s into a 10 s render, driven through a temporary dev-only smoke branch removed
+before this commit) produced `{state: 'cancelled'}`, no destination file, and no leftover
+`caption-studio-export-*` temp directory. The real **Export Video** button was confirmed visible in
+the actual built app (production `dist/index.html`, real preload/IPC, screenshotted via
+`capturePage` through a temporary dev-only smoke branch also removed before this commit), proving
+`checkExportSupport()`'s real round trip resolves `supported: true` against the rebuilt pair outside
+a unit test.
+
+Limitations: only macOS arm64 was measured; there is no Windows encoder route
+(`exportSupportFromConfiguration` reports it unsupported rather than guessing one). A real
+rotated-source export was **not** completed this session — synthesizing one needs either the
+excluded GPL `libx264` to bake pixel rotation or a container display-matrix tag, and the
+`-metadata:s:v:0 rotate=90` attempt tried here did not persist into anything `ffprobe` reported;
+`planFromMedia`'s dimension-swap math itself is unit-tested against a real captured rotated-media
+`ffprobe` fixture (`tests/fixtures/ffprobe-rotated.json`, from M2) and the real `-autorotate` flag is
+wired and argument-tested, but the full real-rotated encode is an open item, named in ADR 0004. No
+preview/export pixel-parity suite exists yet (X3). The export host's production packaging (outside
+`app.asar`, without spawning a second full Electron instance via `process.execPath`) is explicitly
+deferred to D2, matching ADR 0003. Only one MP4 profile exists; no quality/bitrate control is exposed
+to the user. GUI verification used a screenshot of the idle app confirming the control's visibility
+gate, not a full click-through-record-verify interaction pass (the CLI smoke exercises the actual
+render/encode instead). `tickets.md`'s X2 checkbox is marked complete based on this evidence.
+
+Next: **X3** — preview/export parity fixtures across all five presets and both aspects, long-pause/
+rotation/VFR sync validation with measured tolerances, and a documented cross-mode pixel-tolerance
+policy per ADR 0003. A real rotated-source export smoke and a Windows encoder decision remain open
+follow-ups from this ticket.
+
+## 2026-09-16 — R2.1 style inspector tabs, local font access, per-frame preview clock
+
+Completed: the right-side inspector is now three tabs — **Edit** (the existing cue editor, grouping
+actions and timing warnings), **Style**, **Templates** (`src/InspectorTabs.tsx`, a standard
+roving-tabindex `role="tablist"`; `src/App.tsx` holds the active tab, no auto-switching). `StylePanel`
+(`src/StylePanel.tsx`) was rebuilt as collapsible sections (`src/style/controls.tsx`: `Section`,
+`Row` with a per-row reset-to-default button, `Stepper`, `SliderWithNumber`, `Toggle`, `Segmented`,
+`HexColorField`) matching the reference UI: **Fonts** (family, face, size), **Emphasis font** (face
+only — weight/italic; deliberately *not* a separate family, since the shaping-safe active-word
+overlay re-renders the whole line and crops to the word's own rect, and a different family's glyph
+advances would misalign that crop), **Format** (uppercase/lowercase/capitalize + underline,
+left/center/right alignment, max lines), **Position** (X/Y percent), **Color** (solid or gradient
+fill), **Emphasis** (Emphasize/Spotlight mode, solid or gradient), **Spacing** (letter/word spacing,
+line height), **Effects** (Drop Shadow, Glow, 3D Depth, Text Stroke, Background — each an on/off
+toggle revealing its own sub-controls). The 5 built-in motion presets and saved presets moved out to
+a new `src/TemplatesPanel.tsx`.
+
+`src/captions/style.ts`'s `captionAppearanceSchema` gained `fontWeight`/`fontItalic`,
+`emphasisWeight`/`emphasisItalic`/`emphasisMode`/`emphasisGradient*`, `textTransform`/`underline`/
+`alignment`, `letterSpacing`/`wordSpacing`/`lineHeight`, `gradient*`, and `shadowEnabled`/
+`strokeEnabled`/`backgroundEnabled`/`glow*`/`depth*` — all `.default()`-ed and added to the existing
+flat `appearance` object (not nested), so `z.strictObject` still fills every new field when parsing
+a style saved before this slice; a `z.preprocess` step infers the three legacy on/off toggles from
+values an old style already carried (e.g. `backgroundOpacity > 0` implies `backgroundEnabled: true`)
+so an old project's captions still look the same. `RESET_KEYS` maps each row to the appearance keys
+its reset button restores from `DEFAULT_CAPTION_STYLE`.
+
+`src/captions/renderer.ts` and `CaptionPreview.tsx` extend the shared painter, still honoring R1's
+one-shaping-run-per-line rule: `CaptionFont` gained `italic`/`letterSpacing`/`wordSpacing`/
+`textTransform` (so measurement and painting always agree — both come from the same `CaptionFont`);
+`LayoutInputs.alignment` decouples horizontal text alignment from the block's own `position`
+(previously the same `position.horizontal` drove both); an optional `LayoutInputs.emphasisFont` is
+measured against the *same complete line* as the regular face (a bolder/italic face has different
+glyph advances, so cropping a bold shaping run with the regular rect would clip real glyphs) and its
+resulting word rect (`WordRegion.emphasis`) is unioned with the regular rect (`CaptionView`'s
+`wordBox`) to size the word-effect crop box and to punch the word fully out of the base line — this
+also gates the punch-out mask on *any* distinct emphasis face, not only word-pop, since a differently
+shaped word can now show through under highlight too. A gradient fill paints as a second, complete
+text copy (`background-clip: text`, transparent fill, no shadow/stroke of its own) stacked exactly
+over a solid copy that carries shadow/glow/3D-depth/stroke — Chromium paints `text-shadow` above a
+`background-clip:text` fill, so those effects have to live on the layer underneath, and this is true
+for both the base line and the active-word overlay. Glow is 3 stacked `text-shadow` blur layers; 3D
+depth is N stacked zero-blur offset layers; both compose into one ordered shadow list with the
+existing drop shadow. Spotlight mode dims the whole base line to `SPOTLIGHT_DIM` (.35) while the
+active-word overlay stays full-opacity on top, for `active-word-highlight`/`word-pop` only.
+
+Local font enumeration (`src/style/localFonts.ts`) wraps Chromium's `window.queryLocalFonts()`
+(ambient-typed in `src/env.d.ts`, since it isn't in TS's `lib.dom` yet): `parseFaceStyle` maps a
+face's free-text style ("Bold Italic", "Semibold", …) to a numeric weight/italic pair — the schema
+stores only that pair, never a postscript name, so a saved style stays portable across machines —
+and `groupLocalFonts` groups by family with the fixed `FONT_FAMILY_CHOICES` pinned first;
+`fallbackCatalog()` (Regular/Bold/Italic/Bold Italic per fixed family) is used whenever the API is
+unsupported, denied, or not yet granted. `queryLocalFonts()` requires transient user activation, so
+it is only ever called from the panel's own "Load installed fonts" click, never on mount.
+`electron/main.ts` now installs `setPermissionRequestHandler`/`setPermissionCheckHandler`, allowing
+only `local-fonts` and `fullscreen`, and only for this app's own origin (`file://` or the dev
+server URL) — nothing else is granted, and no font is bundled, downloaded, or sent anywhere.
+
+Word-by-word animation looking "not really working" traced to the preview's only playback clock
+being `<video onTimeUpdate>`, which Chromium fires roughly 4 times a second — coarser than a spoken
+word (150-400ms) or word-pop's own 200ms curve, so the highlight skipped words and the pop curve was
+essentially never sampled mid-animation. `src/core/playbackClock.ts` (`createPlaybackClock`) is a
+tiny external store that ticks once per **presented video frame** while playing, preferring
+`requestVideoFrameCallback`'s own `metadata.mediaTime` (falling back to `requestAnimationFrame` +
+`currentTime` when unavailable) rather than accumulating an elapsed-time estimate, so seeking,
+pausing and resuming stay exact and it can never drift from the actual decoded video; every emitted
+value is `Math.round(seconds * 1e6)`, matching the app's integer-microsecond timebase, and `set` is
+idempotent so `timeupdate` and the frame loop can both feed it without doubling renders. Only a new
+`CaptionStage` component (`App.tsx`) subscribes to it via `useSyncExternalStore`, so a 60fps tick
+re-renders just the caption preview — the transcript list, timeline body and waveform/thumbnails
+never re-render at frame rate. `currentUs` (the 4Hz editing playhead: transport readout, timeline
+follow-scroll) is unchanged and now also synced on pause so it matches the last displayed frame.
+Real word timing is unchanged by this slice — whisper.cpp still runs without word timestamps, so
+transcribed cues still carry **estimated** word timing, honestly labelled; only the sampling rate
+that was masking the renderer's already-correct per-timestamp evaluation was fixed. Real model word
+timestamps are separate, future work (T4/R3 already track this).
+
+Verification: `npx vitest run` passes **442 tests across 53 files** (the project ran concurrently
+with the separate X1 export slice, so this total isn't solely this change's delta; this slice's own
+additions are 5 new `motion.test.tsx` cases for gradient/emphasis-face/spotlight/underline, new
+`style.test.ts` cases for the schema additions and legacy-toggle migration, new `localFonts.test.ts`
+(9 cases), `playbackClock.test.ts` (7 cases) and `InspectorTabs.test.tsx` (2 cases); `StylePanel.
+test.tsx` and a new `TemplatesPanel.test.tsx` split the old combined suite along the new component
+boundary). Renderer (`vite build`), Electron main/preload (`esbuild`) and the worker bundle all build
+cleanly. `npx tsc --noEmit` is clean except one pre-existing, unrelated error in `workers/media/
+exportProcesses.ts` (a `Buffer<ArrayBufferLike>`/`Buffer<ArrayBuffer>` mismatch) from the concurrent
+X1 export slice, confirmed not introduced by this change.
+
+Limitations: `npm run smoke:captions` (the real-Chromium visual smoke, extended in this slice with
+alignment/letter-spacing/text-transform/gradient/emphasis-face/font-catalog-fallback checks in
+`src/captions/visualSmoke.tsx` and `scripts/caption-renderer-smoke.mjs`) could not be executed in
+this sandboxed session — the sandbox forces `ELECTRON_RUN_AS_NODE=1`, so no GUI Electron process can
+launch here; it must be run on a real desktop (`npm run smoke:captions`) before this slice is
+considered visually verified. A synthetic/script-dispatched click carries no transient user
+activation, so the smoke's font-catalog check always exercises the fallback path by construction;
+real installed-font enumeration needs a genuine desktop click and is unverified beyond the unit
+tests in `localFonts.test.ts`. `font-synthesis: none` is deliberate: a family with no real bold/
+italic face shows no faked one. Progressive word reveal does not use the emphasis face (no
+per-word overlay exists in that mode). Glow and 3D Depth extend past the caption's own line box —
+the panel's Effects section notes this, but no automatic padding reservation was added. Only macOS
+arm64 typecheck/tests/builds were run.
+
+Next: verify `npm run smoke:captions` and a manual `npm run dev` pass on a real desktop (every Style
+row live-updates the preview with one undo step per gesture; Font Face/Emphasis Face steppers;
+Load-installed-fonts on a real click; Templates tab parity with the old combined panel). Real
+word-level model timing (whisper.cpp token timestamps) remains separate future work.
+
+## 2026-09-16 — X1 export renderer prototype and architecture decision
+
+Completed X1: `npm run prototype:export` runs a real offline Chromium offscreen frame prototype
+using the actual CaptionPreview/CaptionView, DOM measurer, style mapper and absolute source-time
+evaluator. A versioned validated request contains canonical source microseconds, cue/word data,
+style and composition; `--request` renders real PNGs at arbitrary requested timestamps/dimensions.
+The host bundles locally without Vite/network/media/model downloads, owns isolated sandboxed
+preview/export windows and saves images only to system temporary storage. It waits for shared
+font/geometry readiness and a matching stripped painted pixel token, explicitly invalidating
+static frames and rejecting stale paints, font failure and fractional/unsafe timestamps.
+
+The small `src/export/parityFixture.ts` has authored Malayalam/Latin/emoji/combining-mark text and
+manual timing at an hour-long offset. Real DOM input events update interactive React preview state;
+independent preview/export windows then compare full composition state and bitmap pixels. Only
+font-cache revision strings are excluded from state comparison; source timing, text, font readiness,
+geometry, word regions, opacity, notices and warnings remain. Editor notices stay out of caption
+pixels. The shared painter rebuilds nodes per motion/timestamp to remove the observed word-pop
+raster history after seeking while retaining shaped metrics.
+
+[ADR 0003](decisions/0003-export-renderer.md) accepts **GPU-accelerated Electron offscreen CPU-bitmap
+readback**, with PNG as the first X2 compositing baseline and a separate export host/bounded worker
+transport as the implementation path. Software is faster but cross-mode pixels differ from the
+normal GPU preview, so it is a fallback requiring a documented tolerance policy. Primary-source
+comparison includes maintained Puppeteer-core, Remotion and Electron shared textures. Remotion's
+conditional downstream/license suitability is documented and it is not adopted. Dependency records
+include exact local Electron/Chromium notice hashes; no npm package, font binary, browser download
+or lockfile dependency-graph change was added. FFmpeg's LGPL/no-GPL/no-nonfree profile is unchanged;
+no MP4 encoder or video pipeline is selected/implemented here.
+
+Final verification: `npm run check` passes **437 tests in 51 files**, strict TypeScript and renderer,
+Electron main/preload and media-worker production builds on macOS arm64. X1 adds 2 frame-contract
+and 4 committed-paint/alpha tests. The existing caption smoke passes 28 static + 23 motion cases.
+Both final source-stable prototype runs pass **100/100 exact same-mode frame-state and bitmap
+comparisons**, covering all five presets, cue edges, gaps, backward/repeated seeks, the seven text
+fixtures, estimates/fallback and gradient/effects. PNG round trips preserve all 80 motion-frame
+bitmaps/alpha. A real missing-local FontFace rejects before acceptance, then the original stack
+recovers. Custom smoke renders a visible 640×360 frame at exactly **3,600,625,007 µs** and a fully
+transparent 360×640 frame at the exact **3,603,000,007 µs** cue end. Source hashes match between GPU
+and software runs and current renderer/transport files; changed sources fail measurement acceptance.
+
+Measured on Apple M4 Pro (12 logical cores, 24 GiB), native macOS arm64 / Darwin 25.6.0,
+Electron 44.3.0 / Chromium 152.0.7977.78, 600 sequential frames per aspect/mode:
+GPU raw fps **145.45 portrait / 131.73 landscape**, raw+PNG **53.83 / 41.71**; software raw
+**212.97 / 176.92**, raw+PNG **61.34 / 45.79**. Each 1080p bitmap is 8,294,400 bytes.
+Sampled maximum aggregate working set (including both windows and Browser/GPU/Utility processes)
+was GPU **985.61 / 1044.25 MiB**, software **951.64 / 997.55 MiB**. This is not export-only memory
+or a long-run bound. Warm/local font readiness was 0–3.6 ms; font presence/glyph coverage is separate.
+CDP observed Malayalam Sangam MN Bold, Arial BoldMT and Apple Color Emoji. Raw cases, hashes, alpha,
+readiness and memory samples are retained in `docs/decisions/evidence/x1-*-2026-09-16.json`.
+
+Cross-mode inspection of 40 corresponding PNGs found nonidentical pixels in every visible sample,
+including 10,741 portrait-static differing pixels (max channel delta 4) and a multiline delta-99
+outlier. It supports choosing GPU for parity, rather than assuming CPU rasterization matches the
+normal GPU editor. Visual inspection of plain/word-pop/vowel/conjunct/decomposed PNGs showed no
+observed detached signs or tofu. Gradient/glow/depth reproduced existing shared-painter crop edges
+and an emoji silhouette; matching pixels do not establish that every style is visually polished.
+
+Verification-only baseline repairs: existing renderer fixtures now explicitly choose left alignment
+and enable the background whose opacity is being tested; the DOM snapshot reflects current shared
+pixel spacing/font-synthesis while preserving full-run assertions. A pre-existing LocalFontData
+interface was moved into its intended global declaration scope to clear a typecheck blocker.
+Other concurrent caption-style/font-picker changes were preserved and are not claimed as X1 work.
+
+Limitations: only macOS was measured, with system fonts and 1080p overlays. No Windows, 4K performance,
+cold pinned-font load, long memory soak, encoded video/audio sync, rotation/VFR decode, export-host
+packaging or final export cancellation is validated. No final Export Video button was added; the
+production media-worker export operation remains unsupported. Full measured tables, licensing,
+reproduction commands and remaining gates are in ADR 0003.
+
+Next: **X2** integrates the separate GPU export host, validated/backpressured PNG transport, real
+FFmpeg overlay/MP4 codec/audio pipeline, scheduler/cancellation and atomic output safety; test it on
+macOS and Windows before exposing working video export. **X1 is complete** based on the real frame,
+parity, timing, alpha, font and throughput evidence. X2/X3 and all other ticket states are unchanged.
+
+## 2026-09-15 — R2 five real style/motion presets
+
+Completed: implemented the five first-release caption presets — static clean, active-word
+highlight, word pop, phrase fade, progressive word reveal — entirely on R1's shared renderer, with
+appearance kept fully separate from motion. `src/captions/style.ts` defines `CaptionStyle`
+(`motion` + a schema-bounded `appearance`: font family/size, primary/secondary color, outline,
+shadow, background color/opacity/padding, fractional position, max lines) and
+`SavedCaptionPreset`; schema 2's optional `project.captionStyle`/`savedCaptionPresets` make style
+real project state — it saves, reopens and undoes like any other edit
+(`src/captions/presets.ts`: `saveCaptionPreset`/`applyCaptionPreset`/`deleteCaptionPreset`, pure
+commands). `src/StylePanel.tsx` is the real inspector control surface (motion radios, font,
+colors, outline, shadow, background/padding, a 3×3 position grid plus fractional sliders, max
+lines, saved-preset save/apply/delete) and is wired into `App.tsx` in place of the old
+"coming soon" placeholder: one live draft feeds `CaptionPreview` immediately while a control is
+being dragged, and exactly one history commit lands per finished gesture (blur/pointer-up for
+continuous controls; immediately for selects/radios/buttons), matching the existing
+draft/commit-on-blur shape `CueEditor` already used for text/timing.
+
+Motion is evaluated purely from `(layout, cue, absoluteSourceTimestampUs)` — phrase fade's
+existing ramp and the newly added active-word/word-pop/progressive-reveal per-word state
+(`wordMotionAvailability`, `layoutCaptionWords`, `captionFrame` in `src/captions/renderer.ts`) have
+no CSS transition, elapsed-playback clock or accumulated frame state, so seeking to the same
+absolute timestamp from any direction reproduces byte-identical output. Word-dependent presets
+gate on `wordMotionAvailability`'s structured `reason` (`no-words | incomplete | invalid |
+needs-review | estimated | ok`): only complete, ordered, cue-contained, non-stale timing enables a
+preset for that cue; every other case falls back to static clean **per cue** (one word-poor cue
+never disables word presets project-wide) with a visible on-preview notice. Estimated timing is
+accepted but the preview notice and the Style panel always say "Estimated — not aligned to audio"
+— rendering never invents or silently upgrades timing; `summarizeWordMotion(cues)` gives the panel
+project-wide counts so the three word-dependent motion options are disabled outright (with an
+explanation) only when no cue in the project has any usable word timing at all. Word highlighting/
+pop/reveal never fragment a line's shaping run: `CaptionView` paints each line as one unbroken text
+node and layers each effect as a positioned, `overflow:hidden`/`mask-image`/`clip-path` sibling
+that re-renders the *entire* line and crops to the target word's real DOM-measured rectangle —
+Malayalam conjuncts and vowel signs are never detached because they're never separated from the
+line to begin with, and `locateWordSpans`'s grapheme-boundary-aligned offsets keep word regions
+off cluster boundaries.
+
+Verification: final `npm run check` passes **407 tests across 47 files** (up from 403 before this
+session's own new files — four new test files add 50: `motion.test.tsx` 26, `style.test.ts` 13,
+`presets.test.ts` 6, `StylePanel.test.tsx` 5), strict TypeScript, the renderer production build,
+Electron main/preload bundles and the worker build. `motion.test.tsx` uses a real mixed Malayalam/
+English cue (conjuncts, vowel signs, English tokens) with model word timing at fixed absolute
+timestamps ≥3,600,000,000 µs to assert exact opacity/active/revealed/scale values per preset,
+seek-order independence (shuffled vs. sorted timestamp evaluation), every availability `reason`,
+and that every word region and word-effect overlay in the rendered HTML stays grapheme-boundary-
+aligned and unfragmented (checked directly against `graphemeBoundaries`, with the whole-cue
+`aria-label` excluded from the fragmentation count so it can't hide a false pass). `style.test.ts`
+covers schema rejection of CSS-injection-shaped font names (`url(...)`, `;`, `<`) and out-of-range
+values, portrait/landscape scale parity, "motion never resets appearance", and project round-trips
+including duplicate-preset-ID rejection. One pre-existing R1 DOM snapshot
+(`renderer.test.tsx`'s single-line-per-caption assertion) was intentionally updated: the line now
+sits inside an `aria-hidden` wrapper so a word-effect sibling can be attached beside it; the
+snapshot's real assertions (one text node, no `<span>`) are unchanged and still pass.
+
+Real Electron smoke — **macOS 26.6.2 arm64**, Electron 44.3.0, Chromium 152.0.7977.78:
+`npm run smoke:captions` extends the existing R1 grid (28 cases, unchanged, still passing) with a
+real-Chromium R2 motion grid — all 5 presets × {portrait 1080×1920, landscape 1920×1080} ×
+{mid-word, gap} timestamps, plus dedicated estimated-timing, cue-only-fallback and
+phrase-fade-ramp-start edge cases (23 cases total) — each checked for unfragmented shaping runs,
+the correct word-effect count for the correct moment, and correct notice/fallback text; confirmed
+`phrase-fade-start`'s real DOM opacity is exactly 0 at the absolute cue start. A further "controls
+driving the real preview" section mounts the actual `StylePanel` + `CaptionPreview` sharing one
+React state (identical wiring to `App.tsx`) and drives every control with genuine DOM events
+(native value setters, `input`/`pointerup`/`change`/`click`, real `focus`/`blur`) in the real
+window: primary color, outline width, background opacity, padding, position, max-line count, font
+family, motion (with its word-effect count), and preset save/apply were each confirmed to visibly
+change the shared preview's real computed style or geometry — this is the "all controls affect the
+real preview" requirement, verified end to end rather than asserted from unit tests alone.
+Screenshots (saved to a fresh system temp directory, not Git) were visually inspected: the active
+word "ഉപയോഗിച്ച്" highlights correctly in the secondary color with its conjunct/vowel-sign cluster
+intact, progressive reveal's clip correctly shows only already-started words, the estimated-timing
+case shows the pop effect plus its "Estimated" notice, the cue-only case shows no highlight plus
+its "unavailable" notice, and the interactive-controls screenshot shows red primary text, Arial
+font, word-pop selected, and the text fitted onto one line after max-lines was lowered — matching
+the automated assertions. No user media, model or recording was used.
+
+Limitations: only macOS arm64 was executed; Windows rendering is unverified (same limitation as
+R1). System fonts are still not bundled — the font-family control offers the same R1 local-face
+stack plus a validated custom-name field, with no redistribution change. The motion math itself
+(ramp/pop-curve formulas) was previously implemented by an earlier, unfinished pass at this ticket
+and is unchanged by this session; this session's contribution is fixing the stale test coverage
+gap, wiring appearance/motion controls into the real app and project schema, adding the
+availability-summary/fallback UI, and proving all of it end to end with new tests and real-Chromium
+smoke evidence. Wrapping remains whitespace-only (R1); max-lines fitting can still leave text small
+or, if it truly cannot fit, preserved with a diagnostic rather than truncated. Export (X1/X2) does
+not exist yet; it must reuse `captionStyleInputs`/`layoutCaption`/`captionFrame`/`CaptionView`
+unchanged rather than a second implementation, as recorded in `CAPTION_RENDERER.md`.
+
+Next: **R3** can add the word-timing/emphasis editor on top of these presets and `CaptionStyle`'s
+`secondaryColor` slot. R2 is complete: all five presets are real, appearance/motion are separate
+and both are functional project-saved controls, motion evaluates purely from absolute source time,
+word-dependent presets are honestly gated and labelled, Malayalam grapheme clusters survive every
+animation, and every control was confirmed to affect the real preview.
+
+## 2026-09-15 — E4 track-based timeline layout and seekable local media
+
+Rebuilt the bottom timeline (`src/Timeline.tsx`, new `src/TimelineToolbar.tsx`/`src/TimelineIcons.tsx`,
+`src/styles.css`) into an NLE-style layout: an editing toolbar, a `mm:ss.mmm` ruler with gridlines and
+click/drag scrubbing, and three labelled tracks — **Captions**, **Video 1** (edge-to-edge thumbnail
+filmstrip) and **Audio 1** (waveform) — under one playhead. Track heights are shared CSS variables so
+the label column and content stay aligned; a keyboard-accessible divider resizes Video/Audio and an
+expand toggle grows the panel (via `:has()` on the app shell, no App prop plumbing). Toolbar controls all
+map to real commands owned by `App`: `+ Line` (add at playhead), merge next, previous/next, scroll to
+playhead, delete, split at playhead, **trim** (new pure `trimToPlayhead`: moves the nearer boundary onto
+the playhead), a **snap** toggle (new pure `snapDelta`: dragged edges land on neighbouring cue edges,
+0, media end and the pre-drag playhead within 8 px, re-clamped through the existing `dragCueBy`, with a
+guide line), zoom −/slider/+ plus ⌘/Ctrl+wheel zoom anchored at the pointer, and expand/collapse. The
+playhead page-flips into view when it leaves the viewport at zoom > 1. `WORD`/`LINE` toggle: LINE keeps
+the draggable cue blocks; WORD renders one block per timed word inside a per-cue span (estimated or
+needs-review words dashed with the shared `TIMING_LABELS` tooltip, cues without words as a muted
+placeholder); clicking/Enter on a word seeks and selects its cue. No word editing yet (R3). *(Since
+the 2026-09-16 "R3 slice 1" entry above: `WORD`/`LINE` is a saved project setting that also drives the
+preview/export, word blocks are selectable/addable/deletable, and missing timing is auto-estimated on
+toggle — word-boundary dragging is still open.)*
+`thumbnailCountForViewport` takes an optional target tile width so a taller filmstrip requests wider
+tiles (quantised to 40 px so divider drags do not churn extraction).
+
+Adjacent fix found during the smoke: the `media://` protocol answered byte ranges with `200` and no
+`Content-Range`, so Chromium reported `seekable: [0, 0]` and every seek with real media snapped back to
+0. `electron/mediaRange.ts` (+ 4 tests) plans single/open-ended/suffix ranges and 416s, and
+`electron/main.ts` now streams `206` responses with `Accept-Ranges`/`Content-Range`/`Content-Length`.
+
+Verification: `npm run check` passes **407 tests in 47 files**, strict TypeScript, renderer, Electron
+main/preload and worker builds on **macOS arm64**. Added 9 timeline tests (ruler step bounds, snap
+threshold/nearest/move-duration invariance, snap still clamps media bounds and word containment, trim
+before/inside/after/on-boundary). Driven desktop smoke against the **built app** (`dist-electron/main.cjs`
+loaded by a scratchpad Electron launcher that stubs only `dialog.showOpenDialog`, drives the window with
+trusted CDP mouse input and screenshots via `capturePage`) using a synthesized 30 s H.264/AAC test video
+and a 6-cue Malayalam/English SRT: ruler scrub seeked to 6 s; dragging cue 4's start handle to 11.06 s
+snapped to exactly `00:00:11:000` with the guide visible and cue 2 untouched; trim moved cue 2's end to
+`00:00:06:600` and undo restored `00:00:07:200`; "Estimate all words & group" then WORD mode showed 5
+dashed estimated word blocks plus 5 untimed placeholders and a word click seeked to 9 s and selected its
+cue; zoom to 8×, expand to 440 px and divider drag produced 201/109 px tracks with 29 tiled thumbnails;
+scroll-to-playhead centred it at 655/1310 px. Screenshots visually inspected for label/track alignment,
+waveform, filmstrip and Malayalam shaping in blocks. No repository media was used; fixtures lived in a
+session temp directory.
+
+Limitations: Windows untested. Only the built (non-Vite) renderer was driven; hot-reload dev mode was
+not smoke-tested this session. Thumbnails are re-requested when the tile width crosses a 40 px step
+(cache hits make this cheap but the cancel of the superseded request logs a `CANCELLED` worker error in
+the console, as before). Track mode, snap, expand and split ratio are component state, not saved in the
+project. Word blocks are read-only; word boundary dragging, `+ Word` and emphasis remain R3. *(Since
+2026-09-16: track mode is now the saved `captionDisplay` project field, and word blocks support
+select/seek/add/delete — see the "R3 slice 1" entry above. Snap/expand/split ratio and word-boundary
+dragging are still component-state/open.)*
+
+Next: R2 style presets, or R3 word editing on top of the WORD track.
+
+## 2026-09-15 — Malayalam ASR benchmark harness (T5, partial) and local-LLM feasibility
+
+User question: could a local LLM through Ollama (e.g. Google Gemma) replace whisper.cpp to fix
+poor Malayalam transcription? Researched and rejected for now: Ollama has no audio input at all
+(`ollama/ollama#11798` is open, unshipped); Gemma 4 audio (via llama.cpp's `llama-server`, not
+Ollama) accepts at most 30 s per request, reports no timestamps, and independent tests found it
+slightly behind Whisper large-v3-turbo on English WER and prone to looping/hallucinated text.
+Decision: stay on whisper.cpp and evaluate Malayalam-fine-tuned Whisper checkpoints instead, via
+the existing `WhisperCppAdapter`/`runTranscription` contract, unchanged.
+
+Built the tooling T5 needs to make that choice from measurements rather than by installing a model
+and guessing:
+
+- `src/core/asrMetrics.ts` (+ `asrMetrics.test.ts`, 19 tests): pure word/character error rate
+  (Levenshtein with full substitution/deletion/insertion counts, not just a total), Latin-token
+  recall (whether English technical terms embedded in Malayalam speech survive), a repetition/
+  loop detector (the specific LLM-ASR failure mode reported for Gemma), and cue-duration stats
+  that catch a fine-tune which lost segment-timestamp prediction. Deliberately does not use
+  Whisper's own English-oriented text normalizer, which is known to distort Malayalam scoring
+  (`sujithatz/ggml-whisper-medium-ml`'s card: 38.6% WER unnormalized vs. 11.5% normalized — the
+  normalizer, not the model, produces most of that gap). Character error rate segments by Unicode
+  grapheme cluster (`Intl.Segmenter`), verified against a real Malayalam vowel-sign case, so a
+  missing vowel sign scores as one edit, not a spurious multi-character mismatch.
+- `scripts/transcription-bench.ts` (+ `npm run bench:transcription`, built through the existing
+  `scripts/build-worker.mjs`/`dist-worker` pipeline): runs one or more whisper.cpp-compatible
+  model **files** (addressed by path, not the shipped `MODEL_CATALOG`) against the developer's own
+  `<name>.<ext>` + hand-corrected `<name>.ref.txt` fixture pairs, through the same
+  `WhisperCppAdapter` → `runTranscription` path production transcription uses, and prints a
+  Markdown results table (WER, CER, Latin recall, repetition, cue durations, real-time factor).
+  Runs every candidate on CPU only, so results stay comparable across models regardless of which
+  GPU backend whisper-cli happens to initialize for each.
+- `scripts/convert-hf-whisper.sh` (+ `npm run convert:hf-whisper`): converts a community Hugging
+  Face Whisper fine-tune (safetensors) to whisper.cpp GGML F16 using the project's own pinned
+  `convert-h5-to-ggml.py` (from the already-verified whisper.cpp 1.9.4 source) and a `uv`-managed
+  Python venv (torch 2.9.1, transformers 5.9.0, numpy 2.5.3; this Mac's system Python is 3.9 with
+  no torch). Dev-only and explicitly not part of the shipped model catalog: every file is checked
+  against a caller-supplied expected byte size before being trusted, and the tool prints, but does
+  not itself pin, the resulting SHA-256 — a human reviews the source repo's license and re-verifies
+  that hash before anything is ever added to `src/core/modelCatalog.ts`.
+
+Candidates identified for the next session to actually benchmark (none downloaded/converted/run
+yet): `vrclc/Whisper-medium-Malayalam` (Apache-2.0, whisper-medium fine-tuned on four Malayalam
+datasets, reports 14.7% WER / 2.6% CER on an OpenSLR test set — the best-documented candidate
+found), `Athulkrishna/BettySara-whisper-large-v3-malayalam-merged-afct` (already ships a GGML file,
+no conversion needed, but its parent checkpoint reports ~56% WER on ~5.4 h of training data and has
+no license on the parent repo), and `Jithjacob123/whisper-small-Malayalam` (Common Voice only, no
+reported metrics, no license tag).
+
+Verification: `npm run typecheck`, `npm test` (346 tests across 42 files, all passing) and
+`npm run build` all succeed. `npm run build:worker` produces `dist-worker/transcription-bench.cjs`.
+Ran the full bench pipeline for real end-to-end — worker spawn, `inspectWhisper`, `probe`,
+`extractAudio`, `WhisperCppAdapter.transcribe` via `runTranscription`, metrics, table rendering —
+against the installed `ggml-base.bin` and one locally synthesized macOS `say` English clip (not
+Malayalam; only used to prove the harness itself works), producing 0% WER/CER on that clip.
+`scripts/convert-hf-whisper.sh` was syntax-checked and its no-args usage path exercised; the actual
+multi-gigabyte Hugging Face download and torch conversion has not been run in this session.
+
+Limitations: no real Malayalam benchmark has been run — that needs the user's own reference-
+transcribed clips. T5's fuller scope (peak memory measurement, sampled caption-boundary timing
+error against manually reviewed references, and a documented correction-effort measure) is not
+built yet; this session covers text accuracy, repetition and real-time factor only.
+`scripts/convert-hf-whisper.sh` is untested against a real Hugging Face repo end-to-end. Only
+macOS arm64 was executed.
+
+Next: get 3–5 real Malayalam+English clips with hand-corrected reference transcripts from the
+user into a gitignored `bench/` directory, run `scripts/convert-hf-whisper.sh` for
+`vrclc/Whisper-medium-Malayalam`, then `npm run bench:transcription` across it, the two ready-made
+community models above, and the installed `whisper-large-v3`/`whisper-large-v3-turbo` as a
+baseline. Record results in `docs/TRANSCRIPTION.md` and a decision in
+`docs/decisions/0002-malayalam-asr-model.md`, then add the winner to `MODEL_CATALOG`.
+
+## 2026-09-15 — R1 shared Malayalam-safe caption renderer
+
+Completed: `src/captions/renderer.ts` provides deterministic composition-space layout plus
+half-open, safe-integer source-microsecond frame evaluation. The real video preview now uses
+`CaptionPreview` and the shared full-line `CaptionView` painter; the old responsive CSS overlay
+is removed and its safe-area guide matches the renderer's defaults. Layout inputs cover viewport,
+safe area, font stack/readiness/revision, max lines, position, wrapping and appearance. Preview
+projection scales an unchanged logical composition instead of rewrapping based on preview pixels.
+Complete shaped DOM runs are measured with the painter's typography; font loading gates metrics
+and frames. Existing `Intl.Segmenter` supplies maintained standards-based grapheme boundaries,
+including Malayalam conjuncts/vowel signs. Every painted line remains one shaping text node.
+Rendering never mutates original Unicode, cue timings, word provenance or corrections.
+
+Verification: final `npm run check` passes **327 tests in 41 files**, strict TypeScript, renderer,
+Electron main/preload and worker builds on **macOS 26.6.2 arm64**, Node 25.6.1. Added 15 focused
+tests and 2 OS-neutral geometry/DOM snapshots for Malayalam signs/conjuncts, decomposed text,
+mixed Latin/emoji, punctuation, nonbreaking whitespace, exact CRLF/blank-line reconstruction,
+long tokens, max-line fitting, position/safe-area/appearance, font readiness/fallback metrics,
+full-run measurement and seek-order-independent source timestamps. No npm dependency or locked
+dependency graph change; the existing lockfile is retained.
+
+Real visual/geometry smoke: `npm run smoke:captions` passes **28 cases**, seven authored text-only
+fixtures × portrait/landscape × 100%/65% preview sizes, in Electron **44.3.0**, Chromium
+**152.0.7977.78**. Checks actual DOM text-range/line boxes and safe-area containment within
+1 preview pixel, identical semantic breaks and normalized widths within 0.001; measured maximum
+normalized width difference **4.173344017033287e-7**. Live resize of an existing preview also
+preserved all line breaks. CDP recorded actual **Malayalam Sangam MN Bold**; the missing-face/Arial
+fallback fixture used **Malayalam Sangam MN**, **Arial Bold** and **Apple Color Emoji** for the
+respective scripts. Visually inspected PNGs covering vowel signs, conjuncts, decomposed signs,
+mixed text, wrapping, punctuation, explicit blank lines and long words: no observed detached
+vowel signs, tofu or fragmented conjuncts. Final evidence is in the system temporary directory
+`/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-r1-smoke-sutz5I` (geometry JSON and
+four page PNGs); rerunning the command allocates a fresh directory. No recordings/models/media
+were opened, copied, downloaded or added to Git. This smoke exercises the actual shared preview
+adapter/painter in an isolated test window, not the native file-dialog/video-import workflow.
+
+Font strategy/redistribution and future export contract are recorded in
+[CAPTION_RENDERER.md](CAPTION_RENDERER.md) and DEPENDENCIES.md. Fonts are installed local system
+faces only, with explicit Malayalam/Windows/Latin fallbacks; **no font binaries are bundled**.
+Noto Sans Malayalam's upstream OFL is a candidate, not approval of an exact redistributable
+artifact/version/hash. Apple/Microsoft font availability does not grant redistribution permission.
+
+Limitations: Windows font/runtime behavior and exported-frame parity are not tested. System fonts
+do not guarantee identical layout across machines; readiness is not proof of face/glyph coverage.
+Wrapping is whitespace-only, not full UAX #14. Unbreakable/extreme text is uniformly fitted and
+may become small. Explicit breaks or text that cannot meet max lines remain intact with diagnostic
+warnings, not truncation; arbitrary shadow extents need sufficient caller padding. Synthetic
+snapshots test logic, while visual smoke tests actual local shaping/advance geometry, not pixel
+goldens. Motion/style controls (R2) and export (X1/X2) remain unimplemented; future export must
+reuse the same painter, fonts/readiness, composition and absolute timestamp evaluator.
+
+Next: **R2** can implement the five real presets/style controls on this shared renderer. R1 is
+complete: preview uses the shared renderer and its focused checks plus real Malayalam visual
+inspection pass. Only R1's completion state changed.
+
+## 2026-09-15 — T4 grouping, word provenance and correction preservation
+
+Completed core/UI slice: pure `captionText`, `recognition`, `wordTiming` and `captionGrouping`
+modules separate original recognition, stable word identities/timing, and readable caption boundaries.
+Schema 2 gains optional grapheme-safe text offsets, optional engine confidence and original recognition
+snapshots per applied run; safe integer microseconds, word containment/order/text and project-wide
+word-ID uniqueness are validated. Existing valid schema-1/2 projects remain readable. Estimates
+are always labeled estimated and require review; changed/ambiguous words stay untimed. Text edits
+retain only unambiguous matches in unchanged order; repeats retain identity only when the whole
+lexical sequence is unchanged. Corrections, manual word timing and explicit regrouping are protected
+by the existing retranscription choice gate. Grouping never retimes word boundaries or crosses known
+long word pauses. Imported SRT stays unchanged until an explicit estimate/group action.
+
+Verification: final `npm run check` passes **312 tests in 40 files**, strict TypeScript, renderer,
+Electron main/preload and worker builds on **macOS arm64**. Added regression coverage for edits,
+repetitions, reordering, Malayalam clusters, punctuation, source ranges, word containment, exact
+repeated merge/regroup, JSON reopen, SRT invariance, undo/redo, original recognition preservation,
+source-time integer extremes and visible provenance labels. One existing model IPC test was isolated
+from the developer's local engine configuration so its disk-only fixture is deterministic. No new
+dependency or lockfile change.
+
+Desktop smoke: the running Electron 44.3.0 app with the Vite renderer loaded a generated temporary
+schema-2 project with mixed Malayalam/English and all four word timing sources. Native accessibility
+state and screenshots confirmed the labels, review flags, exact microseconds, and accessible grouping
+controls. Deleting one `go` in `go go home` removed ambiguous `go` alignment, kept `home` at exactly
+12,000,000–12,800,007 µs and displayed one untimed word plus correction protection; one undo restored
+all original timings. An imported caption remained wordless until **Estimate all words & group**;
+that action split the Malayalam/English text into two cues with estimated/review labels, including
+an exact 23,130,440 µs internal boundary. One undo restored the imported text and wordless state.
+Smoke inspection caught and fixed inspector overflow and an existing timestamp-blur bug that rounded
+untouched microseconds to milliseconds; the new focused regression test covers that preservation.
+The smoke used no user recording, no model download, and no media processing.
+
+Limitations: no new aligner or actual whisper.cpp word timestamps; segment-only recognition uses
+review-required estimates, which cannot detect pauses inside a recognition segment. Readability
+limits are heuristics, not measured Malayalam quality or shared rendering/layout (R1). Conservative
+matching may discard usable timing for ambiguous repeats or punctuation-bearing legacy word records;
+missing timing is visible. Invalid legacy word records fail validation rather than being silently
+repaired. Windows execution and real speech recognition were not rerun in T4. Original recognition
+snapshots increase project JSON size. Only T4 is completed here.
+
+Next: T5 Malayalam/English benchmark harness. T4 is complete: the grouping, provenance and correction
+rules are visible in the app and tested; detailed rules are in TRANSCRIPTION.md.
+
+## 2026-09-15 — Automatic dev whisper-cli build
+
+Completed: transcription reported `WHISPER_NOT_CONFIGURED_MESSAGE` because no `whisperCliPath` was
+configured (the earlier local build lived under a system temp directory and was cleaned up). Added
+`scripts/build-whisper.sh`: downloads whisper.cpp v1.9.4 source and CMake 4.4.3 from the pinned URLs
+in [DEPENDENCIES.md](DEPENDENCIES.md), verifies both against the documented SHA-256 hashes, builds
+the same Metal/CPU release configuration into gitignored `.tools/`, and verifies the built binary
+reports `whisper.cpp version: 1.9.4` before installing it. Idempotent: a second run reuses the
+verified binary without downloading. `./dev.sh` now calls it automatically whenever no working
+`whisperCliPath`/`CAPTION_STUDIO_WHISPER_CLI_PATH` is configured, and writes the result into
+`caption-studio.local.json`; also runnable directly as `npm run tools:whisper`. Non-macOS-arm64
+platforms and build failures fall back to a warning, not a blocked launch.
+
+Verification: `bash -n` on both scripts; ran `scripts/build-whisper.sh` end-to-end (real download,
+hash check, build, `--version` check); confirmed a second run short-circuits without downloading;
+confirmed a corrupted cached archive is rejected and re-downloaded; typecheck and full test suite.
+Limitations: build script only supports macOS arm64, matching the only executed configuration in
+DEPENDENCIES.md; Windows developers still build by hand per that doc's Windows strategy.
+
+## 2026-09-15 — Developer media-tool configuration without environment variables
+
+Completed: importing media in `npm run dev` / `npx electron .` failed with `TOOL_NOT_CONFIGURED`
+unless `CAPTION_STUDIO_*` variables were exported. Main now resolves the toolchain in
+`electron/toolConfig.ts`: each variable overrides the matching key of the gitignored, unpackaged-only
+`caption-studio.local.json` at the repository root (absolute paths, strict schema, existing pairing
+rules; malformed files fail with the file path). `whisperCliConfigured()` and the media-worker smoke use
+the same resolution. `./dev.sh` prompts once for the tools, exports them and launches `dev`, `electron`
+or `smoke` mode. ADR 0001 is unchanged in substance: no PATH search in the app, no downloads.
+
+Verification: `electron/toolConfig.test.ts` (precedence, validation, pairing, missing file), typecheck,
+full test suite. Limitations: tested on macOS arm64 only; `dev.sh` is POSIX-shell only (Windows
+developers still use the JSON file or environment variables).
+
+## 2026-09-15 — T3 real local whisper.cpp transcription
+
+Completed: selected and built **whisper.cpp v1.9.4 `whisper-cli`** from the verified upstream tag source
+(MIT; exact source/binary hashes, CMake flags, vendored-code licenses, model compatibility and the
+unexecuted Windows strategy are in [DEPENDENCIES.md](DEPENDENCIES.md); notices in
+[licenses/whisper-MIT.md](licenses/whisper-MIT.md)). The separate media worker now implements three
+real operations with fixed argument arrays: `extractAudio` (FFmpeg, 16 kHz mono WAV,
+`aresample=16000:async=1:first_pts=0` so audio starting after the requested time is padded rather
+than shifted, `-n`, measured progress, duration from real samples bounded by the range),
+`inspectWhisper` (`--version` plus real model loads with GPU allowed and with `-ng`; devices only from
+whisper.cpp's own backend lines) and `whisperTranscribe` (exact long-silence gating on samples, one
+job-owned WAV and one `whisper-cli -oj` run per padded speech chunk, whisper `-pp` progress, JSON
+parsing that fails closed, explicit review-flagged timing normalizations). Main's Electron-free
+`TranscriptionService` re-verifies the model with `installedPath` before every job, runs the adapter
+through `runTranscription`'s single source-time mapping, delivers only through the scheduler commit
+gate and removes job files in every outcome. A narrow ID-only IPC/preload bridge feeds a new
+**Transcribe** dialog (installed model, language incl. auto, detected devices with CPU fallback,
+honest phase/percent, cancel, actionable errors). Applying is one undoable step; if captions overlap
+the transcribed range nothing changes until the user explicitly keeps imported/edited captions
+(replacing only untouched model captions and skipping overlapping segments) or replaces all.
+Projects gain optional `transcriptionRuns` provenance and cues gain `transcriptionRunId`.
+[TRANSCRIPTION.md](TRANSCRIPTION.md#whispercpp-integration-t3) documents the pipeline.
+
+Design evidence and bugs found with real tools: whisper.cpp given a silent 20 s `-ot/-d` window
+invented repeated text ("I'm sorry, I'm sorry, …") and read speech from beyond the window, and
+whole-file output ended past the audio — so silence is never sent and chunks are separate files.
+The first real end-to-end smoke then exposed an actual bug: FFmpeg keeps a last sample ending 20 µs
+past the 32,006,667 µs range, so the final caption exceeded the media duration and the editor
+rejected editing it. Extraction and recognition now bound all times by the audio window; a
+regression test pins this.
+
+Verification: final `npm run check` passes strict TypeScript, **264 tests across 33 files** (up from
+210 across 26), the renderer build, Electron main/preload bundles and the worker build. New tests:
+`speechGating` (exact silence boundaries independent of block size, thresholds, partial windows,
+padding/merging, hour-long offsets, exact sample→µs), `whisperCpp` (a redacted real v1.9.4 `-oj`
+fixture, real Metal/CPU stderr lines, progress/version parsing, raw-control-character re-escaping,
+invalid UTF-8/shape, Malayalam text, clamping/extension/overlap/drop rules), `transcriptionApply`
+(provenance, empty silence gap, explicit choice required, corrections kept, replace-all bounds),
+`wav`, `audio` and `whisper` worker operations (argument arrays, long silence never sent, chunk
+offsets, auto-language ordering, CPU `-ng`, load-failure mapping, cancellation, cleanup,
+window bounding, inspection), and `transcriptionService` (re-verification, cached inspection,
+mapping/provenance, model-unavailable, cancellation, backend failure, availability). Worker-process
+tests now cover missing whisper configuration and an absent whisper-cli executable. Tool-runner and
+worker doubles exist only inside test files.
+
+Real offline smoke — **macOS 26.6.2 arm64, Apple M4 Pro (12 cores, 24 GiB), Node 25.6.1**:
+`npm run smoke:transcription` with the T3 FFmpeg/ffprobe 9.0.1 LGPL build, the release
+`whisper-cli` 1.9.4 build and **`ggml-base.bin`** (147,951,465 bytes, SHA-256 `60ed5bc3…a2efe`,
+explicitly downloaded by this session from the catalog's pinned URL into the managed `.part` path and
+matching the catalog; the smoke's model manager used a `fetch` that throws, so verification was
+offline). Clip: a locally generated, uncommitted **32.006667 s 320×180 H.264 (30000/1001) video with
+AAC 48 kHz mono audio whose stream starts at 1.478667 s**, containing two English sentences spoken by
+the macOS `say` voice "Eddy (English (US))" separated by 20 s of digital silence, at a path containing
+spaces and Malayalam text (SHA-256 `dbf283fa…20454`). No user recording was used. Inspection
+reported engine 1.9.4, devices CPU + Metal (`MTL0`). Both devices produced, with auto-detected `en`,
+2 chunks and 1 detected silence (6.72–27.16 s): 0.000–4.000 s "Welcome to the Caption Studio Test.",
+4.000–7.000 s "This sentence comes before a long pause.", and 26.860–32.006667 s "After 20 seconds of
+silence, the speaker returns and finishes the recording." (end clamped to the chunk, marked Needs
+review). No caption covers the pause. Job time 814 ms on CPU and 636 ms on Metal, each including
+model re-hashing and extraction. Captions were applied to a new project with provenance, the first
+caption's text was edited through the normal command path, retranscription without a choice was
+refused, and keep-authored preserved the correction (added 2, removed 2, kept 1, skipped 1). A CPU
+job cancelled after whisper.cpp reported 7,020,000 of 12,166,667 µs of speech ended `cancelled`
+with no new job directories, and the source hash was unchanged. The first run's `/usr/bin/time -l`
+reported 397,000,704 bytes maximum resident set size. The same pipeline ran through the bundled
+Electron main process (`electron . --transcription-smoke`, Electron 44.3.0 / Node 24.20.0) on the
+clip's MPEG-4 Part 2/AAC variant with identical captions on `MTL0`. Real FFmpeg on a video without
+audio printed `Stream map '' matches no streams.`, which maps to the actionable no-audio error.
+
+Limitations: this session's `osascript` was denied assistive access (-25211), so the Transcribe
+dialog, progress, cancel button and keep/replace choice UI were built and typechecked but **not
+observed from real clicks**. The production app did launch with the engine configured and, with no
+UI interaction, exited with code 0 on SIGTERM without any runtime log output. Only English synthetic speech was executed — no Malayalam speech fixture or TTS voice was
+available, so Malayalam recognition quality is unmeasured (T5). Base-model timing is coarse: the first
+caption starts at 0.000 s although audible speech starts at 1.497 s. Energy gating is not VAD, and
+auto-detection picks one language for the whole video. `ggml-base.en.bin` and `ggml-small.bin`
+(present in the managed directory but not downloaded by this session), Windows (known ANSI-argv
+path risk), CUDA and Vulkan were not executed. Engine and FFmpeg are external developer builds, not
+bundled or signed; inspection is cached per model path for a session, so replacing the executable
+mid-session is not re-detected. SRT export rounds the last cue to 00:00:32,007 (existing millisecond
+serializer). Waveform/thumbnail/proxy jobs still bypass the heavy-job scheduler. When launching
+Electron from a shell that exports `ELECTRON_RUN_AS_NODE=1` (this VS Code-hosted session did), unset
+it first.
+
+Next: T4 can separate recognition, word timing and readable grouping on top of the provenance and
+correction-preserving apply step; T5 should benchmark Malayalam/English clips and model sizes. T3 is
+complete: video audio produced editable, source-timed captions locally through the real engine.
+
+## 2026-09-15 — T2 explicit local model management
+
+Completed: added a reviewed three-artifact catalog for the planned whisper.cpp backend
+(`ggml-base.bin`, `ggml-base.en.bin`, `ggml-small.bin`) pinned to immutable publisher
+revision, exact byte sizes and SHA-256. The Models dialog shows exact names, languages,
+size, final/partial disk paths, trusted checksum, actual installed/download states and
+conditional upstream CPU/Metal/CUDA build requirements. No arbitrary-model compatibility
+or detected-device claim is made; backend availability is explicitly false.
+
+Main owns async streaming downloads/hashing through an ID-only validated IPC/preload bridge.
+Download/resume needs an explicit click; there is no startup download, catalog fetch, automatic
+resume or periodic network activity. Saved partial bytes use validated HTTP Range responses;
+a source returning 200 safely restarts. Cancellation aborts fetch/blocked readers, waits for
+file cleanup and retains inactive partials. Verify pinned size/SHA-256, flush data and rename
+beside the final file atomically; checksum failures cannot activate. Reopened finals and
+main-only backend resolution rehash locally, so an old installed flag is never trusted.
+Complete interrupted partials can be verified/finalized offline on explicit retry. Model
+removal requires a native confirmation naming only the selected final/partial paths; it
+preflights linked/nonregular paths and unlinks no other file or directory. Errors stay visible
+and inactive until resolved. Added dependency/source/license evidence and MIT notices without
+changing npm dependencies or the lockfile. [MODELS.md](MODELS.md) records the contract.
+
+Verification: final `npm run check` passes strict TypeScript, **210 tests across 26 files**,
+renderer production build, Electron main/preload bundles and the independent media worker.
+New coverage: **34 manager tests and 4 IPC tests**, all with tiny local text fixtures, real
+temporary filesystem I/O and mocked fetch/HTTP streams; no live network or model weights
+are required. Covered honest phases and measured bytes, explicit-only networking, offline
+reopen/resolve/tamper detection, checksum rejection and retry, complete/partial interrupted
+recovery, 206 resume and 200 restart, malformed ranges/lengths/encoding, short/erroring streams,
+cancellation before start/during verification/with a blocked reader/during last async preflight,
+late cancellation after the activation gate, duplicate-operation ownership and shutdown,
+ENOSPC/EACCES/write/fsync/rename errors, native-confirmation default/cancel/explicit choice,
+invalid IPC payloads, safe selected-file removal preserving another model and neighbors,
+and refusal of symlinks/hard links/nonregular targets and symlinked managed directories/parents.
+
+Desktop smoke: **macOS arm64**, Electron 44.3.0, production build. Accessibility tree and
+screenshot confirmed the three real catalog entries, exact metadata/paths/checksums, conditional
+device wording and absent/inactive states. Escape closed the dialog and restored Models-button
+focus. A full-size local base `.part` observed on subsequent startup remained interrupted and
+inactive until an explicit action; this task did not click Download/Resume or activate it.
+The actual native removal dialog named only base and its partial, focused Keep by default,
+and Keep preserved the files. Shutdown review exposed a windowless process retaining a closed
+manager after prevented/re-entered macOS quit: main now prevents new activation during shutdown,
+awaits owned media/model work and exits. Clean quit (process exit 0) and subsequent restart with
+a working disk-only catalog were verified. No source media was opened or changed.
+
+Limitations: Windows filesystem/runtime/desktop behavior is not executed here; target paths use
+portable Node APIs. Real whisper.cpp loading/inference/device detection and Malayalam quality
+remain T3/T5; no weights or engine are bundled. Publisher SHA-256 trust is reviewed LFS metadata
+over HTTPS, not signed upstream provenance. Actual download-server availability/range behavior
+was mocked rather than asserted from a live weight download. Atomic rename is not a universal
+hardware-power-loss guarantee; quota/eviction and release packaging remain future work.
+
+Next: T3 can select/build/detect the real whisper.cpp runtime and call the main-only verified
+model resolver before offline transcription. T2 is complete; no later ticket was implemented.
+
+## 2026-09-14 — T1 transcription adapter and cancellable job system
+
+Completed: implemented the typed transcription/alignment contract and a reusable job/
+scheduler layer, with no backend integrated. `src/core/jobs.ts` defines the shared
+queued/running/succeeded/failed/cancelled state machine, a structured progress schema
+(indeterminate/measured, with regression detection), and structured job errors.
+`src/core/transcription.ts` defines `TranscriptionCapabilities` (languages, auto-detect,
+devices with mandatory CPU fallback, accepted sample rates, word-timing/confidence
+declarations, and an **independently declared** optional aligner with its own language
+set — never assumed from transcription language support), `TranscriptionOptions`,
+pre-adapter-call validators (`checkTranscriptionOptions`, `checkAudioSampleRate`), and
+`validateTranscriptionOutput`/`validateAlignmentOutput`, which perform the single
+`sourceStartUs + relativeUs` mapping from adapter-relative audio time to source-media time
+and reject (never silently repair) malformed schema, out-of-order/overlapping
+segments/words, out-of-bounds words, empty/control-character/lone-surrogate text,
+undeclared confidence, engine/model/language mismatches, and safe-integer overflow after
+offset mapping. Alignment output is additionally required to answer every requested
+segment id exactly once and to have every aligned word's text appear, in order, inside
+that segment's **unchanged** original text — an aligner can time words but can never
+rewrite them. `workers/transcription/contract.ts` defines `TranscriptionInput` (matching
+the media worker's reserved `extractAudio` result shape) and the `TranscriptionAdapter`
+interface; `workers/transcription/run.ts` is the only supported way to call one — it
+validates capabilities/options/sample-rate before ever calling the adapter, guards
+progress (malformed or regressing progress aborts the adapter and fails closed), and
+discards any output an adapter returns after cancellation was requested.
+
+`electron/jobScheduler.ts` is a main-owned (no Electron import, Node-testable) FIFO job
+queue: every currently defined job kind (`transcription`, `alignment`, `export`) is
+resource-heavy, so by default only one heavy job runs at a time — transcription and export
+do not compete unless a caller explicitly raises `heavyConcurrency`. Cancelling a queued
+job finalizes it immediately without ever calling `run()`; cancelling a running job aborts
+its signal but leaves it `running` until `run()` actually settles. `run(ctx)` gates its
+eventual mutation behind `ctx.enterCommit()`, which reports `false` (no mutation performed)
+if cancellation was already requested and is a one-way gate afterward — a commit already
+in progress is never retroactively relabeled cancelled. `electron/transcriptionJob.ts`
+composes the scheduler with `run.ts`: `enqueueTranscription`/`enqueueAlignment` validate
+and map backend output, call `enterCommit()`, and only then invoke the caller-supplied
+`commit()`, wrapping a thrown non-`JobFailure` commit error as `COMMIT_FAILED` (a
+`JobFailure` from `commit()` passes through unchanged). Neither function is wired into
+`main.ts`/preload — no transcription surface is exposed to the renderer, matching AGENTS.md's
+rule against presenting non-functional controls.
+
+Verification: `npm run check` passes strict TypeScript, **172 tests across 24 files** (up
+from 90 across 19 before this ticket — five new test files:
+`src/core/jobs.test.ts`, `src/core/transcription.test.ts`,
+`workers/transcription/run.test.ts`, `electron/jobScheduler.test.ts`,
+`electron/transcriptionJob.test.ts`), the renderer production build, Electron main/preload
+build and independent worker build. Tests use a deterministic test-double adapter defined
+only inside each test file (never imported by production code — confirmed by grepping for
+the double's factory function name outside `*.test.ts`) to verify: capabilities validation
+(empty/duplicate/wildcard-shaped languages, mandatory CPU fallback, alignment languages
+independent of transcription languages); every pre-adapter-call rejection never invokes the
+adapter; offset mapping across a simulated one-hour source position with a preserved
+15-second silence gap and no invented text; mixed Malayalam/English text and combining
+marks preserved byte-exact through validation; every `MALFORMED_OUTPUT` rejection listed
+above, individually; alignment id/word-containment/word-text-must-match rules; progress
+guarding (malformed and regressing progress both abort the adapter's signal and fail the
+call); cancellation that waits for the adapter to actually settle and discards output
+returned after abort; a thrown non-contract adapter error wrapped as `BACKEND_FAILED`
+while a thrown `JobFailure` passes through unchanged; scheduler snapshot sequencing with an
+injected clock; strict FIFO heavy-job serialization by default and concurrent execution
+with `heavyConcurrency` raised; cancel-while-queued vs. cancel-while-running semantics;
+`enterCommit()`'s cancel-before/after race in both the scheduler unit tests and through
+`enqueueTranscription`'s real commit gate (including a `createProject()` project instance
+proven byte-for-byte unchanged, via `structuredClone`, after a cancel that lands between
+adapter resolution and commit); `MediaWorkerError` failure mapping (`CANCELLED` becomes a
+cancelled outcome, other codes wrap as `BACKEND_FAILED` keeping message/retryable/
+diagnostic); listener-exception isolation; and `close()` cancelling all outstanding work
+and rejecting further `enqueue()` calls.
+
+Limitations: this ticket is contracts and scheduling only — there is no transcription
+backend, no model manager, no IPC handler, no renderer UI, and therefore nothing to smoke-
+test end to end on real audio; T2 (model manager) and T3 (real whisper.cpp integration) are
+the next tickets that make this reachable from the app. The job scheduler is not yet wired
+to the media worker's own waveform/thumbnail/proxy jobs (still gated only by
+`MediaWorkerClient`'s own four-job cap), so a large proxy conversion is not currently
+arbitrated against a future transcription/export job; `docs/MEDIA_WORKER.md` records this
+as an open question for whoever wires T3/X2. The scheduler has no per-job timeout of its
+own — a `run()` that never settles (for example, a backend that ignores its abort signal)
+blocks that heavy slot indefinitely; backends are expected to own their own deadlines the
+way `MediaWorkerClient` does. `TranscriptionInput`/adapter output timestamps are integer
+microseconds relative to the extracted audio window only; T3 owns real audio extraction
+and its silence/chunking behavior. No platform-specific behavior was introduced (this
+module has no OS-specific code), so "tested on macOS arm64" applies only to `npm run
+check` itself, run in this session's Linux-container-free macOS environment.
+
+Next: T2 can build the explicit local model manager against `TranscriptionCapabilities`'s
+model/device shape. T3 can implement a real whisper.cpp `TranscriptionAdapter` and wire
+`enqueueTranscription` into `main.ts`/preload with a real commit into the project. T1 is
+complete: capabilities/transcribe/align contracts, job states, structured progress/errors,
+heavy-job resource arbitration, and pre-mutation output validation are implemented and
+tested with a deterministic test-only adapter; no fake backend, transcript or progress was
+integrated into the app.
+
+## 2026-09-14 — M4 real thumbnails and proxy diagnostics
+
+Completed: implemented cancellable thumbnail extraction through the media worker's already-reserved `thumbnails` operation. `workers/media/thumbnails.ts` spawns one FFmpeg process per requested source timestamp with `-ss <t> -copyts -i <input> -frames:v 1 -vf scale=<width>:-2,showinfo -c:v mjpeg`, parses the `showinfo` filter's own reported `pts_time`/`s:WxH` for the **actually decoded** frame, and fails closed (`TOOL_FAILED`) rather than ever substituting the requested time when that parse fails. A real bug — decoded timestamps rebasing to ~0 after input seeking — was caught during real-media verification and fixed with `-copyts`; a regression test pins the corrected argument order. `src/core/thumbnails.ts` computes zoom-aware sample timestamps as exact bucket midpoints (wide-integer arithmetic, no accumulated drift) and a bounded thumbnail count that grows with `zoom × viewport width` and is capped at 64. The Timeline component now measures its own viewport width, recomputes timestamps on zoom/resize, debounces requests 300 ms, and cancels the in-flight request through IPC on every supersede or unmount.
+
+Added a real local proxy-conversion path: a new `proxy` worker operation (`workers/media/proxy.ts`) transcodes the whole input to WebM/VP8/Opus (capped at 1280px on the longest side) with real `-progress` based percentage, cancellable exactly like waveform/thumbnail jobs, and returns the FFmpeg-measured output duration rather than an assumed one. WebM/VP8/Opus was chosen specifically because libvpx/libopus are permissively licensed (keeping ADR 0001's no-GPL profile) and Chromium's embedded `<video>` decodes it natively — it directly targets the diagnosed problem. Proxy controls are gated on `src/core/proxy.ts`'s `proxySupportFromConfiguration`, which parses the real, already-fetched `inspectToolchain` configuration string for `--enable-libvpx`/`--enable-libopus` (cached once per app session) rather than assuming support; the renderer only shows "Create local proxy" when that real check passes. Codec diagnostics (`src/core/codecSupport.ts`) ask the actual embedded player: a `canPlayType` pre-check on the file's container extension, then the real `<video>` element's `error`/`loadeddata` events as the definitive signal, mapped through the standard `MediaError` codes — never a hardcoded per-file codec guess. Source media is never written to: thumbnails and the proxy both go through a job-owned temporary directory/file, the proxy destination comes from an explicit native save dialog, and main refuses to write a proxy over the resolved source path.
+
+Cache/lifecycle: `electron/thumbnailCache.ts` atomically caches each thumbnail individually (JSON with an embedded base64 JPEG, since the sandboxed renderer has no filesystem access) outside Git, keyed by fingerprint, requested timestamp, width and extraction version `ffmpeg-mjpeg-showinfo-v1`; a batch at a new zoom level reuses any previously extracted timestamps that still happen to be requested. Main exposes `media:thumbnails-load`/`-cancel` and `media:proxy-support`/`-create`/`-cancel` only for fingerprints already registered by a successful probe in the current session, mirroring the waveform IPC. Every job directory (thumbnails) and temporary output file (proxy) is removed in `finally` on success, cancellation or failure, and an unrelated file beside a cancelled/failed job is left untouched.
+
+Verification: `npm run check` passes strict TypeScript, **90 tests across 19 files** (up from 71 across 13; six new files cover zoom-aware timestamp/count math and request-schema bounds, `proxySupportFromConfiguration` against real and fabricated FFmpeg configuration strings, `containerPlaybackHint`/`describeMediaError` against injected `canPlayType`/`MediaError` fixtures, `showinfo` parsing and the `-copyts`/scale/seek argument shape with per-frame cancellation, proxy progress/cancellation against a fixture `-progress` stream, and thumbnail-cache identity/invalidation/corruption handling), the renderer production build, Electron main/preload build and independent worker build. `workers/media/worker.test.ts` was updated: `thumbnails`/`proxy` moved out of the "still unsupported" list and into the "reports `TOOL_NOT_CONFIGURED` without a configured tool pair" list.
+
+Real worker smoke: on **macOS arm64** under Node 25.6.1, rebuilt the same verified upstream FFmpeg/ffprobe 9.0.1 source with `--enable-libvpx --enable-libopus` added to the existing LGPL-2.1-or-later/no-GPL/no-nonfree profile (both libraries are BSD-3-Clause; see `docs/DEPENDENCIES.md` for exact hashes/sizes). `npm run smoke:media-worker` (extended this ticket to also exercise `thumbnails` and `proxy`) ran the full real pipeline — `probe` → `waveform` → `thumbnails` → `proxy` — against two locally generated, uncommitted 3.003-second 320×180 clips built from one synthetic MPEG-4/AAC source: `supported-h264.mp4` (real H.264/AAC via macOS `avconvert`, Chromium-playable) and `unsupported-mpeg4.mp4` (native MPEG-4 Part 2/AAC in the identical MP4 container, which Chromium cannot decode). For both fixtures, three thumbnails were extracted with `actualUs` matching the requested timestamps exactly (after the `-copyts` fix) and correct post-scale `160×90` dimensions; `proxySupportFromConfiguration` correctly reported the rebuilt pair as functional; and `proxy` produced a real VP8/Opus WebM (independently re-probed: `vp8`/`opus` streams, `320×180`, `3.008 s`). The same sequence was repeated through the **Electron-hosted** worker (not just Node) via the existing `--media-worker-smoke` entry point extended with the real tool paths, confirming the bundled `dist-electron/main.cjs` still wires the worker correctly. Both source fixtures were re-hashed after every run and were byte-identical throughout, confirming no code path ever wrote to source media.
+
+Partial desktop check: this session had no screen-recording permission (`screencapture` failed) and no accessibility access to drive native file dialogs, so a full interactive click-through (open a fixture, watch the codec-diagnostic banner appear, click "Create local proxy") could not be performed. A Chrome-DevTools-Protocol screenshot of a locally launched packaged build (real tool paths, `--remote-debugging-port`, no synthetic input sent — this session never scripted clicks, keystrokes or dialog input into it) did show the app already displaying real media with the new UI live: the "VIDEO" row rendered a real thumbnail filmstrip at correct positions, the taller timeline layout held together, and no codec-diagnostic banner appeared for that H.264/AAC file, matching the intended "hidden when supported" behavior. That window's pre-existing state was not something this session created deliberately, this session did not act on it beyond one read-only screenshot, and its content is not reproduced here. It shows the thumbnail rendering path working live, but does **not** cover the codec-diagnostic banner actually appearing for unsupported media or the proxy button/save-dialog flow, since no unsupported file was opened in that window by this session.
+
+Limitations: only macOS arm64 was executed; Windows thumbnail/proxy execution is unverified. The renderer's unsupported-codec banner and end-to-end proxy click flow are implemented and code-reviewed, and every real operation they depend on (thumbnail extraction, proxy conversion, cancellation, cache read/write, never overwriting source) was verified for real as described above, but were not directly observed appearing/working from a user click this session. The rebuilt FFmpeg pair (with libvpx/libopus) is a development capability build, not a release artifact; D1/D2 must decide the release build's final encoder set. Proxy conversion targets WebM/VP8/Opus only — there is no user choice of proxy format/quality, and long/large sources will transcode for a while (real, cancellable, but not fast). Thumbnail/proxy cache eviction is not implemented, matching the existing waveform-cache limitation. Codec diagnostics react to the actual file opened; they do not pre-scan a media library.
+
+Next: a follow-up session with real accessibility access should open the diagnostically-unsupported fixture in the running app to confirm the codec-diagnostic banner appears and "Create local proxy" produces a playable file end to end. Otherwise, P1 can add autosave/recovery, or T1 can begin the transcription adapter now that M1–M4 media-worker functionality is real. M4 is marked complete: its worker/cache/IPC pipeline is verified for real end to end, including a real bug found and fixed, and the thumbnail-rendering half of the renderer path was directly observed live; the unsupported-codec banner and proxy-click flow remain implemented but not directly observed triggering from a user action.
+
+## 2026-09-14 — M3 real waveform extraction
+
+Completed: implemented the real `waveform` operation through the separate media worker and explicitly configured FFmpeg executable. The worker decodes only the requested canonical source range and first audio stream to mono float PCM using exact decimal microsecond arguments, an adaptive rate capped at 8 kHz and approximately 32 decoded samples per requested peak. FFmpeg receives a fixed argument array with `shell: false`, emits real `out_time_us` progress, and is cancellable through the existing worker protocol. Raw output has an FFmpeg size limit, peak results are capped by the request, and reduction returns clamped absolute amplitudes without fake normalization. Uniform waveform edges use wide integer arithmetic, so the first/last edges are the exact source range and intermediate rounding never accumulates.
+
+Lifecycle/cache: every decode receives a uniquely allocated job directory in the host temporary location; success, tool failure and cancellation all remove that directory in `finally` without touching unrelated files. Main accepts waveform requests only for fingerprints registered by a successful media probe in the current app session. Validated waveform JSON is atomically cached under Electron user data, outside Git, using a SHA-256 key over extraction version `ffmpeg-f32le-mono-peaks-v1`, the complete sampled fingerprint record, source range and requested peak resolution. Cache entries revalidate their key, request, range, peak bound and payload schema before use. Media replacement, fingerprint change, range change, resolution change or extraction-version change therefore misses the old entry rather than presenting stale data.
+
+Renderer: selecting or resolving media starts a 16,384-peak background request through the narrow preload bridge. The timeline shows honest indeterminate/measured progress and a real cancel action, renders no placeholder while data is absent, and shows actionable unavailable state on failure. Ready peaks render as one pointer-transparent SVG path behind the existing caption blocks. The waveform shares the timeline's canonical duration, horizontal content, seek surface and 1×–32× zoom, so the ruler, waveform, playhead and captions stay in one source-time coordinate system. Reopening the same verified media reports a cache hit.
+
+Verification: final `npm run check` passes strict TypeScript, **71 tests across 13 files**, the renderer production build, Electron main/preload build and independent worker build. Added deterministic tests cover signed/clamped peak reduction, fewer-samples-than-buckets, exact non-divisible and large source-time edges, adaptive decode rates, literal Unicode/shell-metacharacter paths, exact FFmpeg seek/duration arguments, measured progress, bounded PCM results, cancellation cleanup that preserves an unrelated file, atomic cache writes, malformed-cache rejection and invalidation across fingerprint/range/resolution/extraction-version changes. Existing real child-process cancellation still verifies that the active tool PID is reaped before settlement.
+
+Real worker smoke: on **macOS arm64** under Node 25.6.1, the selected external upstream FFmpeg/ffprobe 9.0.1 pair decoded the existing synthetic 2.002-second 320×180 MPEG-4/AAC fixture through the bundled worker. Probe returned the exact 2,002,000 µs duration and the waveform request returned 128 real peaks with maximum amplitude 0.12974722683429718 plus measured completion; no media or tool entered Git.
+
+Desktop smoke: the production Electron build on macOS arm64 loaded the existing synthetic 2.002-second H.264/AAC fixture and visibly rendered its waveform. A timeline click sought to 1,026,906 µs; changing zoom from 1× to 2× retained waveform/ruler/playhead alignment and horizontal scrolling. Opening the same file again reported `Waveform from cache` and retained 2× alignment. During the active verification session, an 8.394-second 480×848 local H.264/AAC clip also reached its end with a real waveform visible, confirming playback-time updates and the media timeline remained synchronized. No user media was copied, modified or added to Git.
+
+Limitations: only macOS arm64 was executed. Windows paths remain protocol-tested, but Windows FFmpeg waveform execution, cache filesystem behavior and desktop rendering are unverified. The FFmpeg pair remains external, unbundled and not release-approved, so the developer must configure both tool paths. The v1 waveform is a mono absolute-amplitude overview rather than per-channel audio, RMS/loudness analysis or sample-accurate editing; the UI requests at most 16,384 peaks and cache eviction is not implemented. Media without a decodable audio stream shows an unavailable state and no fabricated waveform. Thumbnails and proxy diagnostics remain M4, and the existing playback-format limitations are not expanded by M3.
+
+Next: M4 can add zoom-aware real thumbnails and actionable proxy diagnostics alongside the now-working waveform. M3 is complete on macOS arm64; no later ticket was implemented.
+
+## 2026-09-14 — M2 media metadata, fingerprints and relinking
+
+Completed: implemented the real `probe` operation through the existing separately bundled media worker and the explicitly configured FFprobe 9.0.1 executable. FFprobe receives a fixed argument array and a literal absolute input path with `shell: false`. The validated result records format duration as canonical integer microseconds, coded dimensions, display rotation, exact average and nominal rational rates, and per-stream kind, codec name/long name/profile/level/tag, time base, source start/duration, video dimensions/rates/rotation and audio sample rate/channels. Unknown fields remain null; `0/0` is not converted into a fictional rate. The renderer displays the probed summary and uses the source duration rather than the HTML media element's floating-point duration whenever available.
+
+Persistence/relinking: project schema 2 stores the media metadata, a versioned `sha256-sampled-v1` fingerprint and a portable reference without media bytes. Files at most 768 KiB are hashed in full; larger files hash the size plus fixed 256 KiB beginning/middle/end samples. This is a practical identity hint rather than full-file integrity verification, so replacement checks also compare duration, dimensions, rotation, rate and stream/codecs. Project save writes a contained forward-slash relative path when the media is below the project directory plus a native absolute fallback; reopen tries the safe contained relative candidate first. Existing schema-1 files migrate without inventing metadata/fingerprints. Missing media produces working Relink controls. A selected replacement is probed again: exact identity relinks immediately, while differences are explained individually in a modal with Cancel, Choose another and explicit Use replacement anyway actions. No implementation path copies, writes or overwrites source media.
+
+Verification: final `npm run check` passes strict TypeScript, **65 tests across 11 files**, the renderer production build, Electron main/preload build and independent worker build. Added tests cover exact decimal-to-microsecond conversion, rational VFR-relevant `avg_frame_rate`/`r_frame_rate` preservation, rotated side data, audio/video codec fields, stable/different fingerprints, paths containing spaces and Malayalam Unicode, portable contained references, missing paths, traversal/backslash rejection, schema-1 migration and clear replacement mismatch explanations. Existing worker transport/cancellation and editor checks continue to pass.
+
+Real worker smoke: rebuilt the verified upstream FFmpeg 9.0.1 source on macOS arm64 / Apple clang 21.0.0 with the selected LGPL/no-network profile and built-in format/codec support; the external ffmpeg/ffprobe hashes, sizes and configuration are recorded in `docs/DEPENDENCIES.md`. `npm run smoke:media-worker -- <ffmpeg> <ffprobe> <media>` used a locally generated path containing spaces and Malayalam text. The worker returned 2,002,000 µs duration, 320×180 coded dimensions, 30000/1001 rates, 90° rotation, H.264/AAC codec details and a stable fingerprint. Nothing was bundled or added to Git.
+
+Desktop smoke: the production Electron build was exercised on **macOS arm64** with the same explicit tool pair and a locally generated 2.002-second rotated H.264/AAC M4V; no user recording was read. The accessibility tree showed the exact dimensions/rate/rotation/codecs and 00:02 canonical timeline duration, and playback reached the pause/running state. Saving beside the media produced schema 2 JSON with the Unicode relative path and no embedded media. Reopen verified the fingerprint automatically. After moving the generated fixture to a space/Unicode path, reopen showed the real offline state and Relink controls; choosing the moved file verified and resumed it. Choosing a different generated MPEG-4/AAC file displayed fingerprint, rotation and codec differences, and the explicit override successfully adopted it. The final rebuilt app also confirmed missing-media reopen resets the playhead to zero while retaining the stored 00:02 duration. No runtime error was emitted.
+
+Limitations: only macOS arm64 was executed; Windows path syntax and safety rules are covered by tests, but Windows FFprobe execution, native dialogs and playback remain unverified. The development FFmpeg pair is external and not release-approved or bundled, so developers must still configure both absolute tool paths; D1/D2 own production artifacts, signing and the final codec matrix. Sampled fingerprints can theoretically miss changes outside sampled regions in large files and are intentionally paired with metadata comparison. The saved absolute fallback is platform-specific; portability comes from the safe relative reference when project and media are kept together. VFR fixtures verify exact reported rate preservation, not frame-accurate seeking or export. M3/M4 waveform, thumbnails/proxy diagnostics, transcription and rendered export remain unimplemented.
+
+Next: M3 can key real waveform cache data by the stored fingerprint and canonical source range. M2 is complete on macOS arm64; no later ticket was implemented.
+
+## 2026-09-14 — M1 media-worker contract and FFmpeg/ffprobe decision
+
+Completed: [ADR 0001](decisions/0001-media-worker-and-ffmpeg.md) selects project-controlled FFmpeg/ffprobe builds from matching upstream 9.0.1 source with an LGPL-2.1-or-later profile and explicit GPL/version3/nonfree/autodetection/network exclusions. It compares primary-source evidence for BtbN, Martin Riedl, npm static wrappers, Gyan and Evermeet, including target architectures, exact license/profile distinctions, configuration visibility, observed byte sizes, update/retention policies and offline redistribution obligations. Direct inspection found `--enable-nonfree` and nonredistributable license strings in the sampled npm Apple Silicon FFmpeg artifact; that artifact is rejected. Dependency inventory and architecture docs are updated. Remotion was not adopted, no npm dependency was added, and no media binaries entered Git.
+
+Implemented: a separately bundled TypeScript worker with strict bounded UTF-8/JSON messages and operation-specific schemas for probe, waveform, thumbnails, audio extraction and future shared-renderer export. Main owns executable configuration, job handles and shutdown; no renderer/preload surface was added. Request/result correlation, explicit cancellation, structured errors, honest progress phases, output bounds, deadlines and child-process cleanup are implemented. Both worker and tools launch with executable plus argument arrays and `shell: false`. [MEDIA_WORKER.md](MEDIA_WORKER.md) documents the wire contract, source timestamp/rational-rate semantics, portable paths, cancellation races, usage and packaging constraints.
+
+Verification: final `npm run check` passes strict TypeScript, **56 tests across seven files**, renderer build, Electron main/preload build and independent worker build. Tests cover every reserved operation contract, invalid ranges/rates/keys/versions/paths, POSIX/Windows/UNC paths, fragmented Malayalam UTF-8, malformed/oversized messages, wrong response IDs/operations, duplicate terminal responses, unsupported operations, real worker identity and exit, deadlines, shutdown, cancellation, literal shell metacharacters, real child exit diagnostics and bounded output. The active-tool cancellation test waits for an actual child PID and verifies it has exited before settlement. Test-only malformed protocol peers and real Node child programs do not simulate FFmpeg.
+
+Real smoke: `npm run smoke:media-worker` returned a different worker PID on macOS arm64 / Node 25.6.1. Built upstream FFmpeg/ffprobe 9.0.1 locally with Apple clang 21.0.0 in external temporary storage, then ran the smoke command with both absolute tool paths. The worker executed real `-version` and `-L` commands and returned the expected source version, exact build configuration and LGPL 2.1-or-later text, with only indeterminate running/inspection progress. The same pair also passed `electron . --media-worker-smoke` with the two documented developer path variables: parent PID 16593, worker PID 16596, Electron's Node 24.20.0. Source/binary hashes, sizes and configure command are recorded in the ADR. No input media was read or modified.
+
+Limitations: the local source build is WAV/PCM-only for diagnostics, not production video codec validation. `runtime` and `inspectToolchain` are the only implemented operations; all five media operations explicitly return `UNSUPPORTED_OPERATION`. No bundled binary, production manifest, verified upstream PGP signature, Windows execution/build, installer, waveform, thumbnails, transcription or export is claimed. Packaging must resolve the RunAsNode fuse/outside-ASAR layout and platform crash/process-tree containment; normal direct-child cancellation is tested. Source/build/license materials and exact per-target installed/download sizes must be completed before redistribution. Existing `package-lock.json` is unchanged because the dependency graph is unchanged.
+
+Next: M2 can implement real media probing, fingerprints and relinking through this boundary, enabling/testing actual input formats in the selected source build. M1's contract and decision are reviewable and **M1 is complete**; no later ticket was implemented.
+
+## 2026-09-14 — E3 keyboard editing and accessibility pass
+
+Completed: added a tested keyboard shortcut router for play/pause, one-second seek, split at playhead, delete, undo/redo and previous/next-cue navigation. Shortcuts are deliberately not intercepted from text, timestamp, select or contenteditable fields; native typing and text undo remain available there. The transport now has labelled play/pause and seek buttons plus an accessible playhead slider. Transcript cue buttons expose selected state and complete timing labels; keyboard cue navigation seeks, selects and moves visible focus. Timeline blocks are keyboard selectable with Enter/Space, and all focusable controls have a high-contrast visible focus ring. Inspector fields now have explicit labels and descriptions. Deleting restores focus to the following cue, prior cue, or the add button when no cue remains. The in-app Shortcuts disclosure lists only the implemented commands and states the editing-field rule.
+
+Verification: `npm run check` passes strict TypeScript, 26 tests across five files and both production builds. New focused tests cover every supported shortcut plus text/timestamp/contenteditable exclusions. macOS Electron accessibility-tree smoke test imported the mixed Malayalam/English fixture and confirmed labeled transcript toggle buttons, labelled inspector text/timestamp fields, labelled transport slider/buttons, zoom controls, keyboard-selectable timeline blocks and the complete in-app shortcut reference. Down Arrow selected/seeks the next cue and moved focus; Delete removed it and restored focus to the remaining cue; ⌘Z and ⌘⇧Z restored and reapplied the deletion. In the text editor, `s` entered text and ⌘Z performed native text undo rather than invoking application shortcuts. No runtime errors were emitted.
+
+Limitations: macOS was the only desktop platform smoke-tested. The play/pause command requires loaded video media; it reports an actionable local notice otherwise. Timeline pointer dragging remains pointer-only in this slice; keyboard users can select and seek timeline cues, while timing edits remain available through labelled inspector fields.
+
+Next: M1 can establish the real media-worker boundary and FFmpeg/ffprobe decision. E3 is complete.
+
+## 2026-09-14 — E2 draggable timing boundaries and timeline zoom
+
+Completed: replaced the static percentage timeline with a horizontally scrollable 1×–32× source-time viewport, adaptive subsecond/second ruler labels, draggable cue blocks and independent start/end handles. Pointer movement is converted directly between pixels and integer microseconds; no frame rounding is used. Drag previews update the selected transcript timing, inspector, playhead/seek target, timeline block and caption-overlay state together, then commit exactly one command on pointer release. Whole-cue moves preserve duration and shift contained word timings by the identical integer delta. Edge drags clamp to zero, positive duration, known media duration and contained word boundaries. Overlapping cues remain untouched and receive the existing visible warning treatment.
+
+Verification: `npm run check` passes strict TypeScript, 24 tests across four files and both production builds. New tests cover exact time/pixel round trips from 1× through 32×, source-time anchoring across zoom changes, whole-cue and edge clamping, timed-word containment, overlap preservation and one-step drag undo/redo. A macOS Electron pointer smoke test imported mixed Malayalam/English cues, dragged an end handle into an overlap, confirmed both cues and the visible warning, moved a whole cue, zoomed to 8×, scrolled horizontally, and verified synchronized timeline/transcript/inspector/playhead selection. A release outside the moving block exposed a transient-preview finalization bug; window-level pointer completion fixed it, and the repeated smoke confirmed clamping to 0 µs plus exact one-step undo and redo. No runtime errors were emitted.
+
+Limitations: the Electron smoke used caption-only state, so the transient caption-overlay data path is implemented but was not visually exercised over a playable video in this slice. Known-duration drag bounds and timed-word handle bounds are covered by unit tests. Windows was not tested. Timing remains source-time microseconds and is not claimed to be frame-accurate for variable-frame-rate media.
+
+Next: E3 can add keyboard editing, explicit handle keyboard affordances and focus restoration. M1/M2 remain responsible for the real media-worker boundary and probed canonical media duration.
+
+## 2026-09-14 — E1 command-based caption editing and validation
+
+Completed: replaced renderer-local caption patching with pure TypeScript commands for text and time updates, add, delete, split at the playhead and merge-next. Commands preserve the existing cue ID for text/time edits, the left cue on split and the first cue on merge; each successful user command is one history commit. User text edits are recorded as authoritative `user` text, preserve cue timing, conservatively retain only safe unchanged word IDs/timings and mark the cue timing for review. The project cue model now supports stable word IDs, timing provenance and review state while schema defaults keep existing version-1 project files readable.
+
+Validation: commands reject non-integer/non-positive cue timing, negative starts, known-media overflow and word timings outside their cue. Overlaps are warnings: cues are neither retimed nor removed, and the transcript plus inspector show persistent warning treatment. The inspector now has real add-at-playhead, split, merge-next and delete controls alongside command-backed text/time fields. `npm run check` passes strict TypeScript, 14 tests across three files and both production builds. A macOS Electron smoke test exercised add, mixed Malayalam/English text correction, split, undo and an overlap; both overlapping cues remained and the visible warning appeared. No runtime errors were emitted. Windows was not tested.
+
+Limitations: the desktop smoke used caption-only state rather than loading a media fixture, so known-duration rejection is covered by unit tests but was not exercised through video playback. Word timing can currently enter the model through project data but has no word editor yet; that remains R3 scope. `NTS.md`, requested in the task prompt, is not present in this workspace or its parent tree.
+
+Next: E2 can build draggable cue boundaries and timeline zoom on the command/validation layer. E3 remains responsible for keyboard editing and focus-restoration behavior.
+
+## 2026-09-14 — implementation ticket system
+
+Completed: added `tickets.md`, which separates the roadmap into dependency-aware, copy-ready implementation tickets across editing, media processing, persistence, transcription, shared rendering, export and distribution. Each ticket records its acceptance scope, verification expectations and a suggested Codex model/effort. The progress board marks only the already verified scaffold and first SRT slice as complete.
+
+Verification: cross-checked ticket coverage against `docs/PRODUCT.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md` and the current implementation status. No application code changed in this slice.
+
+Limitations: estimates for time/cost are intentionally omitted because they depend on fixtures, platform access and unresolved dependency choices. Model suggestions may be adjusted as Codex model availability changes.
+
+Next: choose E1 for the safest next foundation slice, E2 after E1 for visible timeline progress, M1 to begin real media processing, P1 for recovery work, or R1 to begin shared Malayalam-safe rendering.
+
+## 2026-09-14 — editor foundation scaffold
+
+Completed: initialized local Git and added a secure Electron 44 + React 19 + TypeScript application scaffold. The renderer uses context isolation, a content-security policy, Node integration disabled and a narrow validated preload bridge. The first slice supports native video selection and playback, UTF-8 SRT import, synchronized cue selection/seek/overlay/timeline, cue text and timestamp editing, undo/redo, versioned atomic project save/open, and atomic UTF-8 SRT export. Project files validate against schema version 1. Dependency versions and licenses are recorded in `docs/DEPENDENCIES.md`.
+
+Verification: `npm run check` passes strict TypeScript, two SRT unit tests (BOM, CRLF, Malayalam/English, multiline, malformed timing), renderer production build and Electron process bundling. `npm run dev` was smoke-tested on macOS: the Electron window rendered at 1200×768 and the preload bridge successfully opened the native SRT dialog. Windows has not been tested.
+
+Limitations: media relinking after reopening currently asks the user to select the video again; recovery copies are not implemented (debounced autosave to a named project is); timeline boundary dragging, waveform/thumbnails, add/split/merge/delete operations, local transcription, visual animations and rendered video export are not implemented. The UI currently uses system fonts; a redistributable Malayalam font bundle has not been selected.
+
+Next: add waveform extraction and draggable timing boundaries through a media-worker interface.
+
+Open decisions: final product name, source license, tested Malayalam model/default, optional aligner support, bundled font strategy, FFmpeg build and final shared rendering implementation.
+## 2026-09-17 — Optional one-click Gemini alignment and readable estimate fallback
+
+Completed: added the compact imported-SRT **Align audio** workflow with no confidence/provider/language review UI. A missing key opens the focused Settings dialog; otherwise one click starts a shared-scheduler alignment job with honest extraction/alignment phases and Cancel. The Gemini key never crosses the preload bridge after save: Electron main encrypts it using the operating system credential store and atomically stores only ciphertext in the app user-data directory with mode `0600`; `GEMINI_API_KEY` is a non-persisted developer override. The renderer supplies only a registered media fingerprint and cue snapshots.
+
+The main process groups non-empty cue ranges with 500 ms padding, merges gaps under two seconds, caps each upload at 20 minutes, extracts 16 kHz mono WAV in a job-owned temporary directory, and calls `gemini-3.5-transcribe` in verbatim mode with `ml-IN`/`en-IN` hints and word timestamps. Response storage is disabled and each Files API upload is deleted best-effort; job audio is always removed. No caption-text prompt, reasoning, diarization, custom vocabulary or full-video upload is used. This minimizes both uploaded duration and provider tokens while preserving code-switched speech support.
+
+Only exact NFC/case/punctuation-normalized, monotonic whole-token matches are accepted. The validator maps those timestamps once back to canonical source microseconds, enforces cue containment/non-overlap, and retains the exact imported SRT lexical token. Partial matches apply automatically; unmatched tokens remain `estimated`/`needsReview`, manual word timing wins conflicts, imported cue text/times never change, and the full result is one undoable project mutation. Schema 2 remains compatible via optional `alignmentRuns` and word `alignmentRunId`; the project stores validated timing/provenance and aggregate usage counts, never the raw provider transcript or credential.
+
+The offline estimator now reserves a final display hold of `min(600 ms, 20% of cue duration, duration - tokenCount µs)` and distributes grapheme-weighted start edges over the remaining reveal interval. The last estimated word ends at the cue boundary, so progressive reveal no longer makes final words appear only at the last instant. Malayalam grapheme segmentation and explicit estimated provenance are unchanged.
+
+Verification: `npm run check` passes strict TypeScript, **566 tests across 63 files**, the renderer production build, Electron main/preload bundle and separate worker build. New tests cover exact mixed Malayalam/English partial matching, preservation of manual correction timing, partial estimated fallback/provenance, alignment-run persistence, and the final-word hold. No live Gemini request was made, so provider authentication, billing, response compatibility and real-media accuracy remain unverified. No user media or credential was uploaded during verification. macOS/Windows keychain behavior and Windows media extraction are not yet interactively tested.
+
+Limitations/next: exact matching deliberately rejects fuzzy spelling differences; cloud availability/cost remains controlled by Google and requires the user's own key. File deletion is best-effort after the request, while provider-side expiry remains a secondary cleanup mechanism. The next validation slice should use a short consented Malayalam/English fixture and a restricted test key to measure matched-word coverage/boundary error, inspect actual API annotations/token counts, test cancellation during upload/request, and confirm Keychain/DPAPI behavior on release targets. A local forced aligner remains the long-term offline complement.
+
+## 2026-09-17 — Optional Gemini transcription and top-bar cleanup
+
+Completed: **Transcribe** can now use Gemini with the already-saved key as an opt-in alternative to local whisper.cpp. The dialog has an **Engine** choice, remembered per viewer, with engine-specific disclosure. Gemini hides model/device controls and offers Malayalam + English (mixed), Malayalam only or English only. A missing key opens Settings on the Gemini tab. Main extracts audio, the new worker `speechChunks` operation writes silence-gated speech chunk WAVs (same gating version as whisper.cpp; 20-minute cap), and each chunk is uploaded and transcribed with word timestamps (`store: false`, best-effort deletion). Timed words become segments at pauses/sentence ends/30 s with explicit, review-flagged adjustments. The result passes the existing `runTranscription` validation, apply choice and undo step, and captions receive real `model` word timing. The upload/request/delete client is now shared with alignment (`electron/geminiRecognition.ts`). `transcriptionRuns[]` is a union: existing whisper.cpp records are unchanged, and Gemini records store counts, versions and token usage only, never the key or raw response.
+
+The top bar went from ~12 equal buttons to three zones. The left shows identity plus the open media/project name. The center holds the captions workflow: Transcribe (accent while there are no captions), Align audio (only when captions and linked media exist), job progress pills and a "Media offline · Relink" chip only when needed. The right holds a **File** menu (Open video, Import SRT, Open project, Save project), an **Export** menu (MP4, SRT; disabled items state why), and a ⚙ button for one tabbed **Settings** dialog (Speech models, Gemini API key, Keyboard shortcuts). The empty video stage offers Open video / Import SRT / Open project. A native application menu (File/Edit/View/Window/Help) forwards validated commands through preload and owns ⌘/Ctrl+O, S, ⇧O, I, E, ⇧E and ⌘/Ctrl+, accelerators. `?` opens the shortcut reference. `MenuButton` is a dependency-free WAI-ARIA menu (arrow/Home/End/Escape, focus return, key events stopped so editor shortcuts do not fire).
+
+Verification: `npm run check` passes strict TypeScript, **591 tests across 70 files**, the renderer production build, Electron main/preload bundle and worker build. New tests cover speech chunk files and splitting, Gemini word→segment rules (Malayalam, punctuation, overlaps, clamping, 30 s cap), adapter offsets through `runTranscription`, service provenance/cleanup/cancellation with a fake recognizer, IPC request union (no key/device accepted for Gemini), run-record union compatibility, menu markup, native menu commands/accelerators, settings tabs, and Transcribe dialog disclosure. **No live Gemini request was made and the app was not launched interactively in this slice**: provider responses, real Malayalam accuracy, menu/keyboard behaviour in the Electron window and the new layout at narrow widths remain unverified on macOS and Windows.
+
+Limitations/next: run a consented short Malayalam/English clip through Gemini transcription with a restricted key and compare against whisper large-v3; verify ⌘S/⌘O fire once from the native menu while typing; check the top bar below 1100 px. Unifying all job progress into one shared status model is still open: each job currently renders its own pill.
+

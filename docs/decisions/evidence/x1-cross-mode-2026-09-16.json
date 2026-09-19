@@ -1,0 +1,461 @@
+{
+  "softwareDirectory": "/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-x1-UAXfiA",
+  "gpuDirectory": "/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-x1-yGoe4r",
+  "sourceHashes": {
+    "src/core/captionText.ts": "478678c694a70df407144cc690fc277481ca8883891b0f765a8f9621226780cb",
+    "src/captions/renderer.ts": "837132864a7ad0dde65a5033f1cce46ff7957f5c46c038b54c6c7987e37e466a",
+    "src/captions/CaptionPreview.tsx": "916eccd1d3ca161c4be5c860ccadda9448b4d812c818412fe676e8a09bf39711",
+    "src/captions/style.ts": "e5cdf7f7fe4340597657622ab7c34f6a42cb256a495ce03b079f8958708c395f",
+    "src/core/media.ts": "56dded6ce75a1fc63f44e62def2cead9af7e4c3c5a0d3a89cf36b929aff1745a",
+    "src/core/jobs.ts": "bb01cd21a55dd125fcfb56714f007731f88ec17d2d23e7898a3357613cf0459a",
+    "src/core/scriptCheck.ts": "3f4c7174feb26b93395b63dc5325a8c713c46019c12d81a55d46248f70aba226",
+    "src/core/transcription.ts": "739a7b078ffb1d0333f382bea431ff5bf253f8021a44d29630ea6531a31e44e3",
+    "src/core/model.ts": "f56564c06c3eeaf680adec76fb3013a29a3a04fdefb0c14d63c629bca15a6aa4",
+    "src/export/frameRequest.ts": "4d267bd9fc0700abebca51d84b8494ca4e1e862fcb43e3830baa46b7a8cb26e2",
+    "src/export/parityFixture.ts": "88bb3878dd9f7cd7aceb3cbd58c3e49a8d6b1498b58472669275d2e149f6e3d9",
+    "src/captions/fixtures.ts": "ccfd4d52d070372c5e873701b46e0289f115f808ec25c283dabee8a4b34f5e2d",
+    "src/export/frameHarness.tsx": "3115218cf27c41e6a0eb28a52deb67de1b0b71cf755cb15c6d5e23cf2362e2cb"
+  },
+  "cases": [
+    {
+      "file": "landscape-active-word-highlight-59.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30685,
+      "differingAlphaPixels": 26474,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.004402488425925926
+    },
+    {
+      "file": "landscape-active-word-highlight-66.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30685,
+      "differingAlphaPixels": 26474,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.004402488425925926
+    },
+    {
+      "file": "landscape-conjuncts.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 29238,
+      "differingAlphaPixels": 25327,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.003991488233024691
+    },
+    {
+      "file": "landscape-cue-only.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30090,
+      "differingAlphaPixels": 26079,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004131944444444444
+    },
+    {
+      "file": "landscape-decomposed.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 17456,
+      "differingAlphaPixels": 15019,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.002392216435185185
+    },
+    {
+      "file": "landscape-estimated.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 17813,
+      "differingAlphaPixels": 13277,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0025092833719135804
+    },
+    {
+      "file": "landscape-explicit.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 33629,
+      "differingAlphaPixels": 29458,
+      "maxChannelDelta": 99,
+      "meanAbsoluteChannelDelta": 0.011193455825617284
+    },
+    {
+      "file": "landscape-long-token.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 16068,
+      "differingAlphaPixels": 12868,
+      "maxChannelDelta": 8,
+      "meanAbsoluteChannelDelta": 0.002400173611111111
+    },
+    {
+      "file": "landscape-phrase-fade-75.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30090,
+      "differingAlphaPixels": 26079,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004131944444444444
+    },
+    {
+      "file": "landscape-phrase-fade-82.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30090,
+      "differingAlphaPixels": 26079,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004131944444444444
+    },
+    {
+      "file": "landscape-progressive-word-reveal-83.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 11176,
+      "differingAlphaPixels": 9738,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0015495997299382715
+    },
+    {
+      "file": "landscape-progressive-word-reveal-90.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 11176,
+      "differingAlphaPixels": 9738,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0015495997299382715
+    },
+    {
+      "file": "landscape-punctuation.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 37276,
+      "differingAlphaPixels": 32697,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.005081380208333333
+    },
+    {
+      "file": "landscape-static-clean-51.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30090,
+      "differingAlphaPixels": 26079,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004131944444444444
+    },
+    {
+      "file": "landscape-static-clean-58.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 30090,
+      "differingAlphaPixels": 26079,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004131944444444444
+    },
+    {
+      "file": "landscape-styled.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 266333,
+      "differingAlphaPixels": 172033,
+      "maxChannelDelta": 12,
+      "meanAbsoluteChannelDelta": 0.16159529320987653
+    },
+    {
+      "file": "landscape-vowel-signs.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 31991,
+      "differingAlphaPixels": 27309,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.004405743634259259
+    },
+    {
+      "file": "landscape-word-pop-67.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 17813,
+      "differingAlphaPixels": 13277,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0025092833719135804
+    },
+    {
+      "file": "landscape-word-pop-74.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 17813,
+      "differingAlphaPixels": 13277,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0025092833719135804
+    },
+    {
+      "file": "landscape-wrapping.png",
+      "dimensions": {
+        "width": 1920,
+        "height": 1080
+      },
+      "differingPixels": 56822,
+      "differingAlphaPixels": 49524,
+      "maxChannelDelta": 21,
+      "meanAbsoluteChannelDelta": 0.007875554591049383
+    },
+    {
+      "file": "portrait-active-word-highlight-16.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10988,
+      "differingAlphaPixels": 8751,
+      "maxChannelDelta": 5,
+      "meanAbsoluteChannelDelta": 0.001695240162037037
+    },
+    {
+      "file": "portrait-active-word-highlight-9.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10988,
+      "differingAlphaPixels": 8751,
+      "maxChannelDelta": 5,
+      "meanAbsoluteChannelDelta": 0.001695240162037037
+    },
+    {
+      "file": "portrait-conjuncts.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10311,
+      "differingAlphaPixels": 8285,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.001506196952160494
+    },
+    {
+      "file": "portrait-cue-only.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10741,
+      "differingAlphaPixels": 8640,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0015691309799382715
+    },
+    {
+      "file": "portrait-decomposed.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 6355,
+      "differingAlphaPixels": 5167,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0009334008487654321
+    },
+    {
+      "file": "portrait-estimated.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 7323,
+      "differingAlphaPixels": 4914,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.001088083526234568
+    },
+    {
+      "file": "portrait-explicit.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 11571,
+      "differingAlphaPixels": 9499,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0017181471836419753
+    },
+    {
+      "file": "portrait-long-token.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 6873,
+      "differingAlphaPixels": 5291,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0010766300154320988
+    },
+    {
+      "file": "portrait-phrase-fade-25.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10741,
+      "differingAlphaPixels": 8640,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0015691309799382715
+    },
+    {
+      "file": "portrait-phrase-fade-32.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10741,
+      "differingAlphaPixels": 8640,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0015691309799382715
+    },
+    {
+      "file": "portrait-progressive-word-reveal-33.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 3942,
+      "differingAlphaPixels": 3182,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0005822000385802469
+    },
+    {
+      "file": "portrait-progressive-word-reveal-40.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 3942,
+      "differingAlphaPixels": 3182,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0005822000385802469
+    },
+    {
+      "file": "portrait-punctuation.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 13348,
+      "differingAlphaPixels": 10704,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0019362461419753087
+    },
+    {
+      "file": "portrait-static-clean-1.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10741,
+      "differingAlphaPixels": 8640,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0015691309799382715
+    },
+    {
+      "file": "portrait-static-clean-8.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 10741,
+      "differingAlphaPixels": 8640,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.0015691309799382715
+    },
+    {
+      "file": "portrait-styled.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 87895,
+      "differingAlphaPixels": 52762,
+      "maxChannelDelta": 11,
+      "meanAbsoluteChannelDelta": 0.050436680169753084
+    },
+    {
+      "file": "portrait-vowel-signs.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 11496,
+      "differingAlphaPixels": 9279,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0016819782021604938
+    },
+    {
+      "file": "portrait-word-pop-17.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 7323,
+      "differingAlphaPixels": 4914,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.001088083526234568
+    },
+    {
+      "file": "portrait-word-pop-24.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 7323,
+      "differingAlphaPixels": 4914,
+      "maxChannelDelta": 4,
+      "meanAbsoluteChannelDelta": 0.001088083526234568
+    },
+    {
+      "file": "portrait-wrapping.png",
+      "dimensions": {
+        "width": 1080,
+        "height": 1920
+      },
+      "differingPixels": 20831,
+      "differingAlphaPixels": 17024,
+      "maxChannelDelta": 3,
+      "meanAbsoluteChannelDelta": 0.0030500096450617282
+    }
+  ]
+}

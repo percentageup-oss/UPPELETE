@@ -1,0 +1,49 @@
+{
+  "name": "caption-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first subtitle editor for Malayalam and English creator videos",
+  "type": "module",
+  "main": "dist-electron/main.cjs",
+  "scripts": {
+    "dev": "concurrently -k -s first \"vite\" \"npm:dev:electron\"",
+    "dev:electron": "wait-on tcp:5173 && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
+    "build": "vite build && npm run build:electron",
+    "build:electron": "esbuild electron/main.ts electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist-electron --out-extension:.js=.cjs && npm run build:worker",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build",
+    "build:worker": "node scripts/build-worker.mjs",
+    "smoke:media-worker": "npm run build:worker && node dist-worker/media-worker-smoke.cjs",
+    "smoke:transcription": "npm run build:worker && node dist-worker/transcription-smoke.cjs",
+    "smoke:captions": "electron scripts/caption-renderer-smoke.mjs",
+    "tools:whisper": "bash scripts/build-whisper.sh",
+    "bench:transcription": "npm run build:worker && node dist-worker/transcription-bench.cjs",
+    "convert:hf-whisper": "bash scripts/convert-hf-whisper.sh",
+    "prototype:export": "electron scripts/export-renderer-prototype.mjs",
+    "parity:export": "npm run build:electron && electron scripts/export-parity.mjs"
+  },
+  "dependencies": {
+    "@google/genai": "2.23.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "26.5.1",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "concurrently": "10.0.5",
+    "cross-env": "10.1.0",
+    "electron": "44.3.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "vitest": "4.1.11",
+    "wait-on": "9.1.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

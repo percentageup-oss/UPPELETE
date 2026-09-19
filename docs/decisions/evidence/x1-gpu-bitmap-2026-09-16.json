@@ -1,0 +1,6419 @@
+{
+  "mode": "gpu-bitmap",
+  "output": "/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-x1-yGoe4r",
+  "framesPerAspect": 600,
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "25.6.0",
+    "cpu": "Apple M4 Pro",
+    "logicalCores": 12,
+    "ramBytes": 25769803776
+  },
+  "versions": {
+    "node": "24.20.0",
+    "acorn": "8.18.0",
+    "ada": "4.0.0",
+    "amaro": "1.1.11",
+    "ares": "1.34.8",
+    "brotli": "1.2.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.4.3",
+    "merve": "1.2.2",
+    "modules": "149",
+    "napi": "10",
+    "nbytes": "0.1.4",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.70.0",
+    "nghttp3": "",
+    "ngtcp2": "",
+    "openssl": "0.0.0",
+    "simdjson": "4.6.6",
+    "simdutf": "7.7.0",
+    "sqlite": "3.53.4",
+    "tz": "2025c",
+    "undici": "7.29.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "15.2.124.19-electron.0",
+    "zlib": "1.3.2.1-motley",
+    "zstd": "1.6.0",
+    "electron": "44.3.0",
+    "chrome": "152.0.7977.78"
+  },
+  "cases": [
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.39999999990686774,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.40000000002328306,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161044,
+        "opaque": 18164,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f0746f8bec4e5ec06862b07fc9bd27b4c204ddcb598d1ca00a4c89390e17489c",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 160824,
+        "opaque": 18384,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "70fd41c463830e68f71af0c8b9f561e6a189ea3975f25e02cd0ee0f173b358e4",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 160824,
+        "opaque": 18384,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "70fd41c463830e68f71af0c8b9f561e6a189ea3975f25e02cd0ee0f173b358e4",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161044,
+        "opaque": 18164,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f0746f8bec4e5ec06862b07fc9bd27b4c204ddcb598d1ca00a4c89390e17489c",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161026,
+        "opaque": 18182,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "2527c3366d1870ede58b44b37ddb9f5289876c6c5f0e5ea9623fbd1625182607",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161235,
+        "opaque": 17973,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "e6535b60ec0aa04c11514f0910601968416027c7b67fa196f5d84327e39ee2b1",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 160375,
+        "opaque": 18833,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "28c2b01f3e259a35f9b145cd99ff0efa0ad302cfb875aead3c8adedf447e8d10",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161026,
+        "opaque": 18182,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "2527c3366d1870ede58b44b37ddb9f5289876c6c5f0e5ea9623fbd1625182607",
+      "repeatMatches": true,
+      "readinessMs": 0.10000000009313226,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.10000000009313226,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 179208,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "fa19143672ba98671b60739535bf0ae134f08a64d79b2bbb309299e06b1e915a",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.40000000002328306,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "phrase-fade",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 173080,
+        "opaque": 6128,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f1f1589af6f1747ee742964caf3974a0c9d0bb800f862babf25bdbc9dde6fdf9",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 175509,
+        "opaque": 3699,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f2ee4f147ffc18b5340f72c586953972a7ecb313f649500f53bb66186d9ec1a0",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 175509,
+        "opaque": 3699,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f2ee4f147ffc18b5340f72c586953972a7ecb313f649500f53bb66186d9ec1a0",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 175509,
+        "opaque": 3699,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f2ee4f147ffc18b5340f72c586953972a7ecb313f649500f53bb66186d9ec1a0",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "d66e085406cc30bded657d30f7e9c7e0f6d79fe9bcd1a98d9ec7a10682c162eb",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 173080,
+        "opaque": 6128,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f1f1589af6f1747ee742964caf3974a0c9d0bb800f862babf25bdbc9dde6fdf9",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "vowel-signs",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1886640,
+        "partial": 169433,
+        "opaque": 17527,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "eac36ed0d1b2bf9ca64ad1f2542fdb689b11bb8d6d9dbfcbe8ee0e347d5d4c77",
+      "readinessMs": 2.299999999930151
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "conjuncts",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1884360,
+        "partial": 173521,
+        "opaque": 15719,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "d08b964db3474ca147eef524dc7cf27286991390de209980336ffdee14f05456",
+      "readinessMs": 1.1999999999534339
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "decomposed",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1975180,
+        "partial": 87728,
+        "opaque": 10692,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "38cb545ce83ea1d1cf75ed4f73948f7068175c96682084215edce2afa3f4f6a0",
+      "readinessMs": 1.2999999999301508
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "wrapping",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1820155,
+        "partial": 226828,
+        "opaque": 26617,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f2db87b79fe9b7acc17fd8faa206bc9535bd471a6774507f3359b0056b38c85c",
+      "readinessMs": 3.599999999976717
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "punctuation",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1906248,
+        "partial": 147758,
+        "opaque": 19594,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "ff0e5840fc9237d5fcd311182f25dba21cd261206058d2694af1812304aa1a5c",
+      "readinessMs": 1.3000000000465661
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "explicit",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1881320,
+        "partial": 176125,
+        "opaque": 16155,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "0c4df3a233c30a1d3df1c70ead81853545f80d52a3df13d6ffe051a589608bf2",
+      "readinessMs": 1.2000000000698492
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "long-token",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 2009590,
+        "partial": 56920,
+        "opaque": 7090,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "7b15e7817f8fd1c949b3e71dfa221a3c35354132eb673b518f79279c16fde507",
+      "readinessMs": 2.099999999976717
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "estimated",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161026,
+        "opaque": 18182,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "2527c3366d1870ede58b44b37ddb9f5289876c6c5f0e5ea9623fbd1625182607",
+      "readinessMs": 1.2999999999301508
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "cue-only",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1894392,
+        "partial": 161156,
+        "opaque": 18052,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "aea2ae8491d4d97859f37ed846218cf3b7c682c8116b19a08cff4c0735639bab",
+      "readinessMs": 0.19999999995343387
+    },
+    {
+      "aspect": "portrait",
+      "fixture": "styled",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1867464,
+        "partial": 177540,
+        "opaque": 28596,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "4e119485caedb387fbfecf76bae8466eae5e26373dae2bd5467ad16246ff4649",
+      "readinessMs": 1.599999999976717
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 2.199999999953434,
+      "fontsStatus": "loaded",
+      "stalePaints": 2
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.10000000009313226,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.40000000002328306,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.10000000009313226,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507402,
+        "opaque": 58788,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "8a6b48dbd5ed7a0bd7cd71b38d890ee2025df6fef84690bb2b5cdb3ed1a68d88",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 506946,
+        "opaque": 59244,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "3208bc7592367dd701c5ebec0b23cecd6eae62f7ce7cd2c58051b160acb97648",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 506946,
+        "opaque": 59244,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "3208bc7592367dd701c5ebec0b23cecd6eae62f7ce7cd2c58051b160acb97648",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "active-word-highlight",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507402,
+        "opaque": 58788,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "8a6b48dbd5ed7a0bd7cd71b38d890ee2025df6fef84690bb2b5cdb3ed1a68d88",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 506950,
+        "opaque": 59240,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "a1e1d84454a211f3ef91689f586eacfdcb93fcf75d8fb3e9493f06f463fe28bc",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507693,
+        "opaque": 58497,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "35a84d33a00d566b2ebb331001a001a9f23d28fc94534df112cf824d76a0af8b",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 504954,
+        "opaque": 61236,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "62caadaa3d1e4ba3a108d027d8520702d08d390a7731749d0c9dfc9fd317aee1",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 506950,
+        "opaque": 59240,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "a1e1d84454a211f3ef91689f586eacfdcb93fcf75d8fb3e9493f06f463fe28bc",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.10000000009313226,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 566190,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "6d45dafe42314d67f22c9c562569f84febd84b9035069897f99ce0271b96ea78",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "phrase-fade",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.30000000004656613,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 546222,
+        "opaque": 19968,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "c56ffe5c5214ade555f1e65d89eca313fbe6d3fa4d7499a87bfcb88bbad82c86",
+      "repeatMatches": true,
+      "readinessMs": 0.2999999999301508,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 554124,
+        "opaque": 12066,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "220fb791e6a277ca415d78640fdf1ca5638d9210d79bceef16254c7f1b7ff0d5",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600100007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 554124,
+        "opaque": 12066,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "220fb791e6a277ca415d78640fdf1ca5638d9210d79bceef16254c7f1b7ff0d5",
+      "repeatMatches": true,
+      "readinessMs": 0.2000000000698492,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600225007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 554124,
+        "opaque": 12066,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "220fb791e6a277ca415d78640fdf1ca5638d9210d79bceef16254c7f1b7ff0d5",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3603000006,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3603000007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 2073600,
+        "partial": 0,
+        "opaque": 0,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "788ae0147bdf979a6575938ca2d7d4403788588f7be2010f03776c968fd1ab49",
+      "repeatMatches": true,
+      "readinessMs": 0.09999999997671694,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "motion": "progressive-word-reveal",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 546222,
+        "opaque": 19968,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "c56ffe5c5214ade555f1e65d89eca313fbe6d3fa4d7499a87bfcb88bbad82c86",
+      "repeatMatches": true,
+      "readinessMs": 0.19999999995343387,
+      "fontsStatus": "loaded",
+      "stalePaints": 1
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "vowel-signs",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1483110,
+        "partial": 533950,
+        "opaque": 56540,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "0a1138530d20531b42b3ae0357305b6fdac3055659140503332d2f7bc43d3b00",
+      "readinessMs": 1.1999999999534339
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "conjuncts",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1475010,
+        "partial": 547639,
+        "opaque": 50951,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f4b723909c34960239e6e20f4fb5140c9bd55c7ded5a0472ee4762563510f2a4",
+      "readinessMs": 1.099999999976717
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "decomposed",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1761708,
+        "partial": 277174,
+        "opaque": 34718,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "38179ac0e81303e51ddc3c4897763e91673c06a65e8bfdda7f984d6aa6e7a723",
+      "readinessMs": 1.8999999999068677
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "wrapping",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1272823,
+        "partial": 713709,
+        "opaque": 87068,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "dee3d8d28e32477bdfbe00fa5bcc2fc060961c7e0327dd29fdf85e7ca727a541",
+      "readinessMs": 3.599999999976717
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "punctuation",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1545480,
+        "partial": 464975,
+        "opaque": 63145,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "6622667226b30c73d51dc31eee6b91bdf6ea4d8244434daaeb96728f3830a03c",
+      "readinessMs": 1.400000000023283
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "explicit",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1465826,
+        "partial": 555571,
+        "opaque": 52203,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "c5ea1e53f5ca3a6ce71248a485d1c0dae8304492fa1edda2c2a627db2f3ab61a",
+      "readinessMs": 1.3000000000465661
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "long-token",
+      "motion": "static-clean",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1870716,
+        "partial": 178742,
+        "opaque": 24142,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "80dcdbb5fbfb913148941973c05f17c86f2defe6777189521ade7fa2cd9a0ea8",
+      "readinessMs": 2.199999999953434
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "estimated",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 506950,
+        "opaque": 59240,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "a1e1d84454a211f3ef91689f586eacfdcb93fcf75d8fb3e9493f06f463fe28bc",
+      "readinessMs": 1.2999999999301508
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "cue-only",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1507410,
+        "partial": 507597,
+        "opaque": 58593,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "f971489d5d4422ba2699994b19f86db7b635c22f405fffe90f41b2ced09bbd35",
+      "readinessMs": 0.19999999995343387
+    },
+    {
+      "aspect": "landscape",
+      "fixture": "styled",
+      "motion": "word-pop",
+      "timestampUs": 3600625007,
+      "differingBytes": 0,
+      "maxByteDelta": 0,
+      "repeatMatches": true,
+      "alpha": {
+        "clear": 1423662,
+        "partial": 559739,
+        "opaque": 90199,
+        "nonzeroRgbUnderClear": 0
+      },
+      "hash": "e6957113a21490923bec8fb5453408bbcb4ea0b133ca02214a5732fc6227f840",
+      "readinessMs": 1.8000000000465661
+    }
+  ],
+  "benchmarks": [
+    {
+      "aspect": "portrait",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "frames": 600,
+      "bitmapBytes": 8294400,
+      "rawFps": 145.4500541684358,
+      "rawMeanMs": 6.875212290000031,
+      "rawP95Ms": 9.993666000000303,
+      "pngMeanMs": 11.701050413333329,
+      "pngP95Ms": 11.946667000000161,
+      "rawPlusPngFps": 53.832141371501926,
+      "beforeWorkingSetKiB": 860416,
+      "afterWorkingSetKiB": 871312,
+      "sampledMaxWorkingSetKiB": 1009264
+    },
+    {
+      "aspect": "landscape",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "frames": 600,
+      "bitmapBytes": 8294400,
+      "rawFps": 131.73386700268662,
+      "rawMeanMs": 7.591062364999925,
+      "rawP95Ms": 10.217915999997786,
+      "pngMeanMs": 16.381706851666646,
+      "pngP95Ms": 16.997541000000638,
+      "rawPlusPngFps": 41.7139960328309,
+      "beforeWorkingSetKiB": 872544,
+      "afterWorkingSetKiB": 1057200,
+      "sampledMaxWorkingSetKiB": 1069312
+    }
+  ],
+  "memorySamples": [
+    {
+      "aspect": "portrait",
+      "index": 0,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 414656,
+          "peakWorkingSetKiB": 437616
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153152,
+          "peakWorkingSetKiB": 158096
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 141264,
+          "peakWorkingSetKiB": 141264
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 10,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 300896,
+          "peakWorkingSetKiB": 439120
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154240,
+          "peakWorkingSetKiB": 158096
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 142848,
+          "peakWorkingSetKiB": 142848
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 20,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341584,
+          "peakWorkingSetKiB": 439120
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 155376,
+          "peakWorkingSetKiB": 158096
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 144304,
+          "peakWorkingSetKiB": 144304
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 30,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 366016,
+          "peakWorkingSetKiB": 439216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 156224,
+          "peakWorkingSetKiB": 158096
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 146048,
+          "peakWorkingSetKiB": 146048
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 40,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 414832,
+          "peakWorkingSetKiB": 439216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 156944,
+          "peakWorkingSetKiB": 158096
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 149600,
+          "peakWorkingSetKiB": 149600
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 50,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431264,
+          "peakWorkingSetKiB": 447456
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 158112,
+          "peakWorkingSetKiB": 158112
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 152272,
+          "peakWorkingSetKiB": 152272
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 60,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431408,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 159312,
+          "peakWorkingSetKiB": 159312
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 141552,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 154336,
+          "peakWorkingSetKiB": 154336
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 70,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 325648,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 158880,
+          "peakWorkingSetKiB": 159888
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 155360,
+          "peakWorkingSetKiB": 155360
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 80,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341920,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 158880,
+          "peakWorkingSetKiB": 159888
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 156512,
+          "peakWorkingSetKiB": 156512
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 90,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 374480,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 158880,
+          "peakWorkingSetKiB": 159888
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 157568,
+          "peakWorkingSetKiB": 157568
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 100,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 407024,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 159504,
+          "peakWorkingSetKiB": 159888
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50608,
+          "peakWorkingSetKiB": 50608
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 158784,
+          "peakWorkingSetKiB": 158784
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 110,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431424,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 160160,
+          "peakWorkingSetKiB": 160160
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 160144,
+          "peakWorkingSetKiB": 160144
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 120,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 317536,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 160928,
+          "peakWorkingSetKiB": 160928
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140544,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 161264,
+          "peakWorkingSetKiB": 161264
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 130,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 350080,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 161184,
+          "peakWorkingSetKiB": 161280
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 162432,
+          "peakWorkingSetKiB": 162432
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 140,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382624,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 161648,
+          "peakWorkingSetKiB": 161648
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 164000,
+          "peakWorkingSetKiB": 164000
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 150,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 415168,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 161984,
+          "peakWorkingSetKiB": 161984
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 165136,
+          "peakWorkingSetKiB": 165136
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 160,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309216,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 162416,
+          "peakWorkingSetKiB": 162416
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 166208,
+          "peakWorkingSetKiB": 166208
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 170,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341808,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 162432,
+          "peakWorkingSetKiB": 162432
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 167008,
+          "peakWorkingSetKiB": 167008
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 180,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 374352,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 162432,
+          "peakWorkingSetKiB": 162432
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 167872,
+          "peakWorkingSetKiB": 167872
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 190,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 406896,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 162880,
+          "peakWorkingSetKiB": 162880
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 169040,
+          "peakWorkingSetKiB": 169040
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 200,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431296,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 163344,
+          "peakWorkingSetKiB": 163344
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 170464,
+          "peakWorkingSetKiB": 170464
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 210,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 317408,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 163632,
+          "peakWorkingSetKiB": 163632
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 171632,
+          "peakWorkingSetKiB": 171632
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 220,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 349968,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 163984,
+          "peakWorkingSetKiB": 163984
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 172816,
+          "peakWorkingSetKiB": 172816
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 230,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382528,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 164224,
+          "peakWorkingSetKiB": 164224
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 174432,
+          "peakWorkingSetKiB": 174432
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 240,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 415072,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 164720,
+          "peakWorkingSetKiB": 164720
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 175440,
+          "peakWorkingSetKiB": 175440
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 250,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309296,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 164336,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 176592,
+          "peakWorkingSetKiB": 176592
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 260,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341840,
+          "peakWorkingSetKiB": 447568
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 164096,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 177296,
+          "peakWorkingSetKiB": 177296
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 270,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 366256,
+          "peakWorkingSetKiB": 447616
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153920,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 178304,
+          "peakWorkingSetKiB": 178304
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 280,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 358128,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153920,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 179360,
+          "peakWorkingSetKiB": 179360
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 290,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382528,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153744,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 180672,
+          "peakWorkingSetKiB": 180672
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 300,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 398800,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153984,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 181856,
+          "peakWorkingSetKiB": 181856
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 310,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 406928,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153824,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 182896,
+          "peakWorkingSetKiB": 182896
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 320,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431344,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154304,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 184096,
+          "peakWorkingSetKiB": 184096
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 330,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 317440,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154448,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 185072,
+          "peakWorkingSetKiB": 185072
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 340,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 349984,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154496,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 186224,
+          "peakWorkingSetKiB": 186224
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 350,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382528,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154496,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 186912,
+          "peakWorkingSetKiB": 186912
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 360,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 415072,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154512,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 187808,
+          "peakWorkingSetKiB": 187808
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 370,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309296,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154480,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 188848,
+          "peakWorkingSetKiB": 188848
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 380,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341840,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154304,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 190000,
+          "peakWorkingSetKiB": 190000
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 390,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 374384,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153872,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 191008,
+          "peakWorkingSetKiB": 191008
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 400,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 406928,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154480,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 193584,
+          "peakWorkingSetKiB": 193584
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 410,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 431344,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154608,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 197168,
+          "peakWorkingSetKiB": 197168
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 420,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 317440,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154576,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 198736,
+          "peakWorkingSetKiB": 198736
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 430,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 350000,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154864,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 199856,
+          "peakWorkingSetKiB": 199856
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 440,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382544,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154864,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 202240,
+          "peakWorkingSetKiB": 202240
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 450,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 415088,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154960,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 205168,
+          "peakWorkingSetKiB": 205168
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 460,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309312,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 155056,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 206448,
+          "peakWorkingSetKiB": 206448
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 470,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 341920,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154720,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 207472,
+          "peakWorkingSetKiB": 207472
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 480,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 374384,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154736,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 208528,
+          "peakWorkingSetKiB": 208528
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 490,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 398800,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154432,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 209952,
+          "peakWorkingSetKiB": 209952
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 500,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 439488,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154048,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 210944,
+          "peakWorkingSetKiB": 210944
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 510,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 398896,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 154048,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 211920,
+          "peakWorkingSetKiB": 211920
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 520,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 325648,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153904,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 212800,
+          "peakWorkingSetKiB": 212800
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 530,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 350064,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153904,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 213808,
+          "peakWorkingSetKiB": 213808
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 540,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 358208,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153904,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 214544,
+          "peakWorkingSetKiB": 214544
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 550,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 382624,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153792,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 216208,
+          "peakWorkingSetKiB": 216352
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 560,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 398912,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153680,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 216432,
+          "peakWorkingSetKiB": 216432
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 570,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 415200,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153232,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 216672,
+          "peakWorkingSetKiB": 216672
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 580,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 447744,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153488,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 216944,
+          "peakWorkingSetKiB": 216944
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 590,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309440,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153312,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 217296,
+          "peakWorkingSetKiB": 217296
+        }
+      ]
+    },
+    {
+      "aspect": "portrait",
+      "index": 599,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 309440,
+          "peakWorkingSetKiB": 455760
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 153312,
+          "peakWorkingSetKiB": 164800
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50592,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4493,
+          "type": "Tab",
+          "workingSetKiB": 140496,
+          "peakWorkingSetKiB": 141840
+        },
+        {
+          "pid": 4494,
+          "type": "Tab",
+          "workingSetKiB": 217456,
+          "peakWorkingSetKiB": 217456
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 0,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353136,
+          "peakWorkingSetKiB": 458160
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 206096,
+          "peakWorkingSetKiB": 206224
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 151200,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 152240,
+          "peakWorkingSetKiB": 154640
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 10,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 402144,
+          "peakWorkingSetKiB": 458160
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 207600,
+          "peakWorkingSetKiB": 207600
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 151200,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 154656,
+          "peakWorkingSetKiB": 154656
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 20,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 434688,
+          "peakWorkingSetKiB": 458160
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208528,
+          "peakWorkingSetKiB": 208752
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 151200,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 156400,
+          "peakWorkingSetKiB": 156400
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 30,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 410336,
+          "peakWorkingSetKiB": 458160
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 209888,
+          "peakWorkingSetKiB": 209888
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 151200,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 158512,
+          "peakWorkingSetKiB": 158512
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 40,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328912,
+          "peakWorkingSetKiB": 459088
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 210928,
+          "peakWorkingSetKiB": 210928
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 151200,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 162160,
+          "peakWorkingSetKiB": 162160
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 50,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 337184,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208480,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146864,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 165200,
+          "peakWorkingSetKiB": 165200
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 60,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 369728,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208944,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146864,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 167392,
+          "peakWorkingSetKiB": 167392
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 70,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 394128,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 209232,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146864,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 168768,
+          "peakWorkingSetKiB": 168768
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 80,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 402272,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208880,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146864,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 169808,
+          "peakWorkingSetKiB": 169808
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 90,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418528,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 200336,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146864,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 170976,
+          "peakWorkingSetKiB": 170976
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 100,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442944,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 200128,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146880,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 172368,
+          "peakWorkingSetKiB": 172368
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 110,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328912,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 202576,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 174096,
+          "peakWorkingSetKiB": 174144
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 120,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361456,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 204064,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 175696,
+          "peakWorkingSetKiB": 175696
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 130,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 394000,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 205664,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 177328,
+          "peakWorkingSetKiB": 177328
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 140,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426544,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 207040,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 179168,
+          "peakWorkingSetKiB": 179200
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 150,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 320768,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 207488,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 180560,
+          "peakWorkingSetKiB": 180560
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 160,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353312,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208016,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 181968,
+          "peakWorkingSetKiB": 181968
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 170,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 385856,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208016,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 182816,
+          "peakWorkingSetKiB": 182816
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 180,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418400,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208016,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 183728,
+          "peakWorkingSetKiB": 183728
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 190,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442800,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208656,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 185472,
+          "peakWorkingSetKiB": 185472
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 200,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328928,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 208240,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 187328,
+          "peakWorkingSetKiB": 187328
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 210,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361472,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195456,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 188800,
+          "peakWorkingSetKiB": 188800
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 220,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 394016,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196224,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 190336,
+          "peakWorkingSetKiB": 190336
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 230,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426560,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196960,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 192496,
+          "peakWorkingSetKiB": 192496
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 240,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 320784,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 197632,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 194432,
+          "peakWorkingSetKiB": 194432
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 250,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353328,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196816,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 195600,
+          "peakWorkingSetKiB": 195600
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 260,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 385872,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195536,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 196416,
+          "peakWorkingSetKiB": 196416
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 270,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418416,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194288,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 197200,
+          "peakWorkingSetKiB": 197200
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 280,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442832,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194848,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 198528,
+          "peakWorkingSetKiB": 198528
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 290,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328832,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196208,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 199888,
+          "peakWorkingSetKiB": 199888
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 300,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361376,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196512,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 201360,
+          "peakWorkingSetKiB": 201360
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 310,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 393920,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196112,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 202672,
+          "peakWorkingSetKiB": 202672
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 320,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426480,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196576,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 204080,
+          "peakWorkingSetKiB": 204080
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 330,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 320704,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195296,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 205728,
+          "peakWorkingSetKiB": 205728
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 340,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353248,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194784,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 206912,
+          "peakWorkingSetKiB": 206912
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 350,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 385792,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 193520,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 207856,
+          "peakWorkingSetKiB": 207856
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 360,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418336,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 192752,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 208656,
+          "peakWorkingSetKiB": 208656
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 370,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442752,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 193008,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 209888,
+          "peakWorkingSetKiB": 209888
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 380,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328848,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194944,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 211152,
+          "peakWorkingSetKiB": 211152
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 390,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361424,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 196096,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146832,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 213728,
+          "peakWorkingSetKiB": 213728
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 400,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 393968,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195184,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146816,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 217488,
+          "peakWorkingSetKiB": 217488
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 410,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426512,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195232,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 219824,
+          "peakWorkingSetKiB": 219824
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 420,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 320736,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194928,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 221024,
+          "peakWorkingSetKiB": 221024
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 430,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353280,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 193968,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 223904,
+          "peakWorkingSetKiB": 223904
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 440,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 385824,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 192848,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 227104,
+          "peakWorkingSetKiB": 227104
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 450,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418368,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 192000,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 227872,
+          "peakWorkingSetKiB": 227872
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 460,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442768,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 193248,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 229216,
+          "peakWorkingSetKiB": 229216
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 470,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328880,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194720,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 230464,
+          "peakWorkingSetKiB": 230464
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 480,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361424,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195552,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 231664,
+          "peakWorkingSetKiB": 231664
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 490,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 393968,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195440,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 232528,
+          "peakWorkingSetKiB": 232528
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 500,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426512,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195792,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 233520,
+          "peakWorkingSetKiB": 233520
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 510,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 320736,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194832,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 234352,
+          "peakWorkingSetKiB": 234352
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 520,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 353280,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 193856,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 235408,
+          "peakWorkingSetKiB": 235408
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 530,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 385824,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 192560,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50640,
+          "peakWorkingSetKiB": 50640
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 236144,
+          "peakWorkingSetKiB": 236144
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 540,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 418368,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 191360,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 236864,
+          "peakWorkingSetKiB": 236864
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 550,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 442784,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 191568,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 237664,
+          "peakWorkingSetKiB": 237792
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 560,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 328912,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 192416,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 237744,
+          "peakWorkingSetKiB": 237792
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 570,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 361456,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 194048,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 237808,
+          "peakWorkingSetKiB": 237808
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 580,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 394016,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195504,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 238112,
+          "peakWorkingSetKiB": 238112
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 590,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426560,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195392,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 238256,
+          "peakWorkingSetKiB": 238256
+        }
+      ]
+    },
+    {
+      "aspect": "landscape",
+      "index": 599,
+      "metrics": [
+        {
+          "pid": 4489,
+          "type": "Browser",
+          "workingSetKiB": 426560,
+          "peakWorkingSetKiB": 459216
+        },
+        {
+          "pid": 4490,
+          "type": "GPU",
+          "workingSetKiB": 195008,
+          "peakWorkingSetKiB": 211664
+        },
+        {
+          "pid": 4491,
+          "type": "Utility",
+          "workingSetKiB": 50656,
+          "peakWorkingSetKiB": 50656
+        },
+        {
+          "pid": 4513,
+          "type": "Tab",
+          "workingSetKiB": 146640,
+          "peakWorkingSetKiB": 157872
+        },
+        {
+          "pid": 4514,
+          "type": "Tab",
+          "workingSetKiB": 238336,
+          "peakWorkingSetKiB": 238336
+        }
+      ]
+    }
+  ],
+  "custom": [],
+  "sourceHashes": {
+    "src/core/captionText.ts": "478678c694a70df407144cc690fc277481ca8883891b0f765a8f9621226780cb",
+    "src/captions/renderer.ts": "837132864a7ad0dde65a5033f1cce46ff7957f5c46c038b54c6c7987e37e466a",
+    "src/captions/CaptionPreview.tsx": "916eccd1d3ca161c4be5c860ccadda9448b4d812c818412fe676e8a09bf39711",
+    "src/captions/style.ts": "e5cdf7f7fe4340597657622ab7c34f6a42cb256a495ce03b079f8958708c395f",
+    "src/core/media.ts": "56dded6ce75a1fc63f44e62def2cead9af7e4c3c5a0d3a89cf36b929aff1745a",
+    "src/core/jobs.ts": "bb01cd21a55dd125fcfb56714f007731f88ec17d2d23e7898a3357613cf0459a",
+    "src/core/scriptCheck.ts": "3f4c7174feb26b93395b63dc5325a8c713c46019c12d81a55d46248f70aba226",
+    "src/core/transcription.ts": "739a7b078ffb1d0333f382bea431ff5bf253f8021a44d29630ea6531a31e44e3",
+    "src/core/model.ts": "f56564c06c3eeaf680adec76fb3013a29a3a04fdefb0c14d63c629bca15a6aa4",
+    "src/export/frameRequest.ts": "4d267bd9fc0700abebca51d84b8494ca4e1e862fcb43e3830baa46b7a8cb26e2",
+    "src/export/parityFixture.ts": "88bb3878dd9f7cd7aceb3cbd58c3e49a8d6b1498b58472669275d2e149f6e3d9",
+    "src/captions/fixtures.ts": "ccfd4d52d070372c5e873701b46e0289f115f808ec25c283dabee8a4b34f5e2d",
+    "src/export/frameHarness.tsx": "3115218cf27c41e6a0eb28a52deb67de1b0b71cf755cb15c6d5e23cf2362e2cb"
+  },
+  "bundleSha256": "ce50a61c6b438b6cc8acac42bd5be5004ed4f4d15b21d3e231ef0c4177f7f6d3",
+  "transportSha256": "344879d51761c42630fab83e43b2aadfbed8c51176e6387d5a2ebb7fbedec2b5",
+  "baselineMemory": [
+    {
+      "pid": 4489,
+      "type": "Browser",
+      "workingSetKiB": 171776,
+      "peakWorkingSetKiB": 171776
+    },
+    {
+      "pid": 4490,
+      "type": "GPU",
+      "workingSetKiB": 60016,
+      "peakWorkingSetKiB": 60016
+    },
+    {
+      "pid": 4491,
+      "type": "Utility",
+      "workingSetKiB": 45888,
+      "peakWorkingSetKiB": 45888
+    }
+  ],
+  "portraitFonts": [
+    {
+      "fonts": [
+        {
+          "familyName": "Malayalam Sangam MN",
+          "glyphCount": 24,
+          "isCustomFont": false,
+          "postScriptName": "MalayalamSangamMN-Bold"
+        }
+      ]
+    },
+    {
+      "fonts": [
+        {
+          "familyName": "Malayalam Sangam MN",
+          "glyphCount": 14,
+          "isCustomFont": false,
+          "postScriptName": "MalayalamSangamMN-Bold"
+        },
+        {
+          "familyName": "Arial",
+          "glyphCount": 1,
+          "isCustomFont": false,
+          "postScriptName": "Arial-BoldMT"
+        },
+        {
+          "familyName": "Apple Color Emoji",
+          "glyphCount": 1,
+          "isCustomFont": false,
+          "postScriptName": "AppleColorEmoji"
+        }
+      ]
+    }
+  ],
+  "portraitFontFailureMs": 3.275416999999834,
+  "landscapeFonts": [
+    {
+      "fonts": [
+        {
+          "familyName": "Malayalam Sangam MN",
+          "glyphCount": 24,
+          "isCustomFont": false,
+          "postScriptName": "MalayalamSangamMN-Bold"
+        }
+      ]
+    },
+    {
+      "fonts": [
+        {
+          "familyName": "Malayalam Sangam MN",
+          "glyphCount": 14,
+          "isCustomFont": false,
+          "postScriptName": "MalayalamSangamMN-Bold"
+        },
+        {
+          "familyName": "Arial",
+          "glyphCount": 1,
+          "isCustomFont": false,
+          "postScriptName": "Arial-BoldMT"
+        },
+        {
+          "familyName": "Apple Color Emoji",
+          "glyphCount": 1,
+          "isCustomFont": false,
+          "postScriptName": "AppleColorEmoji"
+        }
+      ]
+    }
+  ],
+  "landscapeFontFailureMs": 3.528375000001688,
+  "sourceHashesAfterRun": {
+    "src/core/captionText.ts": "478678c694a70df407144cc690fc277481ca8883891b0f765a8f9621226780cb",
+    "src/captions/renderer.ts": "837132864a7ad0dde65a5033f1cce46ff7957f5c46c038b54c6c7987e37e466a",
+    "src/captions/CaptionPreview.tsx": "916eccd1d3ca161c4be5c860ccadda9448b4d812c818412fe676e8a09bf39711",
+    "src/captions/style.ts": "e5cdf7f7fe4340597657622ab7c34f6a42cb256a495ce03b079f8958708c395f",
+    "src/core/media.ts": "56dded6ce75a1fc63f44e62def2cead9af7e4c3c5a0d3a89cf36b929aff1745a",
+    "src/core/jobs.ts": "bb01cd21a55dd125fcfb56714f007731f88ec17d2d23e7898a3357613cf0459a",
+    "src/core/scriptCheck.ts": "3f4c7174feb26b93395b63dc5325a8c713c46019c12d81a55d46248f70aba226",
+    "src/core/transcription.ts": "739a7b078ffb1d0333f382bea431ff5bf253f8021a44d29630ea6531a31e44e3",
+    "src/core/model.ts": "f56564c06c3eeaf680adec76fb3013a29a3a04fdefb0c14d63c629bca15a6aa4",
+    "src/export/frameRequest.ts": "4d267bd9fc0700abebca51d84b8494ca4e1e862fcb43e3830baa46b7a8cb26e2",
+    "src/export/parityFixture.ts": "88bb3878dd9f7cd7aceb3cbd58c3e49a8d6b1498b58472669275d2e149f6e3d9",
+    "src/captions/fixtures.ts": "ccfd4d52d070372c5e873701b46e0289f115f808ec25c283dabee8a4b34f5e2d",
+    "src/export/frameHarness.tsx": "3115218cf27c41e6a0eb28a52deb67de1b0b71cf755cb15c6d5e23cf2362e2cb"
+  },
+  "finalMemory": [
+    {
+      "pid": 4489,
+      "type": "Browser",
+      "workingSetKiB": 417840,
+      "peakWorkingSetKiB": 459216
+    },
+    {
+      "pid": 4490,
+      "type": "GPU",
+      "workingSetKiB": 165888,
+      "peakWorkingSetKiB": 211664
+    },
+    {
+      "pid": 4491,
+      "type": "Utility",
+      "workingSetKiB": 50656,
+      "peakWorkingSetKiB": 50656
+    }
+  ],
+  "gpuFeatures": {
+    "2d_canvas": "enabled",
+    "direct_rendering_display_compositor": "disabled_off_ok",
+    "gpu_compositing": "enabled",
+    "multiple_raster_threads": "enabled_on",
+    "opengl": "enabled_on",
+    "rasterization": "enabled",
+    "raw_draw": "disabled_off_ok",
+    "skia_graphite": "enabled_on",
+    "trees_in_viz": "disabled_off",
+    "video_decode": "enabled",
+    "video_encode": "enabled",
+    "webgl": "enabled",
+    "webgpu": "enabled",
+    "webnn": "disabled_off"
+  }
+}
