@@ -26,7 +26,7 @@ const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
   schemaVersion: 5, id: 'project', title: 'Test', cues: [cue('cue-a')],
   assets: [asset('x', 'video'), asset('y', 'video', 10 * US), asset('img', 'image'), asset('snd', 'audio', 4 * US)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')],
-  clips: [video('c1', 'V1', 0, 0, 20 * US)], blurRegions: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
+  clips: [video('c1', 'V1', 0, 0, 20 * US)], blurRegions: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
   ...dates, ...extra,
 })
 const context = { compositionHeight: 607.5 }
@@ -115,7 +115,7 @@ describe('item commands', () => {
   })
 
   it('warns (never errors) when a picture-in-picture rect runs below the frame', () => {
-    const tall = project({ clips: [{ ...image('i', 'V2', 0, US), rect: { x: 0, y: 500, width: 100, height: 400 } }] })
+    const tall = project({ clips: [{ ...image('i', 'V2', 0, US), rect: { x: 0, y: 500, width: 100, height: 400 } } as Clip] })
     const validation = validateItems(tall, context)
     expect(validation.errors).toEqual([])
     expect(validation.warnings.map((warning) => warning.kind)).toEqual(['rect-bounds'])
@@ -167,5 +167,17 @@ describe('item commands', () => {
     const moved = run(added.project, { type: 'blur-update', blurId: 'b1', changes: { startUs: US, endUs: 2 * US } })
     expect(moved.project.blurRegions[0]).toMatchObject({ startUs: US, endUs: 2 * US })
     expect(run(moved.project, { type: 'blur-delete', blurId: 'b1' }).project.blurRegions).toEqual([])
+  })
+
+  it('adds, updates and deletes ruler markers, keeping them sorted by time', () => {
+    const second = run(project(), { type: 'marker-add', marker: { id: 'm2', atUs: 5 * US, text: 'second' } })
+    const both = run(second.project, { type: 'marker-add', marker: { id: 'm1', atUs: US, text: 'insert logo here' } })
+    expect(both.selection).toEqual({ kind: 'marker', id: 'm1' })
+    expect(both.project.markers.map((marker) => marker.id)).toEqual(['m1', 'm2'])
+    const renamed = run(both.project, { type: 'marker-update', markerId: 'm1', changes: { text: 'moved', color: '#ff8800' } })
+    expect(renamed.project.markers[0]).toMatchObject({ text: 'moved', color: '#ff8800' })
+    const deleted = run(renamed.project, { type: 'marker-delete', markerId: 'm1' })
+    expect(deleted.project.markers.map((marker) => marker.id)).toEqual(['m2'])
+    expect(refuse(deleted.project, { type: 'marker-delete', markerId: 'm1' })).toMatch(/no longer exists/)
   })
 })

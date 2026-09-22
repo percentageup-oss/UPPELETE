@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { HexColorField, Row, Section, Segmented, SliderWithNumber, Stepper, Toggle } from './style/controls'
+import { HexColorField, PercentField, Row, Section, Segmented, SliderWithNumber, Stepper, Toggle } from './style/controls'
 import { AlignCenterIcon, AlignLeftIcon, AlignRightIcon, DropIcon, PaletteIcon, UnderlineIcon } from './style/icons'
 import { fallbackCatalog, loadLocalFontCatalog, type LocalFontCatalogState } from './style/localFonts'
 import {
@@ -155,20 +155,12 @@ export function StylePanel({ style, onDraft, onCommit }: {
 
     <Section id="position" title="Position" defaultOpen={false}>
       <Row label="X" htmlFor="style-position-h" onReset={() => reset(RESET_KEYS.positionX)} isDefault={isDefault(RESET_KEYS.positionX)}>
-        <div className="unit-field">
-          <input id="style-position-h" type="number" min={0} max={100} step={.1} value={(draft.appearance.horizontal * 100).toFixed(1)}
-            onChange={(event) => patch({ horizontal: Number(event.target.value) / 100 })}
-            onBlur={() => commitNow({ horizontal: Math.max(0, Math.min(1, draft.appearance.horizontal)) })} />
-          <span aria-hidden="true">%</span>
-        </div>
+        <PercentField id="style-position-h" value={draft.appearance.horizontal}
+          onDraft={(horizontal) => change({ horizontal })} onCommit={(horizontal) => commitNow({ horizontal })} />
       </Row>
       <Row label="Y" htmlFor="style-position-v" onReset={() => reset(RESET_KEYS.positionY)} isDefault={isDefault(RESET_KEYS.positionY)}>
-        <div className="unit-field">
-          <input id="style-position-v" type="number" min={0} max={100} step={.1} value={(draft.appearance.vertical * 100).toFixed(1)}
-            onChange={(event) => patch({ vertical: Number(event.target.value) / 100 })}
-            onBlur={() => commitNow({ vertical: Math.max(0, Math.min(1, draft.appearance.vertical)) })} />
-          <span aria-hidden="true">%</span>
-        </div>
+        <PercentField id="style-position-v" value={draft.appearance.vertical}
+          onDraft={(vertical) => change({ vertical })} onCommit={(vertical) => commitNow({ vertical })} />
       </Row>
     </Section>
 

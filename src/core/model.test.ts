@@ -45,7 +45,7 @@ describe('project schema migration', () => {
     expect(loaded.migratedFrom).toBe(2)
     const { media: _media, ...rest } = v2
     expect(loaded.project).toEqual({
-      ...rest, schemaVersion: 5, assets: [], clips: [], blurRegions: [],
+      ...rest, schemaVersion: 5, assets: [], clips: [], blurRegions: [], markers: [],
       tracks: [trackOf('minted-1', 'video'), trackOf('minted-2', 'audio')],
     })
     expect(loaded.project.cues).toEqual(cues)
@@ -127,7 +127,7 @@ describe('project schema migration', () => {
       chunkCount: 2, silenceCount: 1, segmentCount: 1, adjustedSegmentCount: 0, droppedSegments: { empty: 0, outsideChunk: 0, zeroDuration: 0 },
     }
     const project = {
-      schemaVersion: 5, id: 'transcribed', title: 'Transcribed', ...dates, assets: [], tracks: [], clips: [], blurRegions: [], transcriptionRuns: [run],
+      schemaVersion: 5, id: 'transcribed', title: 'Transcribed', ...dates, assets: [], tracks: [], clips: [], blurRegions: [], markers: [], transcriptionRuns: [run],
       cues: [{ id: 'c1', startUs: 1_200_000, endUs: 3_000_000, text: 'ആദ്യ വാചകം', timingSource: 'model', needsReview: false, textSource: 'model', words: [], transcriptionRunId: 'run-1' }],
     }
     expect(projectSchema.parse(project)).toEqual(project)
@@ -135,7 +135,7 @@ describe('project schema migration', () => {
   })
 
   it('does not rewrite a current schema project', () => {
-    const current = { schemaVersion: 5, id: 'current', title: 'Current', cues: [], assets: [], tracks: [], clips: [], blurRegions: [], ...dates }
+    const current = { schemaVersion: 5, id: 'current', title: 'Current', cues: [], assets: [], tracks: [], clips: [], blurRegions: [], markers: [], ...dates }
     expect(loadProject(current)).toEqual({ project: current, migratedFrom: null, migrationNotes: [] })
   })
 

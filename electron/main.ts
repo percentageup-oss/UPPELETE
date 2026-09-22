@@ -24,9 +24,11 @@ import { readThumbnailCache, writeThumbnailCache } from './thumbnailCache'
 import { registerTranscriptionIpc, runTranscriptionSmoke } from './transcriptionIpc'
 import { modelIdSchema } from '../src/core/modelCatalog'
 import { registerExportIpc, runExportSmoke } from './exportIpc'
+import { logExport } from './exportLog'
 import { closeJobs } from './jobs'
 import { registerAlignmentIpc } from './alignmentIpc'
 import { appMenuTemplate } from './appMenu'
+import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
 
 // Must run before the app is ready. Marks the scheme as fetchable from any page origin (dev
 // server included) and as a secure context, without weakening default webSecurity/CSP elsewhere.
@@ -35,6 +37,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 registerModelIpc()
+registerMcpIpc()
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 const inspectedMedia = new Map<string, { path: string; media: ProjectMedia }>()
@@ -367,7 +370,7 @@ ipcMain.handle('project:open', async () => {
     }
     const project = { ...loaded.project, assets }
     knownProjectPaths.add(projectPath)
-    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, assets: assetResolutions }
+    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, migrationNotes: loaded.migrationNotes, assets: assetResolutions }
   } catch (error) {
     return { ok: false as const, message: errorMessage(error) }
   }
@@ -569,6 +572,20 @@ app.whenReady().then(async () => {
   app.on('activate', () => {
     if (!shuttingDown && BrowserWindow.getAllWindows().length === 0) createWindow()
   })
+  // Resumes agent access (docs/MCP.md) if it was left enabled last session; off by default on a
+  // fresh install. Never blocks the window from opening — a failure here (a port that can no
+  // longer bind) is reported through the Settings tab's status, not a startup dialog.
+  void initMcp().catch((error) => logExport('agent-start-failed', { message: error instanceof Error ? error.message : String(error) }))
+})
+
+// A renderer or helper process that dies takes any work it was driving with it, and Chromium
+// reports it nowhere the user can see. Recorded so a run that ended with no message on screen —
+// the export host running out of memory, a renderer crash mid-encode — leaves evidence behind.
+app.on('render-process-gone', (_event, _contents, details) => {
+  logExport('render-process-gone', { reason: details.reason, exitCode: details.exitCode })
+})
+app.on('child-process-gone', (_event, details) => {
+  logExport('child-process-gone', { type: details.type, name: details.name, reason: details.reason, exitCode: details.exitCode })
 })
 
 app.on('window-all-closed', () => {
@@ -583,6 +600,6 @@ app.on('before-quit', (event) => {
   // leave a windowless macOS process with a closed model manager.
   // Cancel scheduled transcription (reaping its worker) before closing the shared worker client and models.
   void closeJobs().catch(() => {})
-    .then(() => Promise.all([closeMediaWorker(), closeModelManager()]))
+    .then(() => Promise.all([closeMediaWorker(), closeModelManager(), closeMcp()]))
     .finally(() => app.exit(0))
 })

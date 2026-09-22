@@ -6,9 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { failure } from '../workers/media/protocol'
 import type { MediaWorkerClient } from '../workers/media/client'
 import type { MediaTask, ProgressMessage } from '../workers/media/protocol'
-import type { MediaMetadata } from '../src/core/media'
 import { DEFAULT_CAPTION_STYLE } from '../src/captions/style'
 import { JobScheduler } from './jobScheduler'
+import type { ExportPlan } from '../src/export/plan'
 import { ExportService, type ExportJobValue, type ExportRequest } from './exportService'
 
 /** Test-only worker double, mirroring `transcriptionService.test.ts`'s: returns protocol-shaped
@@ -28,13 +28,7 @@ function workerDouble(handlers: Record<string, Handler>) {
   return { tasks, worker: worker as unknown as Pick<MediaWorkerClient, 'start'> }
 }
 
-const metadata: MediaMetadata = {
-  durationUs: 1_000_000, width: 1080, height: 1920, rotationDegrees: 0,
-  frameRate: { numerator: 30, denominator: 1 }, nominalFrameRate: { numerator: 30, denominator: 1 },
-  streams: [{ index: 0, kind: 'video', codec: { name: 'h264', longName: null, profile: null, level: null, tag: null },
-    timeBase: null, startUs: 0, durationUs: 1_000_000, width: 1080, height: 1920, sampleAspectRatio: null,
-    averageFrameRate: null, nominalFrameRate: null, rotationDegrees: 0, sampleRate: null, channels: null }],
-}
+const plan: ExportPlan = { width: 1080, height: 1920, frameRate: { numerator: 30, denominator: 1 }, range: { startUs: 0, endUs: 1_000_000 } }
 
 let temporaryRoot: string
 beforeEach(async () => { temporaryRoot = await mkdtemp(path.join(tmpdir(), 'caption-export-service-')) })
@@ -43,7 +37,7 @@ const leftovers = async () => (await readdir(temporaryRoot)).filter((name) => na
 
 function request(overrides: Partial<ExportRequest> = {}): ExportRequest {
   return {
-    mediaPath: '/Media/വീഡിയോ.mp4', metadata,
+    inputPaths: ['/Media/വീഡിയോ.mp4'], plan,
     manifest: { version: 1, cues: [], style: DEFAULT_CAPTION_STYLE },
     destinationPath: path.join(temporaryRoot, 'output.mp4'),
     ...overrides,
@@ -71,7 +65,7 @@ describe('ExportService', () => {
     expect(outcome.value).toEqual<ExportJobValue>({ path: path.join(temporaryRoot, 'output.mp4'), durationUs: 1_000_000, frameCount: 30 })
     expect(await readFile(path.join(temporaryRoot, 'output.mp4'), 'utf8')).toBe('fake mp4 bytes')
     expect(tasks).toHaveLength(1)
-    expect(tasks[0]).toMatchObject({ operation: 'export', inputPath: '/Media/വീഡിയോ.mp4', profile: 'mp4-caption-renderer-v1' })
+    expect(tasks[0]).toMatchObject({ operation: 'export', inputPaths: ['/Media/വീഡിയോ.mp4'], profile: 'mp4-caption-renderer-v1', width: 1080, height: 1920, range: plan.range })
     expect(path.dirname((tasks[0] as any).renderManifestPath).startsWith(path.join(temporaryRoot, 'caption-studio-export-'))).toBe(true)
     expect(manifestAtRenderTime).toEqual({ version: 1, cues: [], style: DEFAULT_CAPTION_STYLE })
     expect(snapshots).toContain('succeeded')
@@ -119,12 +113,30 @@ describe('ExportService', () => {
     expect(await readdir(temporaryRoot)).toEqual(['existing.mp4'])
   })
 
-  it('rejects media with no usable probed metadata before starting any worker job', async () => {
+  it('reports a worker cancellation the job never asked for as a failure, not a silent cancelled outcome', async () => {
+    // The worker uses CANCELLED for its own teardown too (a dead export host, a closed pipe). Left
+    // as a cancellation it retires the job with no error, so the UI shows the same thing as a user
+    // cancel — or nothing — and no file is written.
+    const { worker } = workerDouble({ export: async () => { throw failure('CANCELLED', 'Export interrupted') } })
+    const service = new ExportService({ worker, scheduler: new JobScheduler(), temporaryRoot })
+    const outcome = await service.start(request(), () => {}).outcome
+    expect(outcome).toMatchObject({ state: 'failed', error: { code: 'BACKEND_FAILED', retryable: true, diagnostic: 'Export interrupted' } })
+    expect(await readdir(temporaryRoot)).toEqual([]) // nothing left behind, and no destination created
+  })
+
+  it('keeps the exit status and the tool\'s stderr when it relabels an unrequested cancellation', async () => {
+    const { worker } = workerDouble({ export: async () => { throw failure('CANCELLED', 'Export cancelled', { exitCode: 1, diagnostic: 'export host: frame 12 failed: paint timeout' }) } })
+    const service = new ExportService({ worker, scheduler: new JobScheduler(), temporaryRoot })
+    const outcome = await service.start(request(), () => {}).outcome
+    expect(outcome).toMatchObject({ state: 'failed', error: { code: 'BACKEND_FAILED', diagnostic: 'Export cancelled (exit 1) — export host: frame 12 failed: paint timeout' } })
+  })
+
+  it('hands the worker every input a multi-clip timeline reads, with the plan main derived', async () => {
     const { tasks, worker } = workerDouble({ export: async (task) => { await writeFile(task.outputPath, 'fake mp4 bytes'); return exportResult(task) } })
     const service = new ExportService({ worker, scheduler: new JobScheduler(), temporaryRoot })
-    const outcome = await service.start(request({ metadata: { ...metadata, width: null, height: null } }), () => {}).outcome
-    expect(outcome).toMatchObject({ state: 'failed', error: { code: 'INVALID_INPUT' } })
-    expect(tasks).toEqual([])
+    const sequencePlan = { ...plan, width: 1280, height: 720, range: { startUs: 0, endUs: 16_000_000 } }
+    await service.start(request({ inputPaths: ['/Media/a.mp4', '/Media/b.mov', '/Media/a.mp4'], plan: sequencePlan }), () => {}).outcome
+    expect(tasks[0]).toMatchObject({ inputPaths: ['/Media/a.mp4', '/Media/b.mov', '/Media/a.mp4'], width: 1280, height: 720, range: { startUs: 0, endUs: 16_000_000 } })
   })
 
   it('queues behind another heavy job on the shared scheduler instead of running concurrently', async () => {

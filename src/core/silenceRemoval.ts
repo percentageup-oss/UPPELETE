@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import type { TimeRange } from './sequence'
+import type { TimeRange } from './timelineModel'
 
 /**
  * Turns detected silence into kept source ranges (V6's cuts, produced automatically instead of by

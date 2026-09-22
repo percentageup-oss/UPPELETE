@@ -1,15 +1,10 @@
-import { sourceToSequence, type TimeRange } from '../core/sequence'
+import type { TransportState } from './sequenceClock'
 
-/** The minimal surface the scheduler needs from an `HTMLVideoElement` — mirrors
- * `src/core/playbackClock.ts`'s `FrameVideo`, kept narrow so tests can supply a plain fake. */
-export type SfxVideo = {
-  readonly paused: boolean
-  readonly currentTime: number
-  readonly playbackRate: number
-  readonly muted: boolean
-  readonly volume: number
-  addEventListener(type: string, listener: () => void): void
-  removeEventListener(type: string, listener: () => void): void
+/** The minimal surface the scheduler needs from the transport clock (src/playback/sequenceClock.ts). */
+export type SfxClock = {
+  getUs(): number
+  getState(): TransportState
+  subscribeState(listener: () => void): () => void
 }
 
 /** The minimal `AudioContext`/`AudioBufferSourceNode`/`GainNode` surface used, so a test can
@@ -39,50 +34,46 @@ export type AudioContextLike = {
   resume(): Promise<void>
 }
 
-/** A clip resolved to what the scheduler needs: a playable URL and its length already resolved to
- * a concrete number of microseconds (`clipDurationUs`, `src/core/sfxClip.ts`) — the scheduler
- * itself never reads project/asset state. */
+/** An audio clip resolved to what the scheduler needs: a playable URL and where it sits. The
+ * scheduler itself never reads project/asset state. `gain` already includes a muted track (0). */
 export type SfxClipSpec = {
   id: string
   url: string
-  /** Source-time anchor; mapped to sequence time per reschedule via `sourceToSequence`. */
-  atUs: number
+  /** Sequence time at which the clip starts playing. */
+  startUs: number
   inPointUs: number
   durationUs: number
   gain: number
 }
 
 export type SfxScheduler = {
-  attach(video: SfxVideo): void
+  attach(clock: SfxClock): void
   detach(): void
-  setClips(clips: readonly SfxClipSpec[], segments: readonly TimeRange[] | undefined, mediaDurationUs: number | null): void
+  setClips(clips: readonly SfxClipSpec[]): void
   /** Developer-facing snapshot for the manual drift checklist (docs/STATUS.md). Real onset
    * accuracy can only be measured against a recording (`scripts/export-parity.mjs`'s method) —
    * this only reports what the Web Audio context itself exposes. */
   debugInfo(): { contextTime: number; baseLatency: number; outputLatency: number; activeCount: number }
 }
 
-const EVENTS = ['play', 'seeked', 'ratechange', 'pause', 'ended', 'emptied', 'volumechange'] as const
-
 type BufferState = AudioBufferLike | 'loading' | 'error'
 
 /**
- * Schedules each sound effect's `AudioBufferSourceNode`s against the `<video>` element's clock
- * (docs/EDITING.md's "Preview compositing and playback"). Clips are decoded once per URL and
- * cached; a cut is a seek from the video's own point of view, so `seeked` re-scheduling is the one
- * mechanism that keeps clips in sync across it — no separate cut-awareness is needed here beyond
- * mapping each clip's anchor through `sourceToSequence` and dropping it when the cut removed it.
+ * Schedules each audio clip's `AudioBufferSourceNode`s against the transport clock
+ * (docs/EDITING.md "Playback"). Clips are decoded once per URL and cached. Every play, seek and
+ * rate change the transport reports reschedules everything from the clock's position; clips already
+ * carry their sequence start, so there is no mapping to do and nothing a cut can drop.
  */
 export function createSfxScheduler(deps: {
   createContext: () => AudioContextLike
   fetchArrayBuffer: (url: string) => Promise<ArrayBuffer>
   onIssue?: (clipId: string, message: string) => void
 }): SfxScheduler {
-  let video: SfxVideo | null = null
+  let clock: SfxClock | null = null
+  let unsubscribe: (() => void) | null = null
+  let lastState = ''
   let ctx: AudioContextLike | null = null
   let clips: readonly SfxClipSpec[] = []
-  let segments: readonly TimeRange[] | undefined
-  let mediaDurationUs: number | null = null
   const buffers = new Map<string, BufferState>()
   const active = new Map<string, { source: BufferSourceNodeLike; gain: GainNodeLike; clipGain: number }>()
   let lastKey = ''
@@ -105,7 +96,7 @@ export function createSfxScheduler(deps: {
       .then((data) => ensureContext().decodeAudioData(data))
       .then((buffer) => {
         buffers.set(url, buffer)
-        if (video && !video.paused) rescheduleAll()
+        if (clock?.getState().playing) rescheduleAll()
       })
       .catch((error: unknown) => {
         buffers.set(url, 'error')
@@ -116,17 +107,14 @@ export function createSfxScheduler(deps: {
 
   function rescheduleAll(): void {
     stopAll()
-    if (!video || video.paused) return
+    if (!clock || !clock.getState().playing) return
     const context = ensureContext()
-    const rate = video.playbackRate || 1
-    const posSourceUs = Math.round(video.currentTime * 1_000_000)
-    const posSeqUs = sourceToSequence(posSourceUs, segments, mediaDurationUs).sequenceUs
+    const rate = clock.getState().rate || 1
+    const posSeqUs = clock.getUs()
     for (const clip of clips) {
       const buffer = buffers.get(clip.url)
-      if (!buffer || buffer === 'loading' || buffer === 'error') continue
-      const point = sourceToSequence(clip.atUs, segments, mediaDurationUs)
-      if (!point.kept) continue // Anchored inside a removed range — dropped, like the export builder.
-      const startSeqUs = point.sequenceUs
+      if (!buffer || buffer === 'loading' || buffer === 'error' || clip.gain <= 0) continue
+      const startSeqUs = clip.startUs
       const endSeqUs = startSeqUs + clip.durationUs
       if (endSeqUs <= posSeqUs) continue // Already finished.
       const elapsedIntoClipUs = Math.max(0, posSeqUs - startSeqUs)
@@ -136,7 +124,7 @@ export function createSfxScheduler(deps: {
       const portionUs = clip.durationUs - elapsedIntoClipUs
       if (portionUs <= 0) continue
       const gainNode = context.createGain()
-      gainNode.gain.value = clip.gain * (video.muted ? 0 : video.volume)
+      gainNode.gain.value = clip.gain
       const source = context.createBufferSource()
       source.buffer = buffer
       source.playbackRate.value = rate
@@ -148,43 +136,41 @@ export function createSfxScheduler(deps: {
     }
   }
 
-  const onPlay = () => { void ensureContext().resume().then(rescheduleAll) }
-  const onReschedule = () => { if (video && !video.paused) rescheduleAll() }
-  const onStop = () => stopAll()
-  const onVolumeChange = () => {
-    if (!video) return
-    const factor = video.muted ? 0 : video.volume
-    for (const entry of active.values()) entry.gain.gain.value = entry.clipGain * factor
-  }
-  const listeners: Record<(typeof EVENTS)[number], () => void> = {
-    play: onPlay, seeked: onReschedule, ratechange: onReschedule,
-    pause: onStop, ended: onStop, emptied: onStop, volumechange: onVolumeChange,
+  // Play, pause, seek and rate changes arrive as transport state changes; a position tick alone is
+  // not one, so steady playback never reschedules.
+  const onState = () => {
+    if (!clock) return
+    const state = clock.getState()
+    const key = `${state.playing}:${state.rate}:${state.seekEpoch}`
+    if (key === lastState) return
+    lastState = key
+    if (!state.playing) { stopAll(); return }
+    void ensureContext().resume().then(rescheduleAll)
   }
 
   return {
     attach(next) {
       this.detach()
-      video = next
-      for (const type of EVENTS) video.addEventListener(type, listeners[type])
-      if (!video.paused) onPlay()
+      clock = next
+      lastState = ''
+      unsubscribe = next.subscribeState(onState)
+      onState()
     },
     detach() {
-      if (!video) return
+      if (!clock) return
       stopAll()
-      for (const type of EVENTS) video.removeEventListener(type, listeners[type])
-      video = null
+      unsubscribe?.()
+      unsubscribe = null
+      clock = null
     },
-    setClips(nextClips, nextSegments, nextMediaDurationUs) {
+    setClips(nextClips) {
       clips = nextClips
-      segments = nextSegments
-      mediaDurationUs = nextMediaDurationUs
-      const key = nextClips.map((clip) => `${clip.id}:${clip.url}:${clip.atUs}:${clip.inPointUs}:${clip.durationUs}:${clip.gain}`).join('|')
-        + `#${nextSegments?.map((range) => `${range.startUs}-${range.endUs}`).join(',') ?? ''}#${nextMediaDurationUs}`
+      const key = nextClips.map((clip) => `${clip.id}:${clip.url}:${clip.startUs}:${clip.inPointUs}:${clip.durationUs}:${clip.gain}`).join('|')
       const urls = new Set(nextClips.map((clip) => clip.url))
       for (const url of urls) if (!buffers.has(url)) decode(url)
       if (key === lastKey) return
       lastKey = key
-      if (video && !video.paused) rescheduleAll()
+      if (clock?.getState().playing) rescheduleAll()
     },
     debugInfo() {
       const context = ctx

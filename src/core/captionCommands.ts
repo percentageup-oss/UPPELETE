@@ -8,15 +8,23 @@ import type { CaptionMotion, CaptionStyle } from '../captions/style'
 import type { Selection } from './timelineItems'
 import { bindUnboundItems, defaultBindingAssetId } from './projectClips'
 
+/**
+ * A word-menu target: a timed word entry (`wordId`), or a plain text token that has no word
+ * timing yet (`textStart`, the token's offset in `cue.text`). Commands that only ever touch text
+ * (delete-word, line-break-before-word) accept either; commands that must read a word's timing to
+ * place a cue boundary (split-before-word, the move-* commands) still require a real `wordId`.
+ */
+export type WordTarget = { wordId: string } | { textStart: number }
+
 export type CaptionCommand =
   | { type: 'toggle-emphasis'; cueId: string; textStart: number }
-  | { type: 'estimate-words'; cueId: string; idPrefix: string }
+  | { type: 'estimate-words'; cueId: string; idPrefix: string; missingOnly?: boolean }
   | { type: 'update-text'; cueId: string; text: string; estimateIfUntimed?: string }
   | { type: 'update-time'; cueId: string; startUs: number; endUs: number }
   | { type: 'shift-time'; cueId: string; deltaUs: number }
   | { type: 'add'; cue: Cue }
   | { type: 'delete'; cueId: string }
-  | { type: 'delete-word'; cueId: string; wordId: string }
+  | { type: 'delete-word'; cueId: string; target: WordTarget }
   | { type: 'split'; cueId: string; atUs: number; rightCueId: string }
   | { type: 'merge-next'; cueId: string }
   | { type: 'regroup'; cueId: string; idPrefix: string; estimateMissing: boolean; options?: GroupingOptions }
@@ -28,7 +36,7 @@ export type CaptionCommand =
   | { type: 'apply-template'; style: CaptionStyle; idPrefix: string }
   | { type: 'set-motion-override'; cueId: string; override?: { motion?: CaptionMotion; motionSpeed?: number } }
   | { type: 'reset-motion-overrides' }
-  | { type: 'line-break-before-word'; cueId: string; wordId: string }
+  | { type: 'line-break-before-word'; cueId: string; target: WordTarget }
   | { type: 'split-before-word'; cueId: string; wordId: string; rightCueId: string }
   | { type: 'move-from-word-to-next'; cueId: string; wordId: string }
   | { type: 'move-through-word-to-previous'; cueId: string; wordId: string }
@@ -146,6 +154,18 @@ function replaceCue(cues: Cue[], cueId: string, replacement: Cue[]): Cue[] {
   return index < 0 ? cues : [...cues.slice(0, index), ...replacement, ...cues.slice(index + 1)]
 }
 
+/** Resolves a `WordTarget` to its span in `cue.text`, for the commands that accept either a timed word or a plain token. */
+function locateTarget(cue: Cue, target: WordTarget): { textStart: number; textEnd: number; wordId: string | null } | null {
+  if ('wordId' in target) {
+    const wordIndex = cue.words.findIndex((word) => word.id === target.wordId)
+    const spans = locateWordSpans(cue.text, cue.words)
+    if (wordIndex < 0 || !spans) return null
+    return { textStart: spans[wordIndex].textStart, textEnd: spans[wordIndex].textEnd, wordId: target.wordId }
+  }
+  const token = captionTokens(cue.text).find((item) => item.textStart === target.textStart)
+  return token ? { textStart: token.textStart, textEnd: token.textEnd, wordId: null } : null
+}
+
 /** A video's duration: the caller's lookup (a runtime-measured value) first, else what its stored probe says. */
 function boundContext(project: Pick<CaptionProject, 'assets'>, context: CommandContext): CommandContext {
   const durations = new Map(project.assets.flatMap((asset) => asset.metadata?.durationUs != null ? [[asset.id, asset.metadata.durationUs] as const] : []))
@@ -185,7 +205,13 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     const cue = cues.find((item) => item.id === command.cueId)
     if (!cue) return fail('The selected cue no longer exists.')
     let serial = 0
-    try { cues = replaceCue(cues, cue.id, [{ ...cue, words: estimateWordTimings(cue, () => `${command.idPrefix}-${++serial}`), needsReview: true }]) }
+    const newId = () => `${command.idPrefix}-${++serial}`
+    try {
+      // `missingOnly` fills only untimed gaps, leaving aligned/manual/model words untouched — used
+      // by the word-menu's inline estimate so it never overwrites timing the user already trusts.
+      const words = command.missingOnly ? estimateMissingWordTimings(cue, newId) : estimateWordTimings(cue, newId)
+      cues = replaceCue(cues, cue.id, [{ ...cue, words, needsReview: true }])
+    }
     catch (error) { return fail(error instanceof Error ? error.message : 'Cannot estimate word timing.') }
   } else if (command.type === 'update-text') {
     const cue = cues.find((item) => item.id === command.cueId)
@@ -235,15 +261,15 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     if (!removeCue(command.cueId)) return fail('The selected cue no longer exists.')
   } else if (command.type === 'delete-word') {
     const cue = cues.find((item) => item.id === command.cueId)
-    const wordIndex = cue?.words.findIndex((word) => word.id === command.wordId) ?? -1
     const spans = cue && locateWordSpans(cue.text, cue.words)
-    if (!cue || wordIndex < 0 || !spans) return fail('The selected word no longer exists.')
+    const located = cue && locateTarget(cue, command.target)
+    if (!cue || !spans || !located) return fail('The selected word no longer exists.')
     const text = cue.text
     const tokens = captionTokens(text)
     const boundaries = [...graphemeBoundaries(text)].sort((a, b) => a - b)
     const nextBoundary = (at: number) => boundaries.find((b) => b > at) ?? text.length
     const prevBoundary = (at: number) => [...boundaries].reverse().find((b) => b < at) ?? 0
-    let { textStart: start, textEnd: end } = spans[wordIndex]
+    let { textStart: start, textEnd: end } = located
     // Swallow attached punctuation (not whitespace, not another token) up to the next/previous token.
     const nextTokenStart = tokens.find((token) => token.textStart >= end)?.textStart ?? text.length
     while (end < nextTokenStart && !/\s/u.test(text[end])) end = Math.min(nextBoundary(end), nextTokenStart)
@@ -269,7 +295,7 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
       const shift = (from: number) => from >= end ? from - delta : from
       const words = cue.words
         .map((word, index) => ({ word, span: spans[index] }))
-        .filter(({ word }) => word.id !== command.wordId)
+        .filter(({ word }) => word.id !== located.wordId)
         .map(({ word, span }) => ({ ...word, textStart: shift(span.textStart), textEnd: shift(span.textEnd) }))
       const emphasized = (cue.emphasized ?? [])
         .filter((mark) => mark.textEnd <= start || mark.textStart >= end)
@@ -382,10 +408,10 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     cues = cues.map((cue) => cue.motionOverride ? { ...cue, motionOverride: undefined } : cue)
   } else if (command.type === 'line-break-before-word') {
     const cue = cues.find((item) => item.id === command.cueId)
-    const index = cue?.words.findIndex((word) => word.id === command.wordId) ?? -1
-    const spans = cue && locateWordSpans(cue.text, cue.words)
-    if (!cue || index <= 0 || !spans) return fail('Choose a word after the first word to add a line break.')
-    const at = spans[index].textStart
+    const located = cue && locateTarget(cue, command.target)
+    const firstToken = cue && captionTokens(cue.text)[0]
+    if (!cue || !located || !firstToken || firstToken.textStart === located.textStart) return fail('Choose a word after the first word to add a line break.')
+    const at = located.textStart
     const before = cue.text.slice(0, at).replace(/[^\S\r\n]+$/u, '')
     const after = cue.text.slice(at).replace(/^[^\S\r\n]+/u, '')
     const text = `${before}\n${after}`

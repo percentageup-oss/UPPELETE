@@ -98,13 +98,17 @@ export const exportManifestV3Schema = z.strictObject({
   display: captionDisplaySchema.optional(),
   format: sequenceFormatSchema,
   sequenceDurationUs: z.number().int().positive().safe(),
+  /** One per clip FFmpeg reads (never shared between clips); host-painted images need none. */
   inputs: z.array(manifestInputSchema).max(256),
   clips: z.array(manifestClipSchema).max(4000),
   /** Image clips painted by the export host into the caption layer, in **sequence** time (v2's are source time). */
   overlays: z.array(manifestOverlaySchema).max(4000).default([]),
   blurRegions: z.array(manifestBlurRegionSchema).max(1000).default([]),
 }).superRefine((manifest, context) => {
+  const used = new Set<number>()
   for (const [index, clip] of manifest.clips.entries()) {
+    if (used.has(clip.inputIndex)) context.addIssue({ code: 'custom', path: ['clips', index, 'inputIndex'], message: 'Each input belongs to exactly one clip.' })
+    used.add(clip.inputIndex)
     const input = manifest.inputs[clip.inputIndex]
     if (!input) context.addIssue({ code: 'custom', path: ['clips', index, 'inputIndex'], message: 'A clip must name an input that exists.' })
     else if (input.kind !== clip.kind) context.addIssue({ code: 'custom', path: ['clips', index, 'inputIndex'], message: 'A clip must play an input of its own kind.' })
@@ -366,16 +370,10 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   // sits above every video; only an image genuinely under a video is composited by FFmpeg (ADR 0005).
   const videoTrackTop = Math.max(-1, ...visual.filter((clip) => clip.kind === 'video').map((clip) => order.get(clip.trackId) ?? 0))
   const hostImages = visual.every((clip) => clip.kind !== 'image' || (order.get(clip.trackId) ?? 0) > videoTrackTop)
+  // One input per clip FFmpeg reads — never shared — so each clip gets its own decoder, seeked
+  // straight to its source range (workers/media/exportArguments.ts `exportFilterGraphV3`).
   const inputs: { path: string; kind: 'video' | 'image' | 'audio' }[] = []
-  const inputByAsset = new Map<string, number>()
-  const inputFor = (clip: Clip): number => {
-    if (clip.kind === 'image') return inputs.push({ path: resolver.assetPath(assetOf(clip)), kind: 'image' }) - 1
-    const existing = inputByAsset.get(clip.assetId)
-    if (existing !== undefined) return existing
-    const index = inputs.push({ path: resolver.assetPath(assetOf(clip)), kind: clip.kind }) - 1
-    inputByAsset.set(clip.assetId, index)
-    return index
-  }
+  const inputFor = (clip: Clip): number => inputs.push({ path: resolver.assetPath(assetOf(clip)), kind: clip.kind }) - 1
   const clips: ManifestClip[] = []
   const overlays: ExportManifestV3['overlays'] = []
   for (const clip of [...visual, ...audio].sort((a, b) => (order.get(a.trackId) ?? 0) - (order.get(b.trackId) ?? 0) || a.timelineStartUs - b.timelineStartUs)) {
@@ -393,6 +391,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
       gain: clip.kind === 'video' && !muted.has(clip.trackId) ? clip.gain : 0,
     })
   }
+  if (inputs.length > 250) throw new Error(`This timeline reads ${inputs.length} clips; one export can read at most 250. Join or remove some clips first.`)
   const sequenceDurationUs = Math.max(0, ...clips.map((clip) => clip.timelineStartUs + clip.sourceEndUs - clip.sourceStartUs), ...overlays.map((overlay) => overlay.endUs))
   if (sequenceDurationUs <= 0) throw new Error('Add a video, image or sound to the timeline before exporting a video.')
   const captionAssets = new Set(clips.filter((clip) => clip.kind === 'video').map((clip) => clip.assetId))

@@ -22,6 +22,7 @@ is copied, bundled or release-approved here.
 | Zod | 4.6.5 | MIT | Project-file validation |
 | Vitest | 4.1.11 | MIT | Unit tests; supports the local Node 25 runtime |
 | esbuild | 0.28.2 | MIT | Electron main/preload bundling |
+| @modelcontextprotocol/sdk | 1.30.0 | MIT | Local MCP server ([MCP.md](MCP.md)): `McpServer` + `StreamableHTTPServerTransport` in Electron main only. Not in the renderer bundle (verified: `dist-electron/preload.cjs` contains no reference to it). Its `zod` peer range (`^3.25 \|\| ^4.0`) is satisfied by the project's existing Zod 4.6.5 — no second copy. |
 
 Build-only helper packages are recorded in `package-lock.json`. M1 adds no npm dependency and does not change the locked dependency graph. Existing Zod validates the worker protocol and existing esbuild bundles the separate process. T2 selects the download-only model artifacts recorded below. Native transcription engine builds, bundled fonts and installer tooling remain unselected; record their builds and redistribution terms before bundling.
 

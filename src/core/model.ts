@@ -6,7 +6,7 @@ import { captionStyleSchema, motionSchema, motionSpeedSchema, savedCaptionPreset
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import {
   blurRegionSchema, clipSchema, legacyAudioClipSchema, legacyBlurRegionSchema, legacyClipSchema, legacyImageOverlaySchema,
-  mediaAssetIdSchema, projectAssetSchema, segmentSchema, sequenceFormatSchema, trackSchema, type ProjectAsset, type Track,
+  markerSchema, mediaAssetIdSchema, projectAssetSchema, segmentSchema, sequenceFormatSchema, trackSchema, type ProjectAsset, type Track,
 } from './edit'
 import { clipEndUs, compareClips, trackIndexMap } from './timelineModel'
 import { migrateV4, type MigrationNote } from './migrateV4'
@@ -309,6 +309,7 @@ export const projectSchema = z.object({
   tracks: z.array(trackSchema).max(64).default([]),
   clips: z.array(clipSchema).max(4000).default([]),
   blurRegions: z.array(blurRegionSchema).max(1000).default([]),
+  markers: z.array(markerSchema).max(1000).default([]),
   format: sequenceFormatSchema.optional(),
 }).superRefine((project, context) => {
   uniquePresetIds(project, context)
@@ -321,6 +322,7 @@ export const projectSchema = z.object({
   for (const [index, track] of project.tracks.entries()) claim(track.id, ['tracks', index], 'a track')
   for (const [index, clip] of project.clips.entries()) claim(clip.id, ['clips', index], 'a clip')
   for (const [index, region] of project.blurRegions.entries()) claim(region.id, ['blurRegions', index], 'a blur region')
+  for (const [index, marker] of project.markers.entries()) claim(marker.id, ['markers', index], 'a marker')
 
   const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
   const tracks = new Map(project.tracks.map((track) => [track.id, track]))
@@ -476,6 +478,7 @@ export function createProject(): CaptionProject {
     tracks: defaultTracks(),
     clips: [],
     blurRegions: [],
+    markers: [],
     createdAt: now,
     updatedAt: now,
   }

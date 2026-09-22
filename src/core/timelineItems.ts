@@ -5,7 +5,7 @@ import type { Cue } from './model'
  * can draw, select and drag: captions (stored in their video's source time), clips (video, image
  * and audio, at absolute sequence positions) and blur regions (sequence time).
  */
-export type TimelineItemKind = 'cue' | 'clip' | 'blur'
+export type TimelineItemKind = 'cue' | 'clip' | 'blur' | 'marker'
 
 /** Clamps for one drag gesture, in the item's own time base. */
 export type DragBounds = {

@@ -23,7 +23,7 @@ const allowedAssetUrls = new Set()
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '--asset' && typeof process.argv[i + 1] === 'string') allowedAssetUrls.add(process.argv[i + 1])
 }
-let window, marker = 0, busy = false
+let window, marker = 0, busy = false, framesRendered = 0
 const decoder = new MessageDecoder()
 const stop = () => { window?.destroy(); app.exit(0) }
 process.stdin.on('end', stop)
@@ -58,13 +58,22 @@ async function render(value) {
   const png = toPng(frame.bitmap, request.composition)
   const header = Buffer.alloc(4); header.writeUInt32BE(png.length)
   await new Promise((resolve, reject) => process.stdout.write(Buffer.concat([header, png]), (error) => error ? reject(error) : resolve()))
+  framesRendered++
+}
+/** One stderr line that locates the stop — the parent reports it verbatim as the export's diagnostic.
+ * Position and size only: never caption text, which the export log must not hold. */
+function describeFailure(error, value) {
+  const at = value && typeof value === 'object'
+    ? ` at ${value.composition?.width}x${value.composition?.height}, timestampUs ${value.timestampUs}`
+    : ''
+  return `export host: frame ${framesRendered + 1} failed${at}, window ${window ? 'created' : 'not created'}: ${error instanceof Error ? error.message : String(error)}\n`
 }
 process.stdin.on('data', (chunk) => {
   try {
     decoder.push(chunk, (value) => {
       if (busy) throw new Error('Only one frame may be in flight')
       busy = true
-      render(value).then(() => { busy = false }, (error) => { process.stderr.write(String(error)); app.exit(1) })
+      render(value).then(() => { busy = false }, (error) => { process.stderr.write(describeFailure(error, value)); app.exit(1) })
     })
-  } catch (error) { process.stderr.write(String(error)); app.exit(1) }
+  } catch (error) { process.stderr.write(describeFailure(error)); app.exit(1) }
 })

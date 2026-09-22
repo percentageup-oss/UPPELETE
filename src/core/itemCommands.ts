@@ -24,7 +24,7 @@ export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<Item
   'asset-add', 'asset-remove', 'asset-update',
   'track-add', 'track-remove', 'track-update', 'track-reorder',
   'clip-add', 'clip-move', 'clip-trim', 'clip-update', 'clip-split', 'clip-delete', 'gap-close', 'clips-set', 'clips-restore', 'format-set',
-  'blur-add', 'blur-update', 'blur-delete',
+  'blur-add', 'blur-update', 'blur-delete', 'marker-add', 'marker-update', 'marker-delete',
 ])
 
 function rectOutsideHeight(rect: CompositionRect, compositionHeight: number | null | undefined): boolean {

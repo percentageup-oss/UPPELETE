@@ -1,17 +1,49 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { exportManifestSchema, exportPlanSchema, exportFrameCountFor, exportOutputDurationUs, frameRequestAt, normalizeManifest } from '../../src/export/plan'
+import {
+  exportManifestSchema, exportPlanSchema, exportFrameCountFor, exportOutputDurationUs, frameRequestAt, frameRequestAtSequence, manifestTimeline, normalizeManifest,
+  type ExportManifestV3, type PlannedFrame,
+} from '../../src/export/plan'
 import { createLayerPlan } from '../../src/core/layerPlan'
 import { exportSupportFromConfiguration, type ExportSupport } from '../../src/core/exportSupport'
-import { failure, type MediaTask, type MediaResult, type ProgressMessage, type Toolchain } from './protocol'
+import { failure, MediaWorkerError, type MediaTask, type MediaResult, type ProgressMessage, type Toolchain } from './protocol'
 import { runExecutable } from './process'
 import { probeMedia } from './probe'
-import { exportArguments, exportFilterGraph } from './exportArguments'
+import { exportArguments, exportArgumentsV3, exportFilterGraph, exportFilterGraphV3 } from './exportArguments'
 import { ownedProcess, PngReader, writeBounded } from './exportProcesses'
 
 /** The Windows argv limit `docs/EDITING.md` calls out — past this the graph moves to a script file. */
 const FILTER_COMPLEX_ARGV_LIMIT_BYTES = 8 * 1024
+
+/** How long a failing export waits for its peer process to say why it died before tearing it down. */
+const PEER_SETTLE_MS = 2000
+
+/** Resolves once every promise settles or the deadline passes, whichever is first; never rejects. */
+async function settledWithin(promises: (Promise<unknown> | undefined)[], ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  await Promise.race([
+    Promise.allSettled(promises),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, ms) }),
+  ])
+  clearTimeout(timer)
+}
+
+const isCancellation = (error: unknown) => error instanceof MediaWorkerError && error.detail.code === 'CANCELLED'
+
+/**
+ * The failure to report for an export that stopped on its own. Either process dying makes
+ * `export.ts` abort the other, so a real failure always arrives alongside the `CANCELLED`
+ * rejection of its peer — a rejection that is only ever our own teardown. Prefer, in order: a
+ * process's own non-cancellation failure (the encoder's or host's exit status and stderr), the
+ * error the frame loop itself hit, and only then a bare cancellation.
+ */
+export function mostInformativeFailure(loopError: unknown, processFailures: unknown[]): unknown {
+  return processFailures.find((reason) => !isCancellation(reason))
+    ?? (isCancellation(loopError) ? undefined : loopError)
+    ?? processFailures[0]
+    ?? loopError
+}
 
 type ExportTask = Extract<MediaTask, { operation: 'export' }>
 type ProcessSpawner = typeof ownedProcess
@@ -46,21 +78,14 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   const probe = dependencies.probe ?? probeMedia
   const support = await exportSupport(tools, signal, dependencies)
   if (!support.supported) throw failure('UNSUPPORTED_OPERATION', support.reason!)
-  if (!path.isAbsolute(task.outputPath) || path.resolve(task.inputPath) === path.resolve(task.outputPath)) throw failure('INVALID_MESSAGE', 'Export must use a new explicit destination')
+  if (!path.isAbsolute(task.outputPath) || task.inputPaths.some((input) => path.resolve(input) === path.resolve(task.outputPath))) {
+    throw failure('INVALID_MESSAGE', 'Export must use a new explicit destination')
+  }
   const manifestStat = await stat(task.renderManifestPath)
   if (manifestStat.size > 64 * 1024 * 1024) throw failure('OUTPUT_LIMIT', 'Export manifest exceeds 64 MiB')
   const manifest = exportManifestSchema.parse(JSON.parse(await readFile(task.renderManifestPath, 'utf8')))
-  const edits = normalizeManifest(manifest)
   const plan = exportPlanSchema.parse({ width: task.width, height: task.height, range: task.range, frameRate: task.frameRate })
-  // One plan for which source timestamp each output frame shows and which frames repeat.
-  const layer = createLayerPlan({
-    cues: manifest.cues, style: manifest.style, display: manifest.display, segments: edits.segments,
-    rangeStartUs: plan.range.startUs, mediaDurationUs: task.range.endUs, frameRate: plan.frameRate, overlays: edits.overlays,
-    output: { width: plan.width, height: plan.height },
-  })
-  const inputProbe = await probe(tools.ffprobePath, task.inputPath, signal)
-  if (!inputProbe.metadata.durationUs || task.range.endUs > inputProbe.metadata.durationUs || !inputProbe.metadata.streams.some((s) => s.kind === 'video')) throw failure('INVALID_MESSAGE', 'Export range needs a known video duration and must stay within it')
-  const hasAudio = inputProbe.metadata.streams.some((s) => s.kind === 'audio')
+  const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe) : await prepareV2(manifest, task, tools, signal, probe, plan)
   const controller = new AbortController()
   const cancel = () => controller.abort()
   signal.addEventListener('abort', cancel, { once: true })
@@ -74,28 +99,20 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   try {
     // Cuts can chain hundreds of trim/concat filters; past the Windows argv limit the graph moves
     // to a file passed with `-filter_complex_script` instead of being inlined (docs/EDITING.md).
-    const graph = exportFilterGraph(plan, hasAudio, manifest)
+    const graph = job.graph
     let filterComplexScriptPath: string | undefined
     if (Buffer.byteLength(graph.filterComplex, 'utf8') > FILTER_COMPLEX_ARGV_LIMIT_BYTES) {
       filterComplexScriptPath = path.join(hostProfileDirectory, 'filtergraph.txt')
       await writeFile(filterComplexScriptPath, graph.filterComplex, 'utf8')
     }
-    // Sound-effect clip paths reach FFmpeg directly as `-i` arguments (never a shell string), but
-    // unlike the source/overlay paths they are not looked up in main's fingerprint registry inside
-    // this worker — confirm each one is a real, readable file before spawning anything, so a stale
-    // or unrelinked path fails with an actionable message instead of an opaque FFmpeg error.
-    for (const clip of edits.audioClips) {
-      try { await stat(clip.path) }
-      catch { throw failure('INVALID_MESSAGE', `Sound effect "${clip.id}" could not be read at its resolved path.`) }
-    }
     // The host allow-lists exactly these URLs (scripts/export-host.mjs) — never an arbitrary
     // renderer- or project-supplied path — so an overlay asset this job did not resolve can never load.
-    const assetArgs = [...new Set(edits.overlays.map((overlay) => overlay.assetUrl))].flatMap((url) => ['--asset', url])
+    const assetArgs = [...new Set(job.overlayUrls)].flatMap((url) => ['--asset', url])
     host = spawn(tools.exportHost!.executable, [tools.exportHost!.scriptPath, '--user-data', hostProfileDirectory, ...assetArgs], controller.signal, env)
-    encoder = spawn(tools.ffmpegPath, exportArguments(task.inputPath, task.outputPath, plan, hasAudio, manifest, filterComplexScriptPath), controller.signal)
+    encoder = spawn(tools.ffmpegPath, job.args(filterComplexScriptPath), controller.signal)
     // Either process failure interrupts a blocked frame read/write in its peer.
     host.closed.catch(cancel); encoder.closed.catch(cancel)
-    const total = exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate)
+    const total = job.frameCount
     let progressText = '', lastFrame = 0
     encoder.child.stdout.on('data', (chunk: Buffer) => {
       progressText += chunk.toString('utf8')
@@ -124,14 +141,14 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
     for (let index = 0; index < total; index++) {
       if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
-      const frame = layer.frameAt(index)
+      const frame = job.layer.frameAt(index)
       const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
       if (cached) {
         previous = { signature: frame.signature, png: cached }
         await writeBounded(encoder.child.stdin, cached)
         continue
       }
-      const { request } = frameRequestAt(manifest, plan, index, frame.sourceUs)
+      const { request } = job.request(index, frame)
       await writeBounded(host.child.stdin, JSON.stringify(request) + '\n')
       const png = await reader.frame()
       previous = { signature: frame.signature, png }
@@ -144,21 +161,112 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // Independent output validation precedes finalization by main's commit gate.
     const output = await probe(tools.ffprobePath, task.outputPath, signal)
     const video = output.metadata.streams.find((s) => s.kind === 'video')
-    if (video?.codec.name !== 'h264' || video.width !== plan.width || video.height !== plan.height
+    if (video?.codec.name !== 'h264' || video.width !== job.width || video.height !== job.height
       || !output.metadata.durationUs || (graph.hasAudioOut && !output.metadata.streams.some((s) => s.kind === 'audio' && s.codec.name === 'aac'))) throw failure('TOOL_FAILED', 'Encoded MP4 failed stream validation')
-    return { operation: 'export', path: task.outputPath, durationUs: output.metadata.durationUs, frameCount: total, frameRate: plan.frameRate }
+    return { operation: 'export', path: task.outputPath, durationUs: output.metadata.durationUs, frameCount: total, frameRate: job.frameRate }
   } catch (error) {
-    // Recover the actual encoder/host failure before translating external cancellation.
+    // Recover the actual encoder/host failure before translating external cancellation. A peer that
+    // is already dying on its own (the host writing its error and exiting, say) is given a moment
+    // to report why *before* our own teardown: once `cancel()` runs, every process that closes
+    // afterwards rejects `CANCELLED`, and the real reason is indistinguishable from our SIGTERM.
+    if (!signal.aborted) await settledWithin([encoder?.closed, host?.closed], PEER_SETTLE_MS)
     cancel()
     const outcomes = await Promise.allSettled([encoder?.closed, host?.closed])
     if (signal.aborted) throw failure('CANCELLED', 'Export cancelled')
-    const failed = outcomes.find((outcome) => outcome.status === 'rejected')
-    if (failed?.status === 'rejected') throw failed.reason
-    throw error
+    throw mostInformativeFailure(error, outcomes.flatMap((outcome) => outcome.status === 'rejected' ? [outcome.reason] : []))
   } finally {
     signal.removeEventListener('abort', cancel)
     host?.stop(); encoder?.stop()
     await Promise.allSettled([host?.closed, encoder?.closed])
     await rm(hostProfileDirectory, { recursive: true, force: true })
+  }
+}
+
+type LayerFrame = ReturnType<ReturnType<typeof createLayerPlan>['frameAt']>
+/** Everything the frame loop and encoder need, whichever manifest version drives them. */
+type PreparedExport = {
+  layer: ReturnType<typeof createLayerPlan>
+  request: (index: number, frame: LayerFrame) => PlannedFrame
+  graph: { filterComplex: string; hasAudioOut: boolean }
+  args: (filterComplexScriptPath?: string) => string[]
+  overlayUrls: string[]
+  frameCount: number
+  width: number
+  height: number
+  frameRate: ExportManifestV3['format']['frameRate']
+}
+
+/** Manifests v1/v2: one source media, X2's byte-identical encoder arguments. */
+async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchema.parse>, ExportManifestV3>, task: ExportTask, tools: Toolchain,
+  signal: AbortSignal, probe: MediaProber, plan: ReturnType<typeof exportPlanSchema.parse>): Promise<PreparedExport> {
+  const edits = normalizeManifest(manifest)
+  const [inputPath] = task.inputPaths
+  // One plan for which source timestamp each output frame shows and which frames repeat.
+  const layer = createLayerPlan({
+    cues: manifest.cues, style: manifest.style, display: manifest.display, segments: edits.segments,
+    rangeStartUs: plan.range.startUs, mediaDurationUs: task.range.endUs, frameRate: plan.frameRate, overlays: edits.overlays,
+    output: { width: plan.width, height: plan.height },
+  })
+  const inputProbe = await probe(tools.ffprobePath, inputPath, signal)
+  if (!inputProbe.metadata.durationUs || task.range.endUs > inputProbe.metadata.durationUs || !inputProbe.metadata.streams.some((s) => s.kind === 'video')) throw failure('INVALID_MESSAGE', 'Export range needs a known video duration and must stay within it')
+  const hasAudio = inputProbe.metadata.streams.some((s) => s.kind === 'audio')
+  // Sound-effect clip paths reach FFmpeg directly as `-i` arguments (never a shell string), but
+  // unlike the source/overlay paths they are not looked up in main's fingerprint registry inside
+  // this worker — confirm each one is a real, readable file before spawning anything, so a stale
+  // or unrelinked path fails with an actionable message instead of an opaque FFmpeg error.
+  for (const clip of edits.audioClips) {
+    try { await stat(clip.path) }
+    catch { throw failure('INVALID_MESSAGE', `Sound effect "${clip.id}" could not be read at its resolved path.`) }
+  }
+  return {
+    layer,
+    request: (index, frame) => frameRequestAt(manifest, plan, index, frame.sourceUs),
+    graph: exportFilterGraph(plan, hasAudio, manifest),
+    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script),
+    overlayUrls: edits.overlays.map((overlay) => overlay.assetUrl),
+    frameCount: exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate),
+    width: plan.width, height: plan.height, frameRate: plan.frameRate,
+  }
+}
+
+/**
+ * Manifest v3: every input is probed once — for its audio stream, and so a clip reaching past the
+ * end of its file fails here with its name rather than as an opaque FFmpeg error — and every input
+ * must be one the task declared.
+ */
+async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: Toolchain, signal: AbortSignal, probe: MediaProber): Promise<PreparedExport> {
+  const declared = new Set(task.inputPaths.map((input) => path.resolve(input)))
+  const probes = new Map<string, Awaited<ReturnType<MediaProber>>>()
+  const hasAudioByInput: boolean[] = []
+  for (const [index, input] of manifest.inputs.entries()) {
+    const resolved = path.resolve(input.path)
+    if (!declared.has(resolved)) throw failure('INVALID_MESSAGE', 'Export manifest reads a file the task did not declare')
+    if (input.kind === 'image') {
+      try { await stat(input.path) } catch { throw failure('INVALID_MESSAGE', `Image "${path.basename(input.path)}" could not be read at its resolved path.`) }
+      hasAudioByInput[index] = false
+      continue
+    }
+    let probed = probes.get(resolved)
+    if (!probed) { probed = await probe(tools.ffprobePath, input.path, signal); probes.set(resolved, probed) }
+    const clip = manifest.clips.find((candidate) => candidate.inputIndex === index)
+    const durationUs = probed.metadata.durationUs
+    if (input.kind === 'video' && !probed.metadata.streams.some((s) => s.kind === 'video')) throw failure('INVALID_MESSAGE', `"${path.basename(input.path)}" has no video stream`)
+    // Probed durations can differ from the stored ones by a few microseconds; a millisecond of slack.
+    if (clip && durationUs !== null && clip.sourceEndUs > durationUs + 1_000) throw failure('INVALID_MESSAGE', `A clip of "${path.basename(input.path)}" runs past the end of the file; relink or trim it.`)
+    hasAudioByInput[index] = probed.metadata.streams.some((s) => s.kind === 'audio')
+  }
+  const { width, height, frameRate } = manifest.format
+  const layer = createLayerPlan({
+    cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays,
+    timeline: manifestTimeline(manifest), output: { width, height },
+  })
+  return {
+    layer,
+    request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
+    graph: exportFilterGraphV3(manifest, hasAudioByInput),
+    args: (script) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script),
+    overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
+    frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),
+    width, height, frameRate,
   }
 }

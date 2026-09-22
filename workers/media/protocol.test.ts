@@ -14,7 +14,7 @@ const tasks: MediaTask[] = [
   { operation: 'proxy', inputPath, outputPath: 'C:\\Cache\\proxy.webm', durationUs: 3123456 },
   { operation: 'inspectWhisper', modelPath: 'C:\\Users\\മലയാളം\\Models\\ggml-base.bin' },
   { operation: 'whisperTranscribe', audioPath: 'C:\\Cache\\speech.wav', modelPath: '/Models/ggml-base.bin', language: 'ml', useGpu: false, durationUs: 3123456 },
-  { operation: 'export', inputPath, range, outputPath: 'C:\\Exports\\captioned.mp4', renderManifestPath: 'C:\\Cache\\frames.json',
+  { operation: 'export', inputPaths: [inputPath], range, outputPath: 'C:\\Exports\\captioned.mp4', renderManifestPath: 'C:\\Cache\\frames.json',
     frameRate: { numerator: 30000, denominator: 1001 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1' },
 ]
 const request = (task: unknown) => ({ version: 1, type: 'request', id: randomUUID(), task })

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
 import { captionFrame, defaultCaptionInputs, fittedEmphasisFont, layoutCaption, layoutCaptionWords, projectCaptionViewport, SPOTLIGHT_DIM, type CaptionFill, type CaptionFont, type CaptionFrame, type LayoutInputs, type MeasureText, type MeasureRange, type MotionCue, type Size, type WordRegion } from './renderer'
 import { emphasisRuns, sliceEmphasis } from '../core/emphasis'
 import { locateWordSpans } from '../core/captionText'
@@ -153,7 +153,10 @@ export function createDomMeasurer(doc: Document): { measure: MeasureText; measur
   const setText = (text: string, font: CaptionFont, emphasis?: Parameters<MeasureText>[2]) => {
     Object.assign(span.style, captionTypography(font), { fontSize: `${font.size}px` })
     span.replaceChildren()
-    if (!emphasis) { span.textContent = text || '\u200b'; return }
+    // An empty string has no runs, so the emphasis branch below would leave the span empty and measure
+    // 0 x 0 — which layout rejects as invalid metrics. Trailing whitespace that overflows the line
+    // legitimately produces an empty last line, so empty text takes the plain path with the base font.
+    if (!emphasis || !text) { span.textContent = text || '\u200b'; return }
     for (const run of emphasisRuns(text, emphasis.spans)) {
       const node = doc.createElement('span')
       node.textContent = run.text
@@ -182,6 +185,24 @@ export function createDomMeasurer(doc: Document): { measure: MeasureText; measur
   }, dispose: () => span.remove() }
 }
 
+/**
+ * How the fixed composition (1080 wide) is fitted into an element's box: the offset and scale
+ * `CaptionPreview` positions its composition wrapper with, and the one the stage editor maps pointer
+ * pixels back through, so a handle always sits exactly on what is painted. The composition's size
+ * comes from the sequence format, never from a measured `<video>`.
+ */
+export function useCompositionProjection(ref: RefObject<HTMLElement | null>, composition: Size) {
+  const [preview, setPreview] = useState<Size | null>(null)
+  useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    const resize = new ResizeObserver(([entry]) => setPreview({ width: entry.contentRect.width, height: entry.contentRect.height }))
+    resize.observe(element)
+    return () => resize.disconnect()
+  }, [])
+  return preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
+}
+
 export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers }: {
   cue: MotionCue | null
   timestampUs: number; composition: Size; inputs?: LayoutInputs; motion?: CaptionMotion; motionSpeed?: number
@@ -191,11 +212,11 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
    * display so switching between a line's own words never re-triggers the font-loading effect
    * (which would otherwise show nothing for a frame at every word boundary). */
   fontSample?: string
-  /** Image overlays (V2), painted inside the same scaled composition wrapper, below captions. */
+  /** Video, image and blur layers, painted inside the same scaled composition wrapper, below captions. */
   layers?: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
-  const [preview, setPreview] = useState<Size | null>(null)
+  const projection = useCompositionProjection(ref, composition)
   const [fontState, setFontState] = useState<{ key: string; status: CaptionFont['readiness']; revision: number }>({ key: '', status: 'loading', revision: 0 })
   const [measurer, setMeasurer] = useState<ReturnType<typeof createDomMeasurer> | null>(null)
   const inputs = useMemo(() => {
@@ -208,9 +229,7 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
     const owner = ref.current!.ownerDocument
     const metrics = createDomMeasurer(owner)
     setMeasurer(metrics)
-    const resize = new ResizeObserver(([entry]) => setPreview({ width: entry.contentRect.width, height: entry.contentRect.height }))
-    resize.observe(ref.current!)
-    return () => { resize.disconnect(); metrics.dispose() }
+    return () => metrics.dispose()
   }, [])
   useEffect(() => {
     let cancelled = false
@@ -237,7 +256,6 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
   const wordLayout = useMemo(() => layout && cue && measurer && motion !== 'static-clean' && motion !== 'phrase-fade'
     ? layoutCaptionWords(layout, cue, measurer.measureRange) : layout, [layout, cue, measurer, motion])
   const frame = useMemo(() => wordLayout && cue ? captionFrame(wordLayout, cue, timestampUs, motion, motionSpeed) : null, [wordLayout, cue, timestampUs, motion, motionSpeed])
-  const projection = preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
   useEffect(() => { if (projection) onFrame?.(frame) }, [frame, projection?.scale, onFrame])
   return <div ref={ref} data-caption-preview="1" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
     {diagnostics && cue && readyInputs.font.readiness !== 'ready' && <span role="status" style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 12 }}>

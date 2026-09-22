@@ -19,11 +19,12 @@ it('renders the threshold, minimum-silence and padding controls with a disabled 
   expect(html).toContain('Padding')
   expect(html).toMatch(/Detect<\/button>/)
   expect(html).toMatch(/<button class="accent" disabled="">Apply<\/button>/)
-  expect(html).not.toContain('replaces the project')
+  expect(html).not.toContain('already trimmed')
 })
 
-it('warns that applying replaces existing cuts', () => {
-  const html = renderToStaticMarkup(<SilenceRemovalDialog open mediaReady onClose={() => {}}
+it('names the video it works on and explains that existing trims are kept', () => {
+  const html = renderToStaticMarkup(<SilenceRemovalDialog open mediaReady onClose={() => {}} videoName="interview.mp4"
     onDetect={noopDetect} onCancelDetect={() => {}} onApply={() => {}} hasExistingCuts />)
-  expect(html).toContain('replaces the project')
+  expect(html).toContain('<strong>interview.mp4</strong>')
+  expect(html).toContain('Clips already trimmed stay trimmed')
 })

@@ -65,6 +65,39 @@ export function SliderWithNumber({ id, min, max, step = 1, value, unit, onDraft,
   </div>
 }
 
+/** A typed percentage as a 0–1 fraction clamped to the range, or null while the text is not a
+ * number yet (empty, "-", "."), so a half-typed value never reaches the project. */
+export function parsePercent(text: string): number | null {
+  if (!text.trim()) return null
+  const percent = Number(text)
+  return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) / 100 : null
+}
+
+/** A 0–1 fraction edited as a percentage. The typed text is held locally so intermediate input
+ * ("7" on the way to "70") is never reformatted under the caret; each valid keystroke drafts to
+ * the preview and the value commits once on blur or Enter. */
+export function PercentField({ id, value, onDraft, onCommit }: {
+  id: string; value: number; onDraft: (fraction: number) => void; onCommit: (fraction: number) => void
+}) {
+  const [text, setText] = useState<string | null>(null)
+  const shown = text ?? String(Math.round(value * 1000) / 10)
+  return <div className="unit-field">
+    <input id={id} type="number" min={0} max={100} step={.1} value={shown}
+      onChange={(event) => {
+        setText(event.target.value)
+        const fraction = parsePercent(event.target.value)
+        if (fraction !== null) onDraft(fraction)
+      }}
+      onBlur={() => {
+        const fraction = text === null ? null : parsePercent(text)
+        setText(null)
+        onCommit(fraction ?? value)
+      }}
+      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+    <span aria-hidden="true">%</span>
+  </div>
+}
+
 /** An on/off switch; commits immediately (no draft phase), like the app's other discrete controls.
  * `hideLabel` visually hides the switch's own label when the row it sits in already names it. */
 export function Toggle({ id, checked, label, hideLabel = false, onChange }: { id: string; checked: boolean; label: string; hideLabel?: boolean; onChange: (checked: boolean) => void }) {

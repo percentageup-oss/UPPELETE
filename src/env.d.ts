@@ -14,6 +14,8 @@ import type { ManagedModelId, ModelListing, ModelState } from './core/modelCatal
 import type { TranscriptionAvailability, TranscriptionOutcome, TranscriptionProgress, TranscriptionStartRequest } from './core/transcriptionIpc'
 import type { MenuCommand } from './core/menuCommands'
 import type { AlignmentOutcome, AlignmentProgress, AlignmentSettingsStatus, AlignmentStartRequest } from './core/alignmentIpc'
+import type { AgentRequest, AgentResponse } from './core/agentProtocol'
+import type { McpSettingsView, McpStatus } from '../electron/mcp/config'
 
 /** Chromium Local Font Access API (not yet in TS lib.dom). Offline, requires transient user
  * activation and the 'local-fonts' permission; no font is bundled, downloaded or sent anywhere. */
@@ -72,6 +74,13 @@ declare global {
       startExport(request: ExportStartRequest): Promise<ExportOutcome | null>
       cancelExport(requestId: string): Promise<void>
       onExportProgress(callback: (message: ExportProgressEvent) => void): () => void
+      onAgentRequest(callback: (request: AgentRequest) => void): () => void
+      respondAgentRequest(response: AgentResponse): void
+      agentStatus(): Promise<McpStatus>
+      onAgentStatus(callback: (status: McpStatus) => void): () => void
+      agentSettings(): Promise<McpSettingsView>
+      setAgentEnabled(enabled: boolean): Promise<McpSettingsView>
+      rotateAgentToken(): Promise<McpSettingsView>
     }
   }
 }

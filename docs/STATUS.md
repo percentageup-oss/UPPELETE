@@ -1,5 +1,364 @@
 # Status
 
+## 2026-09-21 — MCP1: local agent control core (Claude Code can inspect and edit the project)
+
+Completed the first slice of local agent control ([MCP.md](MCP.md), `tickets.md` MCP1): an opt-in, loopback-only MCP server a Claude client can drive, forwarding every read/edit through the app's own command/undo path rather than a second editing model.
+
+**Core.** `src/core/editCommandSchema.ts` mirrors every `CaptionCommand`/`ItemCommand` variant as zod (the boundary the MCP `edit` tool validates against), with a compile-time check (`_ParsedCommandIsEditCommand`) that whatever it accepts is a real `EditCommand`. `src/core/agentProtocol.ts` defines the renderer↔main IPC contract (`AgentRequest`/`AgentResponse`), `summarizeProject`/`summarizeCue` and `listStyleOptions`/`styleFieldRanges` (generated from `captionAppearanceSchema`'s actual zod bounds, so a range can't drift from what the schema accepts).
+
+**Renderer bridge.** `src/agent/useAgentBridge.ts` subscribes once to `window.captionStudio.onAgentRequest` and answers against the latest render's handlers. `App.tsx` gained `runCommands` (a batch of commands committed as **one** undo step, all-or-nothing) alongside the existing single-command `runCommand`, plus `seek`/`select`/`undo`/`redo` handlers that each compute their own resulting `ProjectSummary` synchronously (from `projectRef`/`selectionRef`, kept live the same way `projectRef` already was) rather than reading back React state, which would still be the pre-update value within the same tick.
+
+**MCP server.** `electron/mcp/server.ts` is a plain `node:http` server plus the SDK's `StreamableHTTPServerTransport`, bound to `127.0.0.1` at an OS-assigned port; the actual bound port is required for `allowedHosts` (the DNS-rebinding check matches the `Host` header including port), so the http server binds first, then the transport is built and the real request handler attached. Every request needs the exact Bearer token (constant-time compare) before it reaches MCP handling at all. `electron/mcp/tools.ts` registers `get_project`, `get_captions`, `edit`, `set_caption_style`, `apply_template`, `list_style_options`, `seek`, `select`, `undo`, `redo`. `electron/mcp/config.ts` persists the enabled flag/port/token (`<userData>/mcp.json`, mode 0600 — a loopback-only shared secret, not OS-keychain-encrypted). `electron/mcp/ipc.ts` wires Settings-tab IPC and resumes agent access on launch if it was left enabled.
+
+**UI.** Settings gained an **AI agents** tab (enable toggle, token show/copy/rotate, the ready-to-paste `claude mcp add` command) and the top bar shows a **🤖 Agent** chip with a live connected-client count while the server is listening. `project.markers` (schema 5, optional/defaulted — no migration) is a new small item kind: sequence-time ruler notes drawn as clickable diamonds, meant as the landing spot for an agent-proposed shot list the user can accept or dismiss rather than it living only in chat; `marker-add/update/delete` join the existing item command set.
+
+**Deliberately not done in this slice** (tracked as MCP2/MCP3 in `tickets.md`, documented in [MCP.md](MCP.md) "Not implemented yet"): `render_frame`/frame snapshots for a vision loop, `import_media`/`import_image_data`, `place_at_word` and alpha-clip export support for word-anchored fillers, the Claude Desktop stdio bridge, and every job tool (transcribe/export/silence/save). The Settings tab says plainly that Claude Desktop is not supported yet rather than showing a config snippet for a bridge file that doesn't exist.
+
+Verification: `npm run check` passes strict TypeScript, **979 tests across 108 files**, the renderer production build, and the Electron main/preload bundle (confirmed `@modelcontextprotocol/sdk` appears only in `dist-electron/main.cjs`, not `preload.cjs`). Notably real rather than mocked: `electron/mcp/server.test.ts` starts an actual `startMcpServer` instance on a loopback port and drives it with the MCP SDK's own HTTP client — `tools/list`, every tool's `tools/call`, wrong/missing-token → 401, and input-schema rejection surfacing as an error tool result. `electron/mcp/ipc.test.ts` exercises the real enable → disable → rotate → resume-after-restart lifecycle against a real server, mocking only `electron`'s `app`/`BrowserWindow`/`ipcMain`. `useAgentBridge`'s request→response dispatch and every editing-command schema variant are unit-tested directly (round-trip plus rejection of unknown/malformed commands).
+
+**Not verified in this slice:** the app was not launched interactively in this sandboxed environment — no real Claude Code session was connected end to end, the Settings tab was not clicked through in a live window, and macOS/Windows packaging is untested here. The manual walkthrough in the MCP1 plan (enable in Settings, `claude mcp add …`, restyle via `set_caption_style`, confirm the timeline/preview reflect it and ⌘Z reverts it) still needs a real desktop run before this is "done" end to end — flagged explicitly rather than assumed.
+
+Next: MCP2 (render_frame/capturePage vision loop, import_media, place_at_word, alpha-clip export, the Claude Desktop stdio bridge) is the natural next slice; alternatively, a real interactive macOS smoke test of what MCP1 already built.
+
+## 2026-09-21 — Export: the 24-second stop found and fixed (an empty caption line crashed the export host)
+
+The previous entry left the user's failing export unreproduced. It is now reproduced from the real
+project (`wallstreet.cstudio`, its 184 MB source, 1440×2560 @30, 39 cues) and fixed. The export log
+had said only `BACKEND_FAILED` / `Export cancelled`.
+
+**Actual cause.** The cue starting at 29.2 s ends with a trailing space and has a selected emphasis
+word. At the real caption width that trailing space is the character that overflows the line, so
+`breakLines` breaks at the end of the text and the final `push(text.length)` adds an **empty last
+line**. `createDomMeasurer` measured empty text on its emphasis path as an empty span — 0 × 0 —
+where its plain path uses `text || '\u200b'`; `layoutCaption` rejects that as "Invalid shaped text
+metrics" and throws **inside a React render**. There is no error boundary, so React unmounted the
+tree and the harness kept the stale `loading` frame, which `frameHarness.tsx` reported after 10 s
+as "font/geometry readiness timeout"; the host then wrote that to stderr and exited 1.
+
+**Why it read "Export cancelled".** Two layers hid it. The host's death made the job abort FFmpeg,
+whose SIGTERM rejection (`CANCELLED`) was listed first and picked over the host's real failure
+(`workers/media/export.ts`), and the `BACKEND_FAILED` relabel in `electron/exportService.ts` then
+kept only `error.message`, dropping the exit status and stderr.
+
+**Changes.**
+- `src/captions/CaptionPreview.tsx`: empty text takes the plain measuring path with the base font
+  (the fix). Regression tests in `src/captions/domMeasurer.test.ts` fail without it with the exact
+  production error.
+- `workers/media/export.ts`: `mostInformativeFailure` prefers a process's own failure, then the frame
+  loop's error, then a bare cancellation. A failing export waits up to 2 s for its peer to report
+  before tearing it down: a child's stdout closes before its exit status arrives, and our own
+  `cancel()` in between turned the host's status into a cancellation too.
+- `electron/exportService.ts`: the relabel keeps exit status and the tool's stderr in `diagnostic`.
+- Diagnostics: the export host, the paint timeout and the harness readiness timeout now say where and
+  why they stopped — frame number, timestamp, size, document font status, `loading` event count and
+  the last uncaught page error. Never caption text. `layoutCaption`'s metrics error now reports the
+  measured size and string length.
+
+**Deliberately not done.** The plan proposed reporting a process's own non-zero exit as `TOOL_FAILED`
+even when aborted, in `ownedProcess`. FFmpeg exits 255 on SIGTERM, so that would label every ordinary
+teardown a failure; the ordering fix and the settle wait cover the same case.
+
+**Verification** (macOS arm64 only; nothing run on Windows).
+- `npm run typecheck` clean; `npm test` 865 passing (857 before). Every new failure-path test was
+  confirmed to fail against the old code.
+- Real encodes through `electron . --export-smoke` with a manifest built from the project: before the
+  fix, failed at frame 340 (29.2 s), reproduced in 25 s and on a 1.4 s window in 13 s; after, the
+  whole project encodes — H.264 1440×2560 + AAC, 176.53 s, 358 MB, about 3 min — with captions
+  sampled at 29.6 s (the failing cue), 60 s and 117.5 s (second clip).
+- Bisect: the same cue exports fine with its emphasis removed, or with its trailing space trimmed.
+
+**Not verified.**
+- `npm run parity:export` did **not** run to completion in the agent shell, and preview/export parity
+  is therefore unchecked after these edits (none of them alters a non-empty measurement). It aborts
+  in its own caption-layer stage with `Unexpected pixel dimensions {"width":1920,"height":1920}`
+  (`export-parity.mjs:205` via `markedBitmap`) — the script's initial window size, so its resize did
+  not take effect before the first paint. The same abort occurred with this slice's `frameHarness.tsx`
+  edits temporarily reverted, so it is not caused by them; the cause is undiagnosed and may be
+  environmental. The script exits 0 and prints nothing when this happens; the error is in
+  `<tmpdir>/export-parity-error.log`. No evidence file was kept. Run it from a normal terminal.
+- The failing export has not been re-run through the app's own GUI, and the smoke path does not
+  write `export.log` (only the `export:start` IPC path does).
+- `ffprobe` shows 5296 video frames while the job reports 5297: the source's video stream (88.2667 s)
+  is shorter than its container (88.2773 s). Not investigated; it predates this change.
+
+**Open defect found, not fixed.** The empty last line is still laid out, only no longer fatal. It is
+measured as a blank extra caption row, so a cue whose trailing space overflows sits about one line
+higher than the same cue trimmed (compared in exported frames of this project, both with emphasis;
+the no-emphasis case was not compared). The layout code is shared with the preview, so the preview
+very likely shows the same shift — not checked. The right
+fix is in `breakLines` (trailing whitespace should hang, not wrap onto an empty line), but that
+changes shared layout for existing projects and their parity snapshots, so it needs a decision.
+
+**Next.** Run `npm run parity:export` from a terminal; decide the trailing-whitespace line-break rule;
+then the admission bound from the previous entry (`thumbnailQueue.ts` allows 8 concurrent strip
+requests against `MediaWorkerClient`'s 4-job limit).
+
+## 2026-09-21 — Export: a job that stops now says so, and a closed window no longer discards it
+
+Reported: the export shows progress, the progress disappears, and no file exists at the chosen
+destination — with no message on screen.
+
+**What was verified first.** The encoder pipeline itself is not broken. Real end-to-end encodes
+through `electron . --export-smoke` (ExportService → job scheduler → media worker → export host →
+FFmpeg 9.0.1/`h264_videotoolbox`, macOS arm64) succeeded for manifest v2, v3 *flat* (two clips
+back to back) and v3 *stacked* (gap + picture-in-picture + opacity), with and without captions.
+
+**Root causes of the silence** (three, all on the reporting path, not the encode):
+1. `electron/exportIpc.ts` cancelled an in-flight export as soon as its renderer `WebContents` was
+   destroyed. On macOS closing the window does not quit the app, so closing or replacing the window
+   mid-encode killed the job, deleted the temporary output and left the next renderer with fresh
+   state: no progress, no message, no file. A chosen destination makes the export's product a file
+   on disk, not a live window, so it now runs to completion; `closeJobs()` on app quit still cancels.
+2. `JobScheduler` checked `isCancellationSignal(error)` before `pendingProgressFailure` in its
+   rejection handler, so a job aborted for malformed or regressing progress reported itself as a
+   plain cancellation and lost its reason. The success path already had this order right.
+3. The media worker reports its own teardown (dead export host, closed pipe) with the same
+   `CANCELLED` code a user cancellation carries, and the scheduler retires any `CANCELLED` job with
+   no error. `ExportService` now relabels a cancellation the job never requested as
+   `BACKEND_FAILED`, keeping the worker's message as the diagnostic.
+
+**Change.**
+- `electron/exportLog.ts` (new): a local, rotating JSONL diagnostic log at
+  `<userData>/logs/export.log` — job start (manifest version, input/clip/cue/overlay counts, plan,
+  destination), terminal outcome with the full structured error and its `diagnostic`, renderer
+  destruction, and `render-process-gone`/`child-process-gone` from `electron/main.ts`. Local only,
+  no telemetry; it records counts, paths and error details, never caption or media content.
+- `src/App.tsx`: an export can no longer leave the UI without a message — a `null` outcome after a
+  job has reported progress is an error, not a dismissed save dialog. The error notice now carries
+  a trimmed tail of the structured error's `diagnostic` (the encoder's own stderr), which was
+  previously dropped entirely.
+
+**Verification.** `npm run typecheck` clean; `npm test` 857 passing, including new tests for the
+scheduler ordering (which fails without the fix), the unrequested-cancellation relabel, and the log
+writer's append/rotate/unserializable-detail behaviour. Real re-encode through
+`electron . --export-smoke` after the `ExportService` restructure still produces a valid 6 s /
+180-frame MP4. macOS arm64 only; nothing here was run on Windows.
+
+**Limitations.** The user's own failing project could not be reproduced here (no `.cstudio` file
+and no leftover output), so the exact stop is still unknown — the log is what will name it on the
+next run. `exportLogPath()`'s use of `app.getPath('userData')` is not covered by an automated test
+(it needs a live Electron app); the append/rotate logic below it is. Separately found and **not
+fixed**: `src/timeline/thumbnailQueue.ts` allows 8 concurrent strip requests while
+`MediaWorkerClient` throws `BUSY` past 4 in-flight jobs, and `src/App.tsx` starts one waveform job
+per asset at once — background work can therefore be refused, and can refuse a user-initiated
+export that starts in the same window.
+
+**Next.** Reproduce the failing export once with this build and read `<userData>/logs/export.log`;
+then bound the media worker's admission so background thumbnail/waveform work cannot consume the
+whole budget.
+
+## 2026-09-21 — Style panel: caption Position X/Y now takes effect while typing
+
+Typing a value into Position X or Y did not move the caption in the preview.
+
+**Root cause.** The two inputs (`src/StylePanel.tsx`) updated only the panel's local draft on change,
+never `onDraft`, so the preview did not move until blur. They also re-rendered `value` as
+`(fraction * 100).toFixed(1)` on every keystroke, so typing "70" produced "7.0" then "7.00", which parses
+as 7: a two-digit value could not be entered.
+
+**Change.**
+- `src/style/controls.tsx`: `PercentField` holds the typed text locally (no reformatting under the caret),
+  drafts to the preview on every valid keystroke and commits once on blur or Enter. `parsePercent` maps
+  text to a clamped 0–1 fraction, or null for half-typed text (empty, "-", "."), which is never drafted.
+- `src/StylePanel.tsx`: Position X and Y use `PercentField`.
+
+**Verification.** `npm run typecheck` clean; vitest for `src/style`, `StylePanel`, `captions/style` and
+`captions/renderer` passes, including new `parsePercent` tests. The style → layout position mapping was
+already covered (`style.test.ts`, `renderer.test.tsx`), and export uses the same `captionStyleInputs`.
+
+**Limitations.** No DOM-interaction test tooling exists, so the field's typing/draft/commit behavior is not
+covered by an automated test and has not been exercised in the running app; that needs a manual check
+(open Style → Position, type 70 in Y, confirm the caption moves as you type and persists after blur).
+
+**Next.** Manual GUI check of Position X/Y in preview and one exported clip.
+
+## 2026-09-21 — Captions panel: word menu works on captions with no word timing
+
+An added or edited caption could not be emphasized or given a New line from the Captions panel:
+clicking its words did nothing.
+
+**Root cause.** The panel built its clickable words from `cue.words`, the per-word *timing* list.
+`addCue` creates a cue with `words: []`, and `update-text` only filters the old list through
+`retainSafeWordTimings`, which correctly drops any word it cannot prove is unchanged (and returns
+`[]` when the old spans no longer match). A caption in that state rendered as bare text: no
+`.transcript-word` buttons, so no menu. Emphasis itself never depended on timing — `toggle-emphasis`
+works from `captionTokens(cue.text)`, and the inspector's "Emphasize words" list already did too.
+
+**Change.**
+- `src/transcript.ts`: `transcriptSpans(cue)` replaces `interactiveTranscriptSpans`. It returns one span
+  per clickable unit — each timed word (via `locateWordSpans`, so legacy punctuation-bearing entries
+  stay single buttons) plus every `captionTokens` token no word covers, marked `word: null`. A
+  partially-timed caption is now fully clickable too. New pure helpers `wordMenuAvailability` and
+  `wordActionCommand` hold the menu's enablement rules and action→command mapping so they are testable.
+- `src/core/captionCommands.ts`: `delete-word` and `line-break-before-word` take
+  `target: { wordId } | { textStart }` instead of `wordId`, so they run on an untimed token.
+  `split-before-word` and the two `move-*` commands still require a `wordId` because they read the
+  word's time to place a cue boundary. `estimate-words` gains `missingOnly`, which fills only untimed
+  gaps and leaves model/aligned/manual words untouched. The New line guard is now "not the caption's
+  first *token*" (was "not the first entry of `cue.words`", which mis-blocked a timed word that follows
+  untimed ones).
+- `src/CaptionsPanel.tsx`: word buttons render from spans; the menu is keyed by token offset. Emphasize,
+  Edit, Delete and New line work with no timing. Split / Previous line / Next line are disabled for an
+  untimed token, and the menu shows a note plus **Estimate word timing** (`missingOnly`). Nothing is
+  estimated unless the user asks, so estimated timing is never presented as aligned.
+- `src/App.tsx`: also fixes a related bug — emphasis used `word.textStart ?? 0`, so a legacy schema-2
+  word without `textStart` emphasized the caption's *first* word instead of the clicked one. It now uses
+  the span offset from `locateWordSpans`. Clicking an untimed token selects its caption but does not
+  seek (there is no honest time for it).
+
+**Verification.** `npm run check`: strict TypeScript, 849 tests in 98 files, renderer build, Electron
+main/preload bundle and worker build all pass. New tests cover untimed / partially-timed / Malayalam span
+building, menu enablement, action→command mapping (including the legacy-`textStart` emphasis
+regression), `delete-word` and `line-break-before-word` by offset, emphasis on an added-then-edited cue,
+`estimate-words` `missingOnly` preserving timed words, and a static render of `CaptionsPanel` asserting an
+untimed caption exposes a button per word. The repo has no jsdom/testing-library, so the click → menu open
+→ action flow is **not** covered by an automated test; it, the menu positioning for the new footer, and
+export layout of a line-broken Malayalam caption were **not run in the app**, and no macOS or Windows
+build was launched.
+
+**Limitations / next.** The Previous line / Next line enablement rules are unchanged for fully timed
+captions; they look inverted against the reducer (Previous is disabled for the first word yet the reducer
+rejects it only for the last), which predates this slice and is worth a separate look. Editing a caption
+still drops timing it cannot safely keep, by design. Next: a manual pass — add a caption at the playhead,
+type text, click a word, Emphasize / New line / Delete, then Estimate word timing and confirm Split and
+Next line enable; repeat on a transcribed caption after replacing one word.
+
+## 2026-09-21 — Preview playback: the transport was deaf to the clock
+
+Pressing Play showed the first frame and then froze while the timecode and captions kept moving.
+The 1440×2560 resolution was not the cause (nor the codec: the element loaded and painted frame 0).
+
+**Root cause** (found by reading the code, not by reproducing it in the running app)
+`createSequenceTransport` subscribed to the clock inside its factory, which `useProjectPlayback`
+memoises; the mount effect's cleanup then called `transport.dispose()` and `clock.dispose()`, and
+`clock.dispose()` clears every listener. `main.tsx` renders `<StrictMode>`, which runs effects as
+mount → cleanup → mount in dev without re-running `useMemo`, so the transport's subscriptions were
+gone from startup. Every other subscriber (SFX scheduler, the hook's tick effect, `CaptionStage`)
+subscribes inside an effect and came back; the transport never did, so the video was only ever
+driven by `transport.refresh()` on a project change.
+
+**Changes**
+- `transport.ts`: `attach(clock)` / `detach()` replace subscribe-in-factory (the `SfxScheduler`
+  pattern); `detach` keeps the pool loaded; `dispose` = detach + unload.
+- `useProjectPlayback.ts`: attach/detach in the mount effect; cleanup no longer disposes the
+  clock, pool or transport.
+- **The master video (topmost playing) is no longer re-seeked for drift** (was: >250 ms). It is
+  seeked only right after an explicit seek (`seekEpoch` change) or when a full second out;
+  `discipline` corrects the rest. Other playing videos keep the 250 ms re-seek — nothing else
+  corrects them. With no `requestVideoFrameCallback`, the transport disciplines from `currentTime`.
+  This is the second problem the freeze was hiding: at this resolution a seek can itself take
+  longer than 250 ms, so the old rule would have kept the decoder from ever catching up.
+- `docs/EDITING.md` "Playback" records both rules.
+
+**Verification** (macOS arm64, this machine)
+- `npm run check`: typecheck, 97 test files / 839 tests, production build — green. No test file
+  changed: the one existing assertion about re-seeking a drifted playing element (1.5 s out) still
+  holds because it now falls under the 1 s last-resort limit.
+- **Not run: the GUI.** Nothing here has been observed in the running app.
+
+**Not verified / limitations**
+- No new tests. `createSequenceTransport` (the runtime) and the hook's effect lifecycle remain
+  uncovered — which is how this shipped. Covering the hook needs jsdom + testing-library.
+- Untested by a machine: play from the start, scrub while playing and paused, play across a
+  clip boundary and a gap, mute/hide mid-playback, and the 1440×2560 file specifically.
+- Expect one small caption correction just after Play (the clock snaps onto the first presented
+  frame). A large or repeated one would mean startup needs a preroll gate.
+- Known, not fixed (found in review): (1) `discipline` moves the clock without bumping `seekEpoch`,
+  so a large startup snap leaves sound effects offset for the rest of that playthrough — it
+  predates this slice but is now certain to happen at high resolution; (2) an element that is not
+  yet `loaded` is re-seeked on every clock tick, a write storm while it primes; (3) a non-master
+  video at high resolution can still fall into the seek loop the master no longer can.
+- Deliberately not done: pausing the clock on `waiting`/`stalled`; a hold on the clock until the
+  master presents its first frame (which would also fix (1)).
+
+**Next task**: manual smoke of the list above; if the picture still stalls at startup on this
+file, add the presented-frame gate.
+
+## 2026-09-19 — Schema 5: a stacked multi-track timeline (supersedes V7 2b–2f)
+
+Importing a second video used to **replace** the first; schema 4's clips were a flat list whose index
+was the position (no gaps, one video lane). This slice replaces that with a real NLE model — named
+tracks, clips at absolute sequence positions, gaps, picture-in-picture and stacked video tracks,
+music/SFX in sequence time — and carries it through preview playback, compositing and export.
+The contract is `docs/EDITING.md` "Schema 5"; the export decision is
+[ADR 0005](decisions/0005-stacked-export.md). All eight planned steps landed in one session.
+
+**Changes**
+- **Schema 5** (`edit.ts`, `model.ts`): `tracks` (back to front), one `clips` union (`video` / `image` /
+  `audio`, absolute `timelineStartUs`, length ≡ source range, no rate), sequence-timed `blurRegions`,
+  `format` (output frame; drives the caption composition). `superRefine`: one ID namespace, clip/track/
+  asset kinds agree, **no overlap on a track**, clips **sorted by (track, start, id)**. Schema 4 is kept as
+  `projectSchemaV4`. Transcription/alignment runs gain `mediaAssetId`.
+- **Migration 4 → 5** (`migrateV4.ts`): V1 at schema 4's prefix sums (gapless by construction), overlays →
+  image clips on tracks above V1 preserving stacking, SFX → audio clips on A tracks at their old sequence
+  position, blur retimed, cues untouched, `format` = `planFromMedia`'s rule. Nothing is dropped: items
+  schema 4 no longer played are **parked** on muted/hidden tracks; parks, splits and resolved SFX durations
+  are returned as `migrationNotes` and shown when the project opens (autosave stays off until Save).
+- **Pure core**: `timelineModel.ts` (`activeClipsAt`, `spansInSequence`, `nextBoundaryAfter`,
+  `cuesInSequence`, and **`activeCueAt` — the one active-caption rule**, now shared by the preview, the
+  export layer plan and the export frame requests instead of three copies), `clipEdits.ts`
+  (overwrite/ripple place, move across tracks, trim, split, delete, close gap, silence removal, restore),
+  `clipDrag.ts`, `timelineLayout.ts`, `format.ts`.
+- **Commands** split into `assetCommands.ts`, `trackCommands.ts` (add/remove/rename/flags/reorder) and
+  `clipCommands.ts`; `itemCommands.ts` keeps the union, `validateItems` and the parse epilogue.
+- **Timeline** decomposed (`src/timeline/*`): rows from `project.tracks`, track headers (rename, M/H/L,
+  up/down, remove, +V/+A), clip blocks with trim handles, per-clip filmstrips (bounded queue: cache by
+  source range, 8 in flight, visible clips only) and waveform slices, cross-track drag, Alt-clone, "Close
+  gap", an OVERWRITE/RIPPLE toggle (default overwrite), ⌘/Ctrl+B split, Delete lift, Shift+Delete ripple.
+- **Import**: a second video is **appended to V1**; dragging one onto the timeline places it there;
+  `ReplaceVideoReview` and the replace-source path are gone. The media bin lists every video.
+- **Playback** (`src/playback/`, `src/app/useProjectPlayback.ts`): a sequence clock disciplined to the
+  topmost playing video's `requestVideoFrameCallback`, a `<video>` pool per (track, asset), the pure
+  `transportActionsAt` (load/seek/play/pause, ~500 ms preroll), SFX scheduled from the transport. The
+  stage's `<video controls>` is gone; the transport row is the only one. Preview clamps gain > 1 to 1.
+- **Compositing**: `CompositionLayers` paints video/image/blur layers (back to front, blur above media,
+  captions on top); `VideoSlot` mounts pooled elements; `ClipStageEditor` drags/resizes/clones any picture
+  clip with a rect — **picture-in-picture video included**; the clip inspector toggles PiP, sets fit,
+  opacity and gain.
+- **Export**: manifest v2 for flat sequences (byte-identical argv), **manifest v3** otherwise — one FFmpeg
+  input per clip opened with `-ss`/`-t` (deviation from the plan, which shared decoders: see ADR 0005),
+  a flat `concat` route and a stacked black-canvas + `tpad` + `overlay=eof_action=pass:repeatlast=0` route.
+  Export IPC now takes only `{ requestId, project }`; main resolves every file the timeline plays.
+- **Per video**: a video picker for transcription and silence removal; **`captionsOverlappingRange` is
+  scoped to the transcribed video** (it previously would have offered to replace another video's captions
+  whose times merely overlapped); new captions and runs are bound to that video.
+- **Removed**: `sequence.ts`, `sfxClip.ts`, `playbackController.ts`, `createPlaybackClock`, `CutMarkers`,
+  `overlayLanes`, `OverlayInspector`/`SfxInspector` (→ `ClipInspector`), `OverlayStageEditor`
+  (→ `ClipStageEditor`), `legacySegmentsOf`/`hasCuts`, the "Removed by cut" badge (→ "Not in sequence").
+
+**Verification** (macOS arm64, this machine)
+- `npm run check`: typecheck, **97 test files / 831 tests**, production build — all green. The count fell
+  from 872 because `sequence.test.ts` and the element-clock/cut-controller suites were retired with their
+  modules; new suites cover the new invariants: no overlap per track, sorted clips, overwrite/ripple
+  round-trips (insert+delete, trim±, restore after silence removal), migration rendering-equivalence against
+  schema 4's own mapping, parking, transport actions across a gap and at a boundary, the sequence clock's
+  discipline, the SFX scheduler, thumbnail queue bounds, per-video transcription scoping, and v3 argv.
+- **The existing v2 argument snapshots pass unchanged**, and a migrated schema-4 project produces exactly
+  schema 4's v2 manifest and argv (`plan.test.ts`).
+- **Real FFmpeg 9.0.1 + h264_videotoolbox**, with the builder's own v3 argv and a transparent PNG stream on
+  the caption pipe: flat route over two different files → 5.000 s / 125 frames; with a per-frame brightness
+  counter, output frame 0 is source frame 25 (the `-ss` seek is frame-exact) and the second file starts on
+  the exact boundary frame. Stacked route with a gap, a portrait clip letterboxed on V1, a half-opacity PiP
+  on V2 and an image → 10.000 s / 250 frames, black gaps, no stall before a clip, no smear after one,
+  transparent letterbox, correct opacity.
+- **`npm run parity:export`** (the full X3 suite, real exports through ExportService → worker → export host →
+  pinned FFmpeg; evidence `docs/decisions/evidence/x3-parity-2026-09-19.json`): 200 caption-layer cases,
+  **0 mismatches**; 180 composited cases whose delta measurements are **identical, case for case, to the
+  2026-09-17 baseline** (worst boxed 6.7369, worst global 2.7246); caption onsets 0 frames off and beep onsets
+  −2 ms, exactly as before. Run it with `ELECTRON_RUN_AS_NODE` unset: an editor-hosted shell (VS Code) sets
+  it, which makes `electron` start as plain Node and fail on `import { nativeImage }`.
+
+**Not verified / limitations**
+- **No interactive GUI run this session** (the user is testing manually): timeline gestures, the video
+  pool and clock discipline in the real renderer, drop targets and the stage editor are unit-tested only.
+- The **cross-file boundary gap in preview is not measured** yet (the preroll variant was chosen without
+  measurement; "start muted and hidden early" is the fallback if it stalls). Starting playback can snap the
+  playhead back a little while the first element buffers.
+- The FFmpeg-composited-image tolerance (an image *under* a video) is not measured; blur is still refused.
+- Windows is not exercised.
+
+**Next task**: run V7's manual smoke (`tickets.md`), measure the boundary gap and record it here, then V3/V4.
+
 ## 2026-09-19 — Multi-clip foundation: schema 4, clip API, clip commands (Phase 2a)
 
 First of six green-at-each-step sub-steps of the multi-clip plan (2a schema/commands → 2b playback
@@ -1804,3 +2163,13 @@ Verification: `npm run check` passes strict TypeScript, **591 tests across 70 fi
 
 Limitations/next: run a consented short Malayalam/English clip through Gemini transcription with a restricted key and compare against whisper large-v3; verify ⌘S/⌘O fire once from the native menu while typing; check the top bar below 1100 px. Unifying all job progress into one shared status model is still open: each job currently renders its own pill.
 
+
+## 2026-09-21 — Dev launcher no longer attaches to a stale dev server
+
+Completed: `./dev.sh` (dev mode) could start Electron against a dead Vite server, producing a window that showed only `backgroundColor: '#090b10'` — a black screen with no error anywhere. Two defects combined: `dev:electron` waited on `tcp:5173`, which only proves something is *listening*, and Vite silently falls back to 5174/5175 when 5173 is taken. A previous session whose Vite had wedged (accepting connections, never answering HTTP) kept port 5173, so `wait-on` passed instantly, the new Vite moved to another port, and Electron loaded the wedged one — which is still hard-coded as `VITE_DEV_SERVER_URL=http://localhost:5173`.
+
+`dev` now runs `vite --strictPort`, so a second concurrent session fails immediately with "Port 5173 is already in use" instead of drifting to another port while Electron keeps pointing at 5173. `dev:electron` now waits on `http-get://localhost:5173/` with a 60 s timeout, so it waits for a real HTTP response rather than an open socket, and a wedged server times out loudly instead of handing Electron a page that never loads.
+
+Verification: `tsc --noEmit` passes and `vite build` succeeds; the production renderer was loaded in a real Electron window (preload, context isolation, sandbox as in `createWindow`) and rendered the full UI with no renderer console errors, confirming the black screen was environmental, not a regression from the clip/timeline refactor. `wait-on -t 8000 http-get://localhost:5173/` returns against a healthy server, and `vite --strictPort` exits 1 with "Port 5173 is already in use" when the port is held. The hung process tree was cleared (SIGTERM was ignored; SIGKILL was required) and a clean `./dev.sh` session now serves `/`, `/src/main.tsx` and `/src/ClipStageEditor.tsx` as 200 on 5173.
+
+Limitations/next: `npm test` and the full `npm run check` were not re-run for this change, which touches only npm scripts. The hard-coded 5173 in `dev:electron` remains — the dev server port is not yet derived from Vite's actual bound port. Separately, the stale main process ignored SIGTERM; `app.on('before-quit')` calls `event.preventDefault()` and runs an async shutdown, so a shutdown step that never settles leaves a process that only SIGKILL clears. That path is untested and worth a look. Window behaviour after the fix was confirmed by the user's own launch, not by an automated GUI check.

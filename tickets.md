@@ -79,6 +79,13 @@ Model suggestions use the models currently available in Codex:
 - [ ] **V5** Trim in/out
 - [ ] **V6** Cuts
 
+### Phase J — Local agent control (docs/MCP.md)
+
+- [x] **MCP1** Command schema/protocol, renderer bridge, MCP server core (get_project, get_captions, edit, set_caption_style, apply_template, list_style_options, seek, select, undo, redo), timeline markers, Settings tab, top-bar indicator
+- [ ] **MCP2** Vision loop and media: render_frame/prepare-snapshot, import_media, import_image_data, place_at_word, alpha-clip export support, Claude Desktop stdio bridge
+- [ ] **MCP3** Job tools (transcribe, detect_silence, export_video, export_srt, get_job, cancel_job, save_project) and repo-shipped Claude Code skills (B-roll/ComfyUI, filler/Remotion recipes)
+- [ ] **MCP4** (separate, later) schema-6 text/title clip type and built-in parametric fillers rendered by the shared caption renderer, for in-app "Vox-style" edits without Node/Remotion
+
 ### Phase H — Distribution
 
 - [ ] **D1** Complete dependency and license inventory
@@ -456,16 +463,31 @@ clip operations (`clip-resize`, `clip-split`, `clip-delete`, `clip-join-next`). 
 leaving `npm run check` green; mark a sub-step only when its own verification ran.
 
 - [x] **2a — Schema 4, clip API, clip commands, migration** (2026-09-19; `docs/STATUS.md`). UI still single-clip through `legacySegmentsOf`.
-- [ ] **2b — Playback across clips:** `SourcePoint` playhead, one `<video>` per distinct video asset, `createSequencePlaybackController` on `nextClipPoint`; measure and document the cross-video boundary gap.
-- [ ] **2c — Timeline clip blocks and video drop → clip:** per-clip thumbnail strips and waveform slices, drag to reorder/resize, split/delete/join on the Timeline menu, `dropPlanForAsset` video → insert; retire `CutMarkers` and the "Removed by cut" badge for a "Not in sequence" one; revisit refusing to delete the last clip.
-- [ ] **2d — Multi-input export (manifest v3):** `inputs` + `clips`, per-clip trim/scale/pad/normalisation before `concat`, silent-input `anullsrc`, identity project still byte-identical to X2, `-ss` fast path only for the identity route; `inputPaths` on the worker protocol.
-- [ ] **2e — Per-video transcription, alignment, silence and waveforms:** `mediaAssetId` on applied runs and cues, a Media select when the sequence has several videos, silence detection per video into `clips-set`.
-- [ ] **2f — Cleanup and docs:** delete `segmentSchema`/segment API, `legacySegmentsOf`, `CutMarkers`; update `PRODUCT.md`, `EDITING.md`, `ARCHITECTURE.md`, `MEDIA_WORKER.md`.
+- ~~2b–2f~~ **Superseded (2026-09-19) by schema 5 — a stacked multi-track timeline** (`docs/EDITING.md`
+  "Schema 5"; plan: named tracks, clips at absolute positions, gaps, picture-in-picture, sequence-time
+  audio, export all the way through). The flat-list sub-steps 2b–2f were specced for schema 4's model and
+  are replaced by S1–S8 below. Each landed with `npm run check` green; see `docs/STATUS.md` 2026-09-19.
+  - [x] **S1 — Schema 5 + migration 4 → 5** (tracks, absolute clips, `format`, park-never-drop report).
+  - [x] **S2 — Pure time model and clip verbs** (`timelineModel.ts`, `clipEdits.ts`, `clipDrag.ts`); the
+    stacked-export filtergraph validated against real FFmpeg 9.0.1.
+  - [x] **S3 — Timeline decomposition** (`src/timeline/*`, rows from `project.tracks`).
+  - [x] **S4 — Clip blocks, trim/split/move/ripple/overwrite, track headers**; video import/drop adds a
+    clip; `ReplaceVideoReview` deleted.
+  - [x] **S5 — Sequence transport + multi-`<video>` compositing** (unit-tested; the cross-file boundary
+    gap is **not yet measured on real media**).
+  - [x] **S6 — Manifest v3 + multi-input worker/IPC** (flat and stacked routes; ADR 0005).
+  - [x] **S7 — Per-video transcription/alignment/silence/waveforms/thumbnails + video picker.**
+  - [x] **S8 — Cleanup and docs** (`sequence.ts`, `sfxClip.ts`, the element-bound clock and cut
+    controller, `CutMarkers`, `overlayLanes` removed).
 
-Smoke for the whole ticket: two MP4s of different aspect/fps in one sequence; transcribe each; reorder, split,
-delete and undo; play across the boundary; export and confirm duration equals the sequence length within one
-frame with each caption on its own clip, and that an identity project still exports with argv identical to
-before (`npm run parity:export`). Mark V7 complete only when 2a–2f are checked.
+Smoke for the whole ticket (manual, on real media — **not yet run**): two MP4s of different aspect/fps; confirm
+the second adds a clip; transcribe each and confirm transcribing B never offers to replace A's captions;
+reorder, split, trim, ripple-delete and undo across both (undo restores captions exactly); a music bed on A1
+spanning both videos survives deleting the first; B on V2 as picture-in-picture over A, then V2 hidden and A1
+muted; play across every boundary and a gap, recording the measured boundary gap in `docs/STATUS.md`; export
+and confirm duration equals the sequence within one frame, each caption on its own clip, the PiP where the
+preview showed it and SFX onsets within 1 ms; open a schema-3 and a schema-4 `.cstudio` and confirm the
+migration notice, suspended autosave and identical argv. Mark V7 complete only once that smoke passes.
 
 ## D1 — Complete dependency and license inventory
 
@@ -504,6 +526,28 @@ Work only on ticket D3 from tickets.md: clean-machine release validation.
 Read AGENTS.md and all project docs. Create and execute a release checklist on the actually available target machines: macOS Apple Silicon and Windows x64. Verify install/uninstall, first launch, offline editing after an explicit model download, video/SRT workflows, project recovery/relinking, Malayalam shaping, transcription CPU fallback and supported acceleration, all presets, MP4/SRT export, cancellation and source preservation. Capture exact OS/hardware/build details and actionable failures. Do not claim validation on a platform that was not run.
 
 Fix release-blocking defects within scope, rerun affected checks, and update docs/STATUS.md and release documentation. Do not publish a repository or release without a separate user request. Mark D3 complete only when both target-machine results are recorded.
+```
+
+## MCP2 — Vision loop, media and Claude Desktop
+
+**Dependencies:** MCP1  
+**Suggested model:** GPT-5.6 Sol, xhigh. Cross-process (renderer readiness + main capturePage + a new client transport).
+
+```text
+Work only on ticket MCP2 from tickets.md: read docs/MCP.md and AGENTS.md first.
+
+Implement `render_frame` (seek, await committed frames + fonts.ready via the existing playback/font readiness hooks, capturePage the preview stage, return PNG as MCP image content) and wire up `prepare-snapshot` in useAgentBridge, which today returns an honest "not available yet". Add `import_media` (absolute path → inspectMedia → asset, optional placement) and `import_image_data` (base64 → userData/agent-imports). Add `place_at_word` (resolve a word's source time to sequence time via timelineModel, place on a free upper track). Add alpha-clip export support (probe reports pix_fmt/alpha, manifest v3 carries hasAlpha, exportArguments emits libvpx-vp9 for those inputs) with an argument-snapshot test and, if the environment allows, a real fixture export. Build the stdio bridge (dist-electron/mcp-stdio.cjs) that proxies tools/list and tools/call to the HTTP endpoint using the saved token, and update the Settings tab to show the Claude Desktop config snippet once it actually works. Update docs/MCP.md's "Not implemented yet" list and docs/STATUS.md with exact verification. Report which platforms were actually tested.
+```
+
+## MCP3 — Job tools and recipes
+
+**Dependencies:** MCP2  
+**Suggested model:** GPT-5.6 Terra, high.
+
+```text
+Work only on ticket MCP3 from tickets.md: read docs/MCP.md and AGENTS.md first.
+
+Add MCP tools for transcribe, detect_silence, export_video, export_srt, get_job, cancel_job and save_project, reusing the existing job scheduler/services rather than duplicating them — every heavy job still arbitrates through the one scheduler. transcribe must take an explicit keep/replace choice up front, matching the UI's gate; export_video must refuse an output path inside any source media directory; save_project must only ever write to the project's current path. Add the repo-shipped Claude Code skills (.claude/skills/caption-studio-broll, caption-studio-filler) documented in docs/MCP.md's "Planned" section. Update docs/MCP.md and docs/STATUS.md.
 ```
 
 ## Ticket completion rule

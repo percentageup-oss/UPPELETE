@@ -2,8 +2,9 @@ import { COMPOSITION_WIDTH, type CompositionRect } from './edit'
 import type { Size } from './composition'
 
 /**
- * Pure rect math for the stage editor (`OverlayStageEditor.tsx`) and inspector quick actions
- * (`OverlayInspector.tsx`): move, resize-by-handle, keyboard nudge and timeline lane packing. All
+ * Pure rect math for the stage editor (`ClipStageEditor.tsx`) and inspector quick actions
+ * (`ClipInspector.tsx`): move, resize-by-handle and keyboard nudge, for images and picture-in-picture
+ * video alike. All
  * of it operates in composition units (1080 wide, see `edit.ts`) and never touches the DOM, so it
  * is exercised directly by callers' own manual verification rather than duplicating `edit.ts`'s
  * schema bounds here — every result is expected to satisfy `compositionRectSchema`.
@@ -78,22 +79,4 @@ export function centerRect(rect: CompositionRect, composition: Size, axis: 'x' |
   const x = axis === 'y' ? rect.x : (COMPOSITION_WIDTH - rect.width) / 2
   const y = axis === 'x' ? rect.y : Math.max(0, (composition.height - rect.height) / 2)
   return clampRect({ ...rect, x, y }, composition)
-}
-
-/**
- * Greedy interval packing for the timeline's Overlays track: each overlay gets the lowest lane
- * index whose last-placed overlay in the array doesn't overlap it in time. Walked **last to
- * first** so the top-most painted overlay (last in `project.overlays`, see `itemCommands.ts`)
- * lands in lane 0 — the top row, matching every NLE where the higher track is the one on top.
- */
-export function overlayLanes<T extends { id: string; startUs: number; endUs: number }>(overlays: readonly T[]): { laneOf: Map<string, number>; laneCount: number } {
-  const laneEndUs: number[] = []
-  const laneOf = new Map<string, number>()
-  for (let index = overlays.length - 1; index >= 0; index--) {
-    const overlay = overlays[index]
-    let lane = laneEndUs.findIndex((endUs) => endUs <= overlay.startUs)
-    if (lane < 0) { lane = laneEndUs.length; laneEndUs.push(overlay.endUs) } else { laneEndUs[lane] = overlay.endUs }
-    laneOf.set(overlay.id, lane)
-  }
-  return { laneOf, laneCount: Math.max(1, laneEndUs.length) }
 }

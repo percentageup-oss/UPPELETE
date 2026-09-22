@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { AlignmentSettingsStatus } from './core/alignmentIpc'
+import type { McpSettingsView } from '../electron/mcp/config'
 import { ModelManager } from './ModelManager'
 
-export type SettingsTab = 'models' | 'gemini' | 'shortcuts'
+export type SettingsTab = 'models' | 'gemini' | 'agent' | 'shortcuts'
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'models', label: 'Speech models' },
   { id: 'gemini', label: 'Gemini API key' },
+  { id: 'agent', label: 'AI agents' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
 ]
 
@@ -48,6 +50,7 @@ export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, on
       <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="settings-panel">
         {tab === 'models' && <ModelManager />}
         {tab === 'gemini' && <GeminiKeySettings status={geminiKey} onStatus={onGeminiKey} onMessage={onMessage} />}
+        {tab === 'agent' && <AgentSettings onMessage={onMessage} />}
         {tab === 'shortcuts' && <ShortcutReference />}
       </div>
     </>}
@@ -80,6 +83,68 @@ export function GeminiKeySettings({ status, onStatus, onMessage }: {
   </section>
 }
 
+/**
+ * Local agent control (docs/MCP.md): off by default. Enabling starts a loopback-only MCP server a
+ * Claude client can connect to; the token shown here is the one credential that grants it, so it
+ * loads its own copy on open rather than reusing the top bar's connections-only status broadcast,
+ * which deliberately never carries the token (`electron/mcp/config.ts`).
+ */
+export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error', text: string): void }) {
+  const [settings, setSettings] = useState<McpSettingsView | null>(null)
+  const [revealed, setRevealed] = useState(false)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    void window.captionStudio?.agentSettings().then(setSettings).catch(() => {})
+    return window.captionStudio?.onAgentStatus((status) => setSettings((current) => current && { ...current, ...status }))
+  }, [])
+
+  const setEnabled = async (enabled: boolean) => {
+    setBusy(true)
+    try { setSettings(await window.captionStudio!.setAgentEnabled(enabled)); onMessage('info', enabled ? 'Agent access turned on.' : 'Agent access turned off.') }
+    catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not change agent access.') }
+    finally { setBusy(false) }
+  }
+  const rotate = async () => {
+    setBusy(true)
+    try { setSettings(await window.captionStudio!.rotateAgentToken()); setRevealed(true); onMessage('info', 'Token rotated. Update any connected client with the new token.') }
+    catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not rotate the token.') }
+    finally { setBusy(false) }
+  }
+  const copy = (value: string) => { void navigator.clipboard?.writeText(value).then(() => onMessage('info', 'Copied.')).catch(() => onMessage('error', 'Could not copy to the clipboard.')) }
+
+  const endpoint = settings?.port ? `http://127.0.0.1:${settings.port}/mcp` : null
+  const claudeCodeCommand = endpoint && settings?.token
+    ? `claude mcp add --transport http caption-studio ${endpoint} --header "Authorization: Bearer ${settings.token}"` : null
+
+  return <section className="agent-settings" aria-labelledby="agent-settings-heading">
+    <h3 id="agent-settings-heading">AI agents</h3>
+    <p>Optional and off by default. Enabling this lets a Claude client (Claude Code or Claude Desktop) on this computer read and edit the open project through the same commands the editor itself uses — undoable, and visible here as it happens. Nothing leaves this computer: the server only listens on 127.0.0.1 and requires the token below.</p>
+    <label className="agent-enable"><input type="checkbox" checked={settings?.enabled ?? false} disabled={busy || !settings} onChange={(event) => void setEnabled(event.target.checked)} /> Allow agent access</label>
+    {settings?.enabled && <>
+      <p role="status">{settings.running
+        ? `Listening on 127.0.0.1:${settings.port}${settings.connections ? ` · ${settings.connections} client${settings.connections === 1 ? '' : 's'} connected` : ' · no client connected yet'}`
+        : 'Turned on, but not currently listening — reopen this tab in a moment.'}</p>
+      <label>Token
+        <div className="agent-token-row">
+          <input type={revealed ? 'text' : 'password'} readOnly value={settings.token ?? ''} aria-label="Agent access token" />
+          <button type="button" onClick={() => setRevealed((value) => !value)}>{revealed ? 'Hide' : 'Show'}</button>
+          <button type="button" onClick={() => settings.token && copy(settings.token)} disabled={!settings.token}>Copy</button>
+        </div>
+      </label>
+      <div className="dialog-actions">
+        <button onClick={() => void rotate()} disabled={busy}>Rotate token</button>
+      </div>
+      {claudeCodeCommand && <div className="agent-snippet">
+        <p>Connect from Claude Code:</p>
+        <pre><code>{claudeCodeCommand}</code></pre>
+        <button type="button" onClick={() => copy(claudeCodeCommand)}>Copy command</button>
+      </div>}
+      <p className="agent-note">Claude Desktop support is not available yet.</p>
+    </>}
+  </section>
+}
+
 export function ShortcutReference() {
   return <section className="shortcut-reference-content" aria-labelledby="shortcuts-heading">
     <h3 id="shortcuts-heading">Keyboard shortcuts</h3>
@@ -88,7 +153,9 @@ export function ShortcutReference() {
       <div><dt>← / →</dt><dd>Seek one second</dd></div>
       <div><dt>↑ / ↓</dt><dd>Previous / next cue</dd></div>
       <div><dt>S</dt><dd>Split selected cue at playhead</dd></div>
-      <div><dt>Delete / Backspace</dt><dd>Delete selected cue, or selected word in WORD mode</dd></div>
+      <div><dt>Delete / Backspace</dt><dd>Delete selected cue (or word in WORD mode); a selected clip is lifted, leaving a gap</dd></div>
+      <div><dt>Shift+Delete</dt><dd>Ripple delete the selected clip: later clips on its track close up</dd></div>
+      <div><dt>⌘/Ctrl+B</dt><dd>Split clips at the playhead (the selected clip, or every clip under it on unlocked tracks)</dd></div>
       <div><dt>⌘/Ctrl+Z</dt><dd>Undo</dd></div>
       <div><dt>⌘/Ctrl+Shift+Z or Ctrl+Y</dt><dd>Redo</dd></div>
       <div><dt>⌘/Ctrl+O</dt><dd>Open project</dd></div>
@@ -97,14 +164,14 @@ export function ShortcutReference() {
       <div><dt>?</dt><dd>Show these shortcuts</dd></div>
     </dl>
     <p>Editing shortcuts do not run while typing in text or timestamp fields; there, Undo and Redo act on the field. Open and Save work everywhere.</p>
-    <h3>Image overlays</h3>
+    <h3>Images and picture-in-picture</h3>
     <dl>
-      <div><dt>Drag on the preview</dt><dd>Move the selected overlay</dd></div>
+      <div><dt>Drag on the preview</dt><dd>Move the selected image or picture-in-picture video</dd></div>
       <div><dt>Drag a handle</dt><dd>Resize; corners keep aspect, edges resize one axis</dd></div>
       <div><dt>Shift+drag a corner handle</dt><dd>Resize freely, ignoring aspect</dd></div>
-      <div><dt>Alt+drag (preview or timeline)</dt><dd>Clone the overlay and place the copy</dd></div>
-      <div><dt>Arrow keys</dt><dd>Nudge the selected overlay by 1 unit</dd></div>
-      <div><dt>Shift+Arrow keys</dt><dd>Nudge the selected overlay by 10 units</dd></div>
+      <div><dt>Alt+drag (preview or timeline)</dt><dd>Clone the clip and place the copy</dd></div>
+      <div><dt>Arrow keys</dt><dd>Nudge the selected clip by 1 unit</dd></div>
+      <div><dt>Shift+Arrow keys</dt><dd>Nudge the selected clip by 10 units</dd></div>
       <div><dt>Escape (mid-drag)</dt><dd>Cancel the drag or clone</dd></div>
     </dl>
   </section>

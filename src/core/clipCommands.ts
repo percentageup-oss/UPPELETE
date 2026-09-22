@@ -1,4 +1,4 @@
-import type { BlurRegion, Clip, ClipFit, CompositionRect, ProjectAsset, SequenceFormat, Track } from './edit'
+import type { BlurRegion, Clip, ClipFit, CompositionRect, Marker, ProjectAsset, SequenceFormat, Track } from './edit'
 import type { CaptionProject } from './model'
 import type { CommandContext } from './captionCommands'
 import {
@@ -36,6 +36,11 @@ export type ClipCommand =
   | { type: 'blur-add'; region: BlurRegion }
   | { type: 'blur-update'; blurId: string; changes: Partial<Omit<BlurRegion, 'id'>> }
   | { type: 'blur-delete'; blurId: string }
+  // A ruler note, not an edit: authored by the user or, over MCP, proposed by an agent shot list
+  // (docs/MCP.md) for the user to accept or dismiss. No rect, no asset, no validation beyond timing.
+  | { type: 'marker-add'; marker: Marker }
+  | { type: 'marker-update'; markerId: string; changes: Partial<Omit<Marker, 'id'>> }
+  | { type: 'marker-delete'; markerId: string }
 
 function withTrack(project: CaptionProject, track: Track | undefined): Track[] | ItemFailure {
   if (!track) return project.tracks
@@ -165,9 +170,24 @@ export function applyClipCommand(project: CaptionProject, command: ClipCommand, 
     if (!blurRegions) return failItem('asset-missing', [command.blurId], 'That blur region no longer exists.')
     return { project: { ...project, blurRegions }, selection: { kind: 'blur', id: command.blurId } }
   }
-  const blurRegions = project.blurRegions.filter((region) => region.id !== command.blurId)
-  if (blurRegions.length === project.blurRegions.length) return failItem('asset-missing', [command.blurId], 'That blur region no longer exists.')
-  return { project: { ...project, blurRegions }, selection: null }
+  if (command.type === 'blur-delete') {
+    const blurRegions = project.blurRegions.filter((region) => region.id !== command.blurId)
+    if (blurRegions.length === project.blurRegions.length) return failItem('asset-missing', [command.blurId], 'That blur region no longer exists.')
+    return { project: { ...project, blurRegions }, selection: null }
+  }
+
+  if (command.type === 'marker-add') {
+    const markers = [...project.markers, command.marker].sort((a, b) => a.atUs - b.atUs || a.id.localeCompare(b.id))
+    return { project: { ...project, markers }, selection: { kind: 'marker', id: command.marker.id } }
+  }
+  if (command.type === 'marker-update') {
+    const markers = replaceById(project.markers, command.markerId, (marker) => ({ ...marker, ...command.changes }))
+    if (!markers) return failItem('asset-missing', [command.markerId], 'That marker no longer exists.')
+    return { project: { ...project, markers: markers.sort((a, b) => a.atUs - b.atUs || a.id.localeCompare(b.id)) }, selection: { kind: 'marker', id: command.markerId } }
+  }
+  const markers = project.markers.filter((marker) => marker.id !== command.markerId)
+  if (markers.length === project.markers.length) return failItem('asset-missing', [command.markerId], 'That marker no longer exists.')
+  return { project: { ...project, markers }, selection: null }
 }
 
 function sameClips(a: readonly Clip[], b: readonly Clip[]): boolean {

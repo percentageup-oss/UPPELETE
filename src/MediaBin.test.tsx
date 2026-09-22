@@ -11,10 +11,9 @@ const asset = (overrides: Partial<ProjectAsset> & Pick<ProjectAsset, 'id' | 'kin
 
 const noop = () => {}
 const render = (overrides: Partial<Parameters<typeof MediaBin>[0]> = {}) => renderToStaticMarkup(
-  <MediaBin media={null} videoReady={false} mediaDurationUs={null} assets={[]} assetUrls={new Map()} assetIssues={new Map()}
-    overlayCountByAsset={new Map()} audioCountByAsset={new Map()}
-    onImportFiles={noop} onDropFiles={noop} onAddOverlayAtPlayhead={noop} onAddSfxAtPlayhead={noop}
-    onRemoveAsset={noop} onRelinkAsset={noop} onRelinkMedia={noop} {...overrides} />)
+  <MediaBin assets={[]} assetUrls={new Map()} assetIssues={new Map()} useCountByAsset={new Map()} videoReady={() => true}
+    onImportFiles={noop} onDropFiles={noop} onAddVideo={noop} onAddOverlayAtPlayhead={noop} onAddSfxAtPlayhead={noop}
+    onRemoveAsset={noop} onRelinkAsset={noop} {...overrides} />)
 
 describe('MediaBin', () => {
   it('shows the empty state when there is no media and no assets', () => {
@@ -31,15 +30,25 @@ describe('MediaBin', () => {
 
   it('disables Remove and explains why when the asset is in use', () => {
     const assets = [asset({ id: 'img-1', kind: 'image', name: 'logo.png' })]
-    const html = render({ assets, overlayCountByAsset: new Map([['img-1', 2]]) })
+    const html = render({ assets, useCountByAsset: new Map([['img-1', 2]]) })
     expect(html).toMatch(/disabled=""[^>]*>Remove</)
-    expect(html).toContain('In use by 2 overlays')
+    expect(html).toContain('In use by 2 clips or captions')
   })
 
   it('leaves Remove enabled when the asset is unused', () => {
     const assets = [asset({ id: 'img-1', kind: 'image', name: 'logo.png' })]
     const html = render({ assets })
     expect(html).not.toMatch(/disabled=""[^>]*>Remove</)
+  })
+
+  it('lists every video: draggable and addable when available, relinkable when offline', () => {
+    const assets = [asset({ id: 'v1', kind: 'video', name: 'first.mp4' }), asset({ id: 'v2', kind: 'video', name: 'second.mov' })]
+    const html = render({ assets, videoReady: (entry) => entry.id === 'v1' })
+    expect(html).toContain('first.mp4')
+    expect(html).toContain('second.mov')
+    expect(html).toContain('Add this video to the end of V1')
+    expect(html).toContain('Offline')
+    expect([...html.matchAll(/draggable="true"/g)]).toHaveLength(1)
   })
 
   it('shows a mismatch/missing badge and a Relink action for a flagged asset', () => {

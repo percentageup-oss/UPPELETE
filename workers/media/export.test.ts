@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { failure, type Toolchain } from './protocol'
 import { PngReader } from './exportProcesses'
-import { exportSupport, renderVideo, type ExportDependencies } from './export'
+import { exportSupport, mostInformativeFailure, renderVideo, type ExportDependencies } from './export'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 import { frameSourceUs, type ExportManifest } from '../../src/export/plan'
 
@@ -190,7 +190,7 @@ describe('renderVideo', () => {
     const runTool = vi.fn().mockResolvedValue(PINNED_VERSION)
     const progress: unknown[] = []
     const result = await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, (value) => progress.push(value), { spawn, probe, runTool, temporaryRoot: root })
     expect(result).toEqual({ operation: 'export', path: '/media/out.mp4', durationUs: 1_000_000, frameCount: 30, frameRate: { numerator: 30, denominator: 1 } })
@@ -218,7 +218,7 @@ describe('renderVideo', () => {
     }) as ExportDependencies['spawn']
     const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
     await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     // 30 total frames; only frame 0 is active (real cue), one more real host round trip renders the
@@ -240,7 +240,7 @@ describe('renderVideo', () => {
     }) as ExportDependencies['spawn']
     const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
     const result = await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     expect(hostHandle.requestCount()).toBe(1)
@@ -264,7 +264,7 @@ describe('renderVideo', () => {
     }) as ExportDependencies['spawn']
     const probe = vi.fn(async () => inputProbe(1_000_000, true))
     const outcome = renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, controller.signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'CANCELLED' } })
@@ -284,10 +284,52 @@ describe('renderVideo', () => {
     }) as ExportDependencies['spawn']
     const probe = vi.fn(async () => inputProbe(1_000_000, true))
     const outcome = renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', diagnostic: 'videotoolbox session invalidated' } })
+  })
+
+  it('surfaces the export host failure with its diagnostic instead of the encoder\'s teardown cancellation', async () => {
+    // The mirror of the encoder case above, and the reported bug: the host dies on its own, the
+    // encoder is then stopped by the job and rejects `CANCELLED`, and the encoder used to be read first.
+    const { root, renderManifestPath } = await jobFixture()
+    const signal = new AbortController().signal
+    let hostHandle!: ReturnType<typeof fakeHost>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) {
+        return hostHandle = fakeHost(s, () => { queueMicrotask(() => hostHandle.fail(failure('TOOL_FAILED', 'Export process failed', { exitCode: 1, diagnostic: 'export host: frame 1 failed: Offscreen committed paint timeout' }))); return null }) as any
+      }
+      return fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', exitCode: 1, diagnostic: expect.stringContaining('Offscreen committed paint timeout') } })
+  })
+
+  it('still reports the host\'s reason when its stdout closes before its exit status arrives', async () => {
+    // A child's stdout ends before its `close` event. The frame loop sees the closed pipe first and
+    // starts teardown; the host's own exit status must not be overwritten by that teardown.
+    const { root, renderManifestPath } = await jobFixture()
+    const signal = new AbortController().signal
+    let hostHandle!: ReturnType<typeof fakeHost>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) {
+        return hostHandle = fakeHost(s, () => {
+          queueMicrotask(() => (hostHandle.child.stdout as PassThrough).end())
+          setTimeout(() => hostHandle.fail(failure('TOOL_FAILED', 'Export process failed', { exitCode: 1, diagnostic: 'export host: window not created: GPU process crashed' })), 20)
+          return null
+        }) as any
+      }
+      return fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', diagnostic: expect.stringContaining('GPU process crashed') } })
   })
 
   it('parses real "frame=" progress lines from the encoder as measured, monotonic frame progress', async () => {
@@ -307,7 +349,7 @@ describe('renderVideo', () => {
     const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, true) : inputProbe(1_000_000, true))
     const progress: { completed: number; total: number }[] = []
     await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, (value) => { if (value.kind === 'measured') progress.push({ completed: value.completed, total: value.total }) }, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     expect(progress.length).toBe(30)
@@ -319,7 +361,7 @@ describe('renderVideo', () => {
   it('rejects an output path equal to the input path even when the tools are otherwise supported', async () => {
     const { renderManifestPath } = await jobFixture()
     const outcome = renderVideo({
-      operation: 'export', inputPath: '/media/same.mp4', outputPath: '/media/same.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/same.mp4'], outputPath: '/media/same.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, new AbortController().signal, () => {}, { runTool: vi.fn().mockResolvedValue(PINNED_VERSION) })
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'INVALID_MESSAGE' } })
@@ -336,7 +378,7 @@ describe('renderVideo', () => {
     }) as ExportDependencies['spawn']
     const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 600_000, true) : inputProbe(1_000_000, true))
     const result = await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     expect(result.frameCount).toBe(18)
@@ -362,7 +404,7 @@ describe('renderVideo', () => {
     const keptUs = segments.reduce((total, segment) => total + (segment.endUs - segment.startUs), 0)
     const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, keptUs, true) : inputProbe(2_000_000, true))
     await renderVideo({
-      operation: 'export', inputPath: '/media/in.mp4', outputPath: '/media/out.mp4', renderManifestPath,
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 2_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
     const scriptIndex = encoderArgs.indexOf('-filter_complex_script')
@@ -370,5 +412,26 @@ describe('renderVideo', () => {
     expect(encoderArgs).not.toContain('-filter_complex')
     expect(encoderArgs[scriptIndex + 1].startsWith(root)).toBe(true)
     expect(scriptContentAtSpawnTime).toContain('concat=n=200:v=1:a=0[vcat]')
+  })
+})
+
+describe('mostInformativeFailure', () => {
+  const cancelled = () => failure('CANCELLED', 'Export cancelled')
+  const toolFailed = (diagnostic: string) => failure('TOOL_FAILED', 'Export process failed', { exitCode: 1, diagnostic })
+
+  it('prefers a process\'s own failure over its peer\'s teardown cancellation, whichever order they are listed in', () => {
+    const host = toolFailed('host stderr')
+    expect(mostInformativeFailure(cancelled(), [cancelled(), host])).toBe(host)
+    expect(mostInformativeFailure(cancelled(), [host, cancelled()])).toBe(host)
+  })
+  it('prefers the frame loop\'s own error over a bare cancellation', () => {
+    const loop = failure('TOOL_FAILED', 'Caption renderer closed before completing a frame')
+    expect(mostInformativeFailure(loop, [cancelled(), cancelled()])).toBe(loop)
+  })
+  it('falls back to a cancellation only when nothing more informative exists', () => {
+    const first = cancelled()
+    expect(mostInformativeFailure(cancelled(), [first])).toBe(first)
+    const loop = new Error('unexpected')
+    expect(mostInformativeFailure(loop, [])).toBe(loop)
   })
 })

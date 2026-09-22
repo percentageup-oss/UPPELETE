@@ -4,6 +4,10 @@ export type ShortcutAction =
   | 'seek-forward'
   | 'split-cue'
   | 'delete-cue'
+  // Timeline clips (schema 5): Cmd/Ctrl+B splits every clip under the playhead (or the selected
+  // clip); Shift+Delete removes the selected clip and closes the gap it leaves.
+  | 'split-clips'
+  | 'ripple-delete'
   | 'undo'
   | 'redo'
   | 'previous-cue'
@@ -27,7 +31,9 @@ export function shortcutForEvent(event: KeyboardShortcutEvent, target: EventTarg
   const modifier = event.ctrlKey || event.metaKey
   if (modifier && !event.altKey && event.key.toLowerCase() === 'z') return event.shiftKey ? 'redo' : 'undo'
   if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'y') return 'redo'
+  if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') return 'split-clips'
   if (modifier || event.altKey) return null
+  if (event.shiftKey && (event.key === 'Delete' || event.key === 'Backspace')) return 'ripple-delete'
 
   switch (event.key) {
     case ' ':

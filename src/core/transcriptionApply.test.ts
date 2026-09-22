@@ -109,3 +109,20 @@ describe('applyTranscription with a translation', () => {
     expect(project.cues.map((item) => item.text)).toEqual(['First sentence', 'After a long pause (translated)'])
   })
 })
+
+describe('applyTranscription of one video among several', () => {
+  it('never offers another video’s captions for replacement, and binds the new captions and the run to the transcribed video', () => {
+    const otherVideo = withCues([cue('a-line', 1_000_000, 3_000_000, 'Video A caption', { mediaAssetId: 'video-a', textSource: 'imported', timingSource: 'imported' })])
+    // Numerically overlapping source time, but a different file: no choice is needed and nothing of A is touched.
+    const { project, summary } = applyTranscription(otherVideo, transcript, run, null, newId, null, 'video-b')
+    expect(project.cues.find((entry) => entry.id === 'a-line')).toEqual(otherVideo.cues[0])
+    expect(project.cues.filter((entry) => entry.id !== 'a-line').every((entry) => entry.mediaAssetId === 'video-b')).toBe(true)
+    expect(project.transcriptionRuns?.at(-1)?.mediaAssetId).toBe('video-b')
+    expect(summary).toMatchObject({ added: 2, removed: 0, kept: 1 })
+  })
+
+  it('still asks before replacing the transcribed video’s own captions', () => {
+    const same = withCues([cue('b-line', 1_000_000, 3_000_000, 'Video B caption', { mediaAssetId: 'video-b', textSource: 'imported', timingSource: 'imported' })])
+    expect(() => applyTranscription(same, transcript, run, null, newId, null, 'video-b')).toThrow(TranscriptionChoiceRequired)
+  })
+})

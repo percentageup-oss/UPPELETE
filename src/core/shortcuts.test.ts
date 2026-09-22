@@ -17,6 +17,10 @@ describe('shortcut routing', () => {
     expect(shortcutForEvent(key('y', { ctrlKey: true }), null)).toBe('redo')
     expect(shortcutForEvent(key('ArrowUp'), null)).toBe('previous-cue')
     expect(shortcutForEvent(key('ArrowDown'), null)).toBe('next-cue')
+    expect(shortcutForEvent(key('b', { metaKey: true }), null)).toBe('split-clips')
+    expect(shortcutForEvent(key('B', { ctrlKey: true }), null)).toBe('split-clips')
+    expect(shortcutForEvent(key('Delete', { shiftKey: true }), null)).toBe('ripple-delete')
+    expect(shortcutForEvent(key('Backspace', { shiftKey: true }), null)).toBe('ripple-delete')
   })
 
   it('leaves shortcut keys alone in text, timestamp, and contenteditable fields', () => {

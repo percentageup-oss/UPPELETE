@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { JobProgressPhase, JobSnapshot } from './core/jobs'
-import type { ProjectMedia } from './core/media'
+import type { ProjectAsset } from './core/edit'
 import type { Cue, TranscriptionRun } from './core/model'
 import type { ManagedModelId } from './core/modelCatalog'
 import type { SourceTimedTranscript, TranslatedTranscript } from './core/transcription'
@@ -8,7 +8,9 @@ import { TRANSLATION_TARGETS, translationTargetLabel } from './core/translationL
 import { captionsOverlappingRange, describeExistingCaptions, type TranscriptionApplyChoice } from './core/transcriptionApply'
 import type { TranscriptionAvailability, TranscriptionDevice, TranscriptionEngine } from './core/transcriptionIpc'
 
-type Delivered = { transcript: SourceTimedTranscript; run: TranscriptionRun; translation: TranslatedTranscript | null }
+/** `assetId` is the video that was transcribed, captured when the job started — the picker may have
+ * moved on to another video by the time the result arrives. */
+type Delivered = { transcript: SourceTimedTranscript; run: TranscriptionRun; translation: TranslatedTranscript | null; assetId: string }
 type Phase =
   | { kind: 'setup' }
   | { kind: 'running'; requestId: string; job: JobSnapshot | null; engine: TranscriptionEngine; translateTo: string | null }
@@ -70,7 +72,7 @@ export function describeJob(job: JobSnapshot | null): { label: string; percent: 
 }
 
 export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary = false, geminiKeyConfigured = false, onNeedGeminiKey }: {
-  media: ProjectMedia | null; mediaReady: boolean; cues: Cue[]; onApply: ApplyTranscript; primary?: boolean
+  media: ProjectAsset | null; mediaReady: boolean; cues: Cue[]; onApply: ApplyTranscript; primary?: boolean
   geminiKeyConfigured?: boolean; onNeedGeminiKey?: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -160,8 +162,8 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
         : { engine, requestId, fingerprint: media.fingerprint, modelId: modelId!, language, device: device!, translateTo })
       if (outcome.state === 'cancelled') { setPhase({ kind: 'cancelled' }); return }
       if (outcome.state === 'failed') { setPhase({ kind: 'error', message: outcome.error.message, diagnostic: outcome.error.diagnostic ?? null }); return }
-      const result = { transcript: outcome.transcript, run: outcome.run, translation: outcome.translation }
-      if (captionsOverlappingRange(cuesRef.current, result.transcript.sourceRange).length > 0) {
+      const result = { transcript: outcome.transcript, run: outcome.run, translation: outcome.translation, assetId: media.id }
+      if (captionsOverlappingRange(cuesRef.current, result.transcript.sourceRange, result.assetId).length > 0) {
         setPhase({ kind: 'choose', result })
         if (!dialog.current?.open) dialog.current?.showModal()
         return
@@ -175,7 +177,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
     ? { ...described, label: 'Uploading speech to Gemini and transcribing…' } : described
   const needsKey = engine === 'gemini' || translateTo !== null
   const needKey = () => { dialog.current?.close(); onNeedGeminiKey?.() }
-  const choiceCounts = phase.kind === 'choose' ? describeExistingCaptions(captionsOverlappingRange(cues, phase.result.transcript.sourceRange)) : null
+  const choiceCounts = phase.kind === 'choose' ? describeExistingCaptions(captionsOverlappingRange(cues, phase.result.transcript.sourceRange, phase.result.assetId)) : null
 
   return <>
     <button ref={trigger} className={running ? 'job-pill-button' : primary && phase.kind !== 'choose' ? 'accent' : phase.kind === 'choose' ? 'attention' : undefined} onClick={openDialog} title={mediaReady ? 'Transcribe this video’s audio' : 'Open a video to transcribe its audio'}>

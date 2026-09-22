@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import type { CaptionProject } from '../src/core/model'
+import type { CaptionProject, MigrationNote } from '../src/core/model'
 import type { ProjectMedia } from '../src/core/media'
 import type { AssetResolution, MediaCandidate } from './projectMedia'
 import type { ProjectAsset } from '../src/core/edit'
@@ -16,12 +16,14 @@ import { exportProgressSchema, type ExportOutcome, type ExportProgress, type Exp
 import type { ExportSupport } from '../src/core/exportSupport'
 import { isMenuCommand, type MenuCommand } from '../src/core/menuCommands'
 import { alignmentProgressSchema, type AlignmentOutcome, type AlignmentProgress, type AlignmentSettingsStatus, type AlignmentStartRequest } from '../src/core/alignmentIpc'
+import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../src/core/agentProtocol'
+import type { McpSettingsView, McpStatus } from './mcp/config'
 
 export type OperationResult<T> = { ok: true } & T | { ok: false; message: string }
 export type OpenedVideo = OperationResult<{ candidate: MediaCandidate }>
 export type OpenedText = { path: string; content: string }
 export type SaveRequest = { content: string; defaultName: string }
-export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | null; assets: AssetResolution[] }>
+export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | 4 | null; migrationNotes: MigrationNote[]; assets: AssetResolution[] }>
 export type ImportedAsset = OperationResult<{ media: ProjectMedia; url: string }>
 export type AssetRelinkResult = OperationResult<{ candidate: MediaCandidate }>
 export type SavedProject = { path: string; project: CaptionProject }
@@ -128,4 +130,26 @@ contextBridge.exposeInMainWorld('captionStudio', {
     ipcRenderer.on('export:progress', listener)
     return () => ipcRenderer.removeListener('export:progress', listener)
   },
+
+  // MCP agent bridge (docs/MCP.md). Requests always originate in main (a tool call); the renderer
+  // never initiates one, only answers. `respondAgentRequest` fires and forgets — the actual
+  // round trip is matched by request id on main's side (`electron/mcp/rendererBridge.ts`).
+  onAgentRequest: (callback: (request: AgentRequest) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = agentRequestSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('agent:request', listener)
+    return () => ipcRenderer.removeListener('agent:request', listener)
+  },
+  respondAgentRequest: (response: AgentResponse): void => { ipcRenderer.invoke('agent:respond', response).catch(() => {}) },
+  agentStatus: (): Promise<McpStatus> => ipcRenderer.invoke('agent:status'),
+  onAgentStatus: (callback: (status: McpStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: McpStatus) => callback(value)
+    ipcRenderer.on('agent:status-changed', listener)
+    return () => ipcRenderer.removeListener('agent:status-changed', listener)
+  },
+  agentSettings: (): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-get'),
+  setAgentEnabled: (enabled: boolean): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-set-enabled', enabled),
+  rotateAgentToken: (): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-rotate-token'),
 })

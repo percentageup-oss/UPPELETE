@@ -1,5 +1,6 @@
 import { CollapseIcon, ExpandIcon, MagnetIcon, MergeIcon, NextIcon, PlayheadIcon, PlusIcon, PrevIcon, ScissorsIcon, TrashIcon, TrimIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
 import type { CaptionDisplay } from './captions/wordDisplay'
+import type { EditMode } from './core/clipEdits'
 
 export type TrackMode = CaptionDisplay
 
@@ -15,7 +16,20 @@ export type TimelineActions = {
   trim: () => void
 }
 
+/** Clip editing on the timeline (schema 5). Owned by App like the caption actions. */
+export type ClipTools = {
+  /** Split at the playhead: the selected clip, or every clip under it on unlocked tracks. */
+  split: () => void
+  canSplit: boolean
+  /** Delete the selected clip: a lift, or a ripple delete that closes the gap on its track. */
+  remove: (ripple: boolean) => void
+  hasClip: boolean
+}
+
 type TimelineToolbarProps = {
+  editMode: EditMode
+  onEditMode: (mode: EditMode) => void
+  clipTools: ClipTools
   mode: TrackMode
   onMode: (mode: TrackMode) => void
   snap: boolean
@@ -36,7 +50,7 @@ type TimelineToolbarProps = {
   hasSelectedWord: boolean
 }
 
-export function TimelineToolbar({ mode, onMode, snap, onSnap, zoom, zoomMin, zoomMax, onZoom, expanded, onExpand, onCenterPlayhead, actions, hasSelection, canMerge, canSplit, canAdd, hasCues, hasSelectedWord }: TimelineToolbarProps) {
+export function TimelineToolbar({ mode, onMode, snap, onSnap, zoom, zoomMin, zoomMax, onZoom, expanded, onExpand, onCenterPlayhead, actions, hasSelection, canMerge, canSplit, canAdd, hasCues, hasSelectedWord, editMode, onEditMode, clipTools }: TimelineToolbarProps) {
   return <div className="timeline-toolbar" role="toolbar" aria-label="Timeline tools">
     <div className="mode-toggle" role="group" aria-label="Caption track mode">
       <button type="button" className={mode === 'word' ? 'active' : ''} aria-pressed={mode === 'word'} onClick={() => onMode('word')} title="Show one block per timed word">WORD</button>
@@ -57,7 +71,18 @@ export function TimelineToolbar({ mode, onMode, snap, onSnap, zoom, zoomMin, zoo
     <button type="button" className="tool" onClick={actions.split} disabled={!canSplit} aria-label="Split selected caption at playhead" title="Split at playhead (S)"><ScissorsIcon /></button>
     <button type="button" className="tool" onClick={actions.trim} disabled={!hasSelection} aria-label="Trim selected caption to playhead" title="Move the nearer caption boundary to the playhead"><TrimIcon /></button>
     <span className="tool-divider" />
-    <button type="button" className={`tool toggle ${snap ? 'on' : ''}`} aria-pressed={snap} onClick={() => onSnap(!snap)} aria-label="Snap while dragging" title="Snap dragged edges to neighbouring captions and the playhead"><MagnetIcon /></button>
+    <button type="button" className={`tool toggle ${snap ? 'on' : ''}`} aria-pressed={snap} onClick={() => onSnap(!snap)} aria-label="Snap while dragging" title="Snap dragged edges to clip edges, captions and the playhead"><MagnetIcon /></button>
+    <span className="tool-divider" />
+    {/* One visible toggle rather than a modifier key: modifiers are undiscoverable. */}
+    <div className="mode-toggle" role="group" aria-label="Clip edit mode">
+      <button type="button" className={editMode === 'overwrite' ? 'active' : ''} aria-pressed={editMode === 'overwrite'} onClick={() => onEditMode('overwrite')}
+        title="Overwrite: moving, trimming or dropping a clip never moves other clips; it covers what it lands on">OVERWRITE</button>
+      <button type="button" className={editMode === 'ripple' ? 'active' : ''} aria-pressed={editMode === 'ripple'} onClick={() => onEditMode('ripple')}
+        title="Ripple: a clip's change in length pushes or pulls everything after it on the same track">RIPPLE</button>
+    </div>
+    <button type="button" className="tool" onClick={clipTools.split} disabled={!clipTools.canSplit} aria-label="Split clips at playhead" title="Split clips at the playhead (⌘/Ctrl+B)"><ScissorsIcon /></button>
+    <button type="button" className="tool danger" onClick={() => clipTools.remove(editMode === 'ripple')} disabled={!clipTools.hasClip}
+      aria-label="Delete selected clip" title={editMode === 'ripple' ? 'Ripple delete the selected clip (Shift+Delete)' : 'Lift the selected clip, leaving a gap (Delete)'}><TrashIcon /></button>
     <span className="tool-divider" />
     <div className="zoom-control">
       <button type="button" className="tool" onClick={() => onZoom(Math.max(zoomMin, zoom / 2))} disabled={zoom <= zoomMin} aria-label="Zoom out" title="Zoom out"><ZoomOutIcon /></button>

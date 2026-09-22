@@ -37,8 +37,16 @@ export function describeExistingCaptions(cues: readonly Cue[]) {
 
 const overlaps = (a: { startUs: number; endUs: number }, b: { startUs: number; endUs: number }) => a.startUs < b.endUs && b.startUs < a.endUs
 
-export function captionsOverlappingRange(cues: readonly Cue[], range: { startUs: number; endUs: number }): Cue[] {
-  return cues.filter((cue) => overlaps(cue, range))
+/**
+ * A cue belongs to the transcribed video when it names it — or names no video at all (captions
+ * imported before any video was placed). Source time is per file, so a cue of *another* video that
+ * merely overlaps numerically is never offered for replacement (docs/EDITING.md "Per-video
+ * transcription"). `assetId` undefined keeps the single-timeline behaviour for callers with no video.
+ */
+const sameVideo = (cue: Cue, assetId: string | undefined) => assetId === undefined || cue.mediaAssetId === undefined || cue.mediaAssetId === assetId
+
+export function captionsOverlappingRange(cues: readonly Cue[], range: { startUs: number; endUs: number }, assetId?: string): Cue[] {
+  return cues.filter((cue) => sameVideo(cue, assetId) && overlaps(cue, range))
 }
 
 /**
@@ -59,15 +67,17 @@ export function applyTranscription(
   choice: TranscriptionApplyChoice | null,
   newId: () => string,
   translation?: TranslatedTranscript | null,
+  /** The video that was transcribed: new cues are bound to it and only its captions can be replaced. */
+  assetId?: string,
 ): { project: CaptionProject; summary: TranscriptionApplySummary } {
   const range = transcript.sourceRange
-  if (choice === null && captionsOverlappingRange(project.cues, range).length > 0) throw new TranscriptionChoiceRequired()
-  const kept = project.cues.filter((cue) => !overlaps(cue, range) || (choice === 'keep-authored' && !isUntouchedModelCue(cue)))
-  const incoming = transcriptToCues(transcript, run.id, newId, translation)
-  const added = incoming.filter((cue) => !kept.some((existing) => overlaps(existing, cue)))
+  if (choice === null && captionsOverlappingRange(project.cues, range, assetId).length > 0) throw new TranscriptionChoiceRequired()
+  const kept = project.cues.filter((cue) => !sameVideo(cue, assetId) || !overlaps(cue, range) || (choice === 'keep-authored' && !isUntouchedModelCue(cue)))
+  const incoming = transcriptToCues(transcript, run.id, newId, translation).map((cue) => assetId ? { ...cue, mediaAssetId: assetId } : cue)
+  const added = incoming.filter((cue) => !kept.some((existing) => sameVideo(existing, assetId) && overlaps(existing, cue)))
   const cues = [...kept, ...added].sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
   return {
-    project: { ...project, cues, transcriptionRuns: [...(project.transcriptionRuns ?? []), { ...run, recognition: structuredClone(transcript) }] },
+    project: { ...project, cues, transcriptionRuns: [...(project.transcriptionRuns ?? []), { ...run, ...(assetId ? { mediaAssetId: assetId } : {}), recognition: structuredClone(transcript) }] },
     summary: { added: added.length, removed: project.cues.length - kept.length, kept: kept.length, skippedOverlapping: incoming.length - added.length },
   }
 }

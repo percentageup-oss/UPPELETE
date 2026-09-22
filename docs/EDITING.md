@@ -1,6 +1,9 @@
-# Single-source video edits (design reference for V1–V6)
+# Video edits: from single-source (V1–V6) to a stacked multi-track timeline (schema 5)
 
-Status: design accepted 2026-09-16; **schema 4 / multi-clip foundation implemented 2026-09-19** (see "Schema 4" below; the single-source wording in this document describes the design the V tickets started from); **V1 implemented 2026-09-17** (schema 3, `sequence.ts`, generic
+Status: **schema 5 — a stacked multi-track timeline — implemented 2026-09-19** (see "Schema 5" below;
+it is the current model and supersedes the schema 3/4 time model the earlier sections describe, which
+are kept as the history of how items, cuts and clips were introduced). Design accepted 2026-09-16;
+schema 4 / multi-clip foundation 2026-09-19; **V1 implemented 2026-09-17** (schema 3, `sequence.ts`, generic
 timeline items/tracks/selection, item commands, manifest v2 and the cut-skipping playback
 controller); **V2 implemented 2026-09-18** (image overlays: asset import/relink IPC, preview/export
 compositing, overlay track and inspector); V3-V6 not implemented. This document is the contract the V tickets in `tickets.md`
@@ -89,51 +92,283 @@ relative paths, fingerprints and relinking apply unchanged; `projectForSave` loo
 `segments`; `migratedFrom` becomes `1 | 2 | null`. `exportStartSchema` (`src/export/plan.ts`)
 embeds `projectSchema`, so schema 3 reaches export without a second contract.
 
-## Schema 4 (multi-clip)
+## Schema 5 (stacked multi-track timeline)
 
-Schema 4 supersedes schema 3's single `media` + `segments`; the schema 3 section above remains as the
-history of how items and cuts were introduced. What changed (implemented in Phase 2a, 2026-09-19):
+Implemented 2026-09-19. Schema 4 stored `assets[] + clips[]` but as a **flat list whose array index
+was the position** — clips always touched, gaps were impossible and there was exactly one video
+lane. Schema 5 is a true NLE model: named tracks, clips at **absolute** sequence positions, gaps
+allowed, upper video tracks compositing over lower ones, audio in sequence time, and delivery all
+the way through export. Importing a second video **adds a clip** (appended to V1); nothing replaces
+the first video any more.
+
+### Model (`src/core/edit.ts`, `src/core/model.ts`)
 
 ```ts
-projectAssetSchema   kind: 'image' | 'audio' | 'video'                    // the source video is now an asset
-clipSchema           { id, assetId, startUs, endUs }                     // a source range of one VIDEO asset
-projectSchema        schemaVersion: 4; no `media`, no `segments`; clips: Clip[] = []
-cue / overlay / blurRegion / audioClip   + mediaAssetId?: string          // the video their source time belongs to
+trackSchema  { id, kind: 'video' | 'audio', name = '', muted = false, hidden = false, locked = false, heightPx? }
+clipBase     { id, trackId, assetId, timelineStartUs, sourceStartUs, sourceEndUs }        // absolute; gaps allowed
+videoClip    { kind: 'video', ...clipBase, rect?, opacity = 1, fit = 'contain', gain = 1 } // rect absent = fill the frame
+imageClip    { kind: 'image', ...clipBase, rect?, opacity = 1, fit = 'contain' }           // synthetic source range from 0
+audioClip    { kind: 'audio', ...clipBase, gain = 1 }
+clipSchema   discriminatedUnion('kind', [video, image, audio])
+blurRegion   { id, startUs, endUs, rect, radius }                                          // sequence time, no asset
+project      { schemaVersion: 5, ...common, assets, tracks, clips, blurRegions, format?: { width, height, frameRate } }
 ```
 
-- **Array order of `clips` is the sequence order.** A range may repeat or overlap another: an ordered
-  list is its own order, so the old "ascending, non-overlapping" rule (which only existed to make an
-  unordered range list well-formed) is gone. `normalizeClips` therefore never sorts.
-- **One source-time model, now per video.** Every item is still stored in *source* microseconds; its
-  `mediaAssetId` says which video's source timeline that is. Overlays, blur regions and sound effects
-  cannot span a clip boundary and disappear from the sequence if their video leaves it — the accepted
-  trade-off of keeping a single time model.
-- **`mediaAssetId` is optional in the schema and required once `clips.length > 0`**, so an SRT-first
-  project (no video yet) is valid. The first `clip-add` into an empty sequence stamps unbound items in
-  the same undo step; commands and the App's direct commits bind any later unbound item to the
-  sequence's only video (or `CommandContext.defaultAssetId`).
-- **Positions are `SourcePoint = { clipId, assetId, sourceUs }`.** Asset + time alone is ambiguous
-  because a repeated range appears at two sequence positions; the clip id disambiguates.
-- **Mapping** (`sequence.ts`): `sourceToSequenceForAsset` takes the first clip in sequence order that
-  contains the time and otherwise collapses to the cut instant (the end of the latest-ending earlier
-  clip of that video, else that video's first clip start); `sequenceToSourcePoint` maps a boundary to the
-  *following* clip; `spansInSequenceForAsset` yields one span per clip crossed; `nextClipPoint` is the
-  whole playback rule (`null` keep playing / next clip's start / `SEQUENCE_END`).
-- **SRT for a cut sequence** (`cuesInSequenceForClips`): spans contiguous in the sequence stay **one**
-  cue (the ordinary cut case); a cue whose spans are not contiguous — because clips were reordered or a
-  range repeats — becomes one cue per contiguous run.
-- **Relinking** a video is an undoable `asset-update` like any asset; the old whole-history
-  `replaceMedia` rewrite and the `mediaPath` save parameter are gone. `asset-update` refits the video's
-  clips when its duration changes (whole-video clips follow it, others are clamped) and gives a video
-  that had no probed duration its whole-video clip.
-- **Migration 3 → 4** (`migrateV3`): `media` → a video asset; `segments` (or, for the identity edit,
-  one clip over the whole media) → clips that keep their ids; every item stamped. Schema 1 and 2 files
-  pass through 3. A media with no probed duration keeps its asset, gets no clip and nothing is stamped.
-- **Until the multi-clip UI lands** (Phase 2b–2f) the timeline, preview and manifest v2 still read the
-  sequence through `legacySegmentsOf(project)` — the primary video's clips as kept `segments`, `undefined`
-  for one whole-video clip — so an identity project exports exactly as before.
+- **Stacking order is array order, back to front** (the convention `overlays` used). The timeline
+  draws video tracks in reverse array order (V2 above V1) and audio tracks in array order. Empty
+  track names derive V1/V2…/A1… from position (`trackLabel`).
+- **A clip's length is always `sourceEndUs - sourceStartUs`.** There is deliberately no rate/speed
+  field: keeping timeline length ≡ source length is what makes every mapping a pure translation. An
+  image has no source time, so its source range is synthetic and kept anchored at 0 — one length
+  formula, one trim gesture and one split for every kind.
+- **`format` is load-bearing.** The caption composition is derived from it, not from the video under
+  the playhead, so captions never re-layout when playback crosses into a video of another aspect. It
+  is seeded from the first video's probe with exactly X2's `planFromMedia` rule (now
+  `src/core/format.ts`'s `formatFromMedia`), and is the export's output frame.
+- **`superRefine`** keeps the single ID namespace (cues, words, assets, tracks, clips, blur regions)
+  and checks, in one pass: every clip's track exists; audio tracks hold audio and video tracks hold
+  video/images; a clip's asset is of its own kind; **clips on one track never overlap**; clips are
+  **sorted by `(track index, timelineStartUs, id)`** (array order carries no information any more, so
+  sorting keeps diffs stable); video/audio stay within their file's known duration. `mediaAssetId`
+  survives on **cues only**, required once the timeline has video.
+- Retained verbatim for loading: `projectSchemaV4`, `projectSchemaV3`, `projectSchemaV2`, schema 1.
 
-## Commands and undo
+### Time model (`src/core/timelineModel.ts`)
+
+**Captions stay source-anchored to their video; clips, blur and audio are sequence-anchored.**
+Captions must stay in source time because every provenance record (`transcriptionRun.sourceRange`,
+`alignmentRun.sourceRange`, `word.alignmentRunId`) is source time of one specific file; it also keeps
+"undoing a cut restores captions exactly" structural — trimming a clip never touches a cue, the cue
+merely stops being seen. Items authored against the program have no such argument, and moving them to
+sequence time removes schema 4's accepted trade-off ("overlays, blur and sound effects cannot span a
+clip boundary and disappear if their video leaves the sequence") and both of its silent-drop paths.
+
+| Primitive | Meaning |
+| --- | --- |
+| `sequenceDurationUs(clips)` | end of the last clip on any track |
+| `sequenceUsOf(clip, sourceUs)` / `sourceUsAt(clip, sequenceUs)` | pure translation within one clip |
+| `activeClipsAt(sequenceUs, tracks, clips)` | **the core primitive**: one clip per track, back to front, half-open, a track in a gap contributing nothing; transport, compositing, caption choice and export all call it |
+| `clipsContainingSource(assetId, sourceUs, clips)` | plural — a file may appear many times |
+| `spansInSequence(range, assetId, clips)` | where a source range of one file is seen, one span per clip |
+| `nextBoundaryAfter(sequenceUs, clips)` | the next clip start or end on any track (preroll) |
+| `cuesInSequence(cues, clips)` | SRT export: contiguous spans stay one cue; a caption heard twice becomes one cue per run (render key `${id}:${n}`) |
+| `activeCueAt(sequenceUs, tracks, clips, cues)` | **the one active-cue rule**, shared by the preview, the export layer plan and the export frame requests: the caption of the **topmost visible video track that has one**, evaluated at that clip's source time |
+
+Consequences handled explicitly: a file placed twice renders its captions twice (they are heard
+twice); dragging a caption maps the sequence-pixel delta back to a source delta **within the clip
+the grabbed piece is seen through**, clamped to it; with no video at all (SRT first) captions are
+timed in sequence time directly. The playhead lives in sequence time only — schema 4's "collapse to
+the cut instant" is gone, since with gaps there is no well-defined collapse.
+
+### Migration 4 → 5 (`src/core/migrateV4.ts`)
+
+`loadProject` chains 5 ← 4 ← 3 ← 2 ← 1 and returns `migratedFrom: 1 | 2 | 3 | 4 | null` plus
+`migrationNotes`, surfaced in the open notice (autosave stays suspended until an explicit Save).
+
+1. **Tracks**: `V1` (always), overlay tracks above it, `A1..An`, and — only when needed — muted,
+   hidden "Parked by migration" tracks.
+2. **Video clips** land on V1 at schema 4's running prefix sums. **A migrated project is exactly
+   gapless by construction**, which is what makes export parity structural (below).
+3. **Overlays → image clips** at their schema-4 sequence spans. Contiguous spans (an overlay across a
+   cut) merge into one clip; spans at separate moments (reordered or repeated video) become one clip
+   each, first keeping the id, and are reported. Each overlay goes on the lowest overlay track above
+   every *earlier* overlay it overlaps, so the preview's stacking is preserved exactly and no track
+   holds an overlap. (This replaces the plan's reuse of `overlayLanes`, which assumed time-sorted
+   input; `overlayLanes` is retired.)
+4. **Sound effects → audio clips** at `sourceToSequenceForAsset(atUs)`, lane-packed onto A tracks.
+   An open-ended `durationUs: null` becomes an explicit out point at the end of the file
+   (`duration-resolved`), or a one-second placeholder when the file's length was never probed
+   (`duration-placeholder`); both are reported.
+5. **Blur regions** take the same span rule and drop `mediaAssetId`. In practice this never fires:
+   export still refuses blur and there is no UI entry point.
+6. **Cues** are untouched. 7. **`format`** is byte for byte what `planFromMedia` produced.
+
+**Park, never drop**: an overlay or sound effect schema 4 no longer played (anchored inside a removed
+range) goes onto a parked track at its best-guess position, and is reported. There is no 5 → 4
+downgrade. `src/core/migrateV4.test.ts` pins "the migration does not move a single frame" against a
+private copy of schema 4's own mapping: caption SRT output and every kept source time's sequence
+position are identical before and after.
+
+### Commands (`assetCommands.ts`, `trackCommands.ts`, `clipCommands.ts`, pure verbs in `clipEdits.ts`)
+
+`itemCommands.ts` keeps the union, `validateItems` and the one epilogue (bind unbound captions →
+`validateItems` → `projectSchema.safeParse`); `applyEditCommand`'s dispatch is unchanged.
+
+- `asset-add/remove/update` — remove is refused while any clip plays the file or any caption is bound
+  to it; a relink that changes a file's length refits its clips (never into the next clip on the
+  track), and gives a never-probed video its whole V1 clip.
+- `track-add/remove/update/reorder` — remove is refused while the track holds clips; reorder moves a
+  track among tracks of its own kind with `overlay-reorder`'s forward/backward/front/back semantics.
+- `clip-add` (with an optional inline asset and a track created in the same undo step), `clip-move`
+  (within and **across** tracks of the same kind), `clip-trim`, `clip-split` (every unlocked clip under
+  the playhead, or the selection), `clip-delete` (lift or ripple), `gap-close`, `clip-update`
+  (rect/opacity/fit/gain; `rect: null` returns a picture-in-picture clip to full frame), `clips-set`
+  (silence removal: each video keeps its kept source ranges, rippled **within its own track**),
+  `clips-restore`, `format-set`, `blur-add/update/delete`.
+- **Overwrite vs ripple** is one toolbar toggle (default overwrite), never a modifier. Overwrite never
+  moves other clips — what an edit lands on is carved away; ripple pushes or pulls everything after
+  the edit **on the same track** (cross-track ripple is deferred). A ripple insert never splits a clip:
+  a point inside one moves to its nearer edge. Trims clamp to the source (`sourceStartUs ≥ 0`,
+  `sourceEndUs ≤` the file's duration; images unbounded), to a 1 ms minimum and, in overwrite, to the
+  neighbour. Locked tracks refuse every edit.
+
+### Timeline (`src/Timeline.tsx`, `src/timeline/*`, `src/core/timelineLayout.ts`, `src/core/clipDrag.ts`)
+
+Rows come from `project.tracks` (`timelineRows`): ruler, captions, video tracks top-down, a divider
+splitting the video and audio stacks, audio tracks. Track headers edit the name (double-click), toggle
+M/H/L, move up/down, remove (refused with clips, like `asset-remove`), and add video/audio tracks.
+`ClipBlock` draws a clip with trim handles; video clips show a per-clip filmstrip of **their own
+source range** and their sound as a waveform band, audio clips their sliced waveform. Clips move
+within and across tracks (`trackAtY`, refusing audio↔video), Alt+drag clones, gaps offer "Close gap".
+Snap targets are sequence time: every clip edge on every track, the playhead, 0, the sequence end and
+caption edges (which fixes schema 4's note that snapping computed in source time). The caption row
+(`CaptionsTrack`) is lifted from the old component with its LINE/WORD modes; word blocks are now
+placed within the piece of the caption each block shows.
+
+Keys: Delete lifts the selected clip, Shift+Delete ripple-deletes it, ⌘/Ctrl+B splits clips at the
+playhead. **Per-clip thumbnails** go through `src/timeline/thumbnailQueue.ts`: cached by
+`(fingerprint, source range, count)`, at most 8 requests in flight, and only for clips intersecting
+the viewport — `THUMBNAIL_MAX_COUNT` bounds one request, not how many a long timeline makes.
+
+### Playback (`src/playback/sequenceClock.ts`, `transport.ts`, `videoPool.ts`, `src/app/useProjectPlayback.ts`)
+
+No single `<video>` owns the transport any more, so the stage's `<video controls>` is gone and the
+transport row is the only one. `createSequenceClock` keeps `PlaybackClock`'s `subscribe/getUs/set`
+shape (so `CaptionStage`'s `useSyncExternalStore` — the only per-frame subtree — is unchanged) and
+free-runs from wall time × rate. Where a video plays on the topmost visible video track, the transport
+**disciplines** the clock to that element's `requestVideoFrameCallback` time: small errors are slewed
+(a quarter of the error per frame, at most 4 ms), errors beyond 40 ms snap. In a gap, or an
+image/audio-only stretch, the clock free-runs — correct, since nothing is decoding. **The asymmetry
+is documented, not hidden**: with several stacked videos there is no single presented frame, so
+preview is approximately frame-accurate while export stays exact (it never plays; it iterates frames).
+
+**The master video is disciplined, never drift-seeked.** A seek is what stops a decoder presenting
+frames (hundreds of ms at 1440×2560), so re-seeking the playing master for drift only makes it fall
+further behind. `transportActionsAt` therefore seeks the master (the topmost playing video, the one
+`discipline` follows) only when the clock was just sought (`seekEpoch` changed — a scrub or ruler
+click) or, as a last resort, when it is a full second out (`DEFAULT_PLAYING_DRIFT_LIMIT_US`);
+everything smaller is the clock's job, via `discipline`. Every *other* playing video (picture-in-
+picture, a lower track) has nothing disciplining it, so it is still re-seeked past 250 ms
+(`DEFAULT_PLAYING_TOLERANCE_US`). Where `requestVideoFrameCallback` is missing the transport disciplines from
+`currentTime` instead. Paused (scrubbing) elements are still held to within 20 ms.
+
+**The transport follows the clock through `attach(clock)` / `detach()`**, called from
+`useProjectPlayback`'s mount effect (as `SfxScheduler` is), not from the factory. React StrictMode
+sets an effect up, tears it down and sets it up again on mount without re-running `useMemo`; a
+subscription made in the memoised factory was lost for good, so the clock ran (timecode, captions)
+while the video sat on its first frame. `detach` keeps the pooled elements loaded; the clock, pool
+and transport live as long as the window and are not disposed on effect cleanup.
+
+`videoPool` keeps one element per **(track, asset)** with an LRU cap of 6 — per track alone would
+reload `src` between consecutive clips of different files; per clip would be unbounded. The pure
+`transportActionsAt` decides load/seek/play/pause for every element on each clock change; ~500 ms
+before a clip starts its element is **prerolled** (loaded and seeked, paused), since the seek is what
+stalls a boundary. Elements are `muted` on a muted track or a silent clip, `volume = min(gain, 1)`:
+**preview clamps gain above 1 to 1 and the inspector says so**; export honours it. Consecutive clips of
+the *same* file on one track share an element, so a cut inside one video is still one seek (as before).
+The boundary gap between different files has not been measured on real media yet (`STATUS.md`).
+
+`SfxScheduler` attaches to the transport's state (`{ playing, rate, seekEpoch }`) rather than a
+`<video>`; audio clips carry their sequence start, so its mapping and the "anchored inside a removed
+range" drop are gone, and a muted track gives its clips gain 0. Mute and hide are read on every
+evaluation, so toggles take effect while playing. Solo is deferred.
+
+### Preview compositing (`CompositionLayers.tsx`, `ClipStageEditor.tsx`)
+
+Everything paints inside the one projected composition wrapper (`useCompositionProjection`, now
+actually factored out of `CaptionPreview`, whose size comes from `project.format`). `CompositionLayers`
+paints a `CompositionLayer` union — `image`, `video`, `blur` — in the order given, `rect: null` meaning
+fill. **Paint order, back to front: visual clips in track order → blur → captions.** (V4's plan put
+blur *under* overlays; a `backdrop-filter` blurs what is painted below it, so it must sit above the
+media.) Pooled `<video>`s are mounted by `VideoSlot`, which appends the transport's element rather than
+letting React create one, so a layer-list change never reloads media. The stage is black wherever no
+clip paints, like the exported canvas. **Picture-in-picture comes free**: `ClipStageEditor` (formerly
+the overlay stage editor) edits any picture clip under the playhead that has a `rect`, video or image,
+with the same rect math (`overlayRect.ts`); the inspector's Picture-in-picture toggle gives a
+full-frame clip a rect.
+
+### Export — manifest v3 (`src/export/plan.ts`, `workers/media/exportArguments.ts`, `export.ts`)
+
+**Parity is a code path, not a coincidence.** `buildExportManifest` emits **manifest v2** — whose
+encoder arguments are snapshot-pinned byte for byte — whenever `flatSequence(project)` holds: one
+video's clips on one visible, unmuted track, gapless from 0, full frame, opaque, `contain`, unity
+gain, nothing running past the video's end, and images only for the identity edit (one clip over the
+whole file, where sequence time *is* source time, so image clips are exactly v2's host-painted
+overlays). Every project that existed before schema 5 with one video is flat. Everything else is v3.
+Both routes are kept permanently. (The plan also proposed promoting v1/v2 to v3 in
+`normalizeManifest`; that was not done — v1/v2 keep their own snapshot-tested path.)
+
+```ts
+{ version: 3, cues, style, display, format: { width, height, frameRate }, sequenceDurationUs,
+  inputs: [{ path, kind }],                                  // one per clip FFmpeg reads — never shared
+  clips: [{ id, inputIndex, assetId, kind, trackIndex, timelineStartUs, sourceStartUs, sourceEndUs,
+            rect?: pixelRect, opacity, fit, gain }],          // gain 0 = a video on a muted track
+  overlays: [...],                                           // host-painted images, in SEQUENCE time
+  blurRegions: [...] }
+```
+
+- **Every FFmpeg-read clip is its own input**, opened with `-ss <sourceStart> -t <length>` before `-i`
+  (images: `-loop 1 -framerate R -t <length>`). This deviates from the plan (per-clip `trim` of shared
+  inputs, `-ss` only on the identity route): with shared decoders a reordered or repeated clip, or a
+  picture-in-picture of the same file, makes one consumer buffer another's decoded frames — potentially
+  gigabytes of RGBA at 1080p. Separate inputs give every clip an independent decoder, a fast accurate
+  seek and a PTS origin of 0; verified frame-exact on FFmpeg 9.0.1 (below). One export reads at most 250.
+- **Route A — flat** (`v3Route`): one video track played end to end, full frame and opaque (the "two
+  videos back to back" case). Each clip is scaled/padded to the output frame and `concat`enated; CFR
+  conversion runs once after the concat, as v2's cuts do, so rounding never accumulates.
+- **Route B — stacked**: `color=c=black:s=WxH:r=R:d=<sequence>,format=rgba` canvas; each visual clip,
+  back to front, is fitted (`contain` letterboxes with **transparent** bars, `cover` crops, `stretch`
+  distorts), given its opacity, and **`tpad`-ded with transparent frames up to its timeline start**, then
+  `overlay=x:y:format=auto:eof_action=pass:repeatlast=0`. `tpad` means the overlay never stalls waiting
+  for a clip; `eof_action=pass:repeatlast=0` means a clip's last frame never smears across a following
+  gap. Then the caption layer, then `format=yuv420p`.
+- **Audio**: silence pinned to the sequence length, plus every video clip's own sound (unmuted track,
+  audio stream present) and every audio clip, each `atrim/asetpts/aresample/adelay/volume`, mixed with
+  `amix=normalize=0:duration=first`. The plan's "latent `dropout_transition` bug" is not one: with
+  `normalize=0` amix applies each input's weight directly and never renormalises, so v2 is unchanged.
+- **Images and ADR 0003**: images stay painted by the export host into the caption layer — exact
+  preview parity — **whenever every image track is above every video track** (titles, logos,
+  watermarks). Only an image genuinely *under* a video is composited by FFmpeg, at a measured
+  tolerance; see [ADR 0005](decisions/0005-stacked-export.md).
+- **The layer plan** (`layerPlan.ts`) gained a `timeline` mode for v3: the shown caption comes from
+  `activeCueAt` and overlays are sequence-timed; `captionFrame` reuse, signature-based PNG reuse and
+  `spans()` are untouched.
+- **Plumbing**: the worker task takes `inputPaths` (every file read; the destination must differ from
+  all of them); the renderer sends only `{ requestId, project }` and main resolves **every** asset the
+  timeline plays through its fingerprint registry, refusing by name before the job starts; the plan
+  comes from `project.format`, falling back to the first video's probe. `PROTOCOL_VERSION` stays 1
+  (nothing is persisted). Blur is still refused by both routes until V4.
+
+**Verified with real FFmpeg 9.0.1** (h264_videotoolbox, this machine, 2026-09-19), using the builder's
+own argv: Route A two different files back to back → 5.000 s / 125 frames, and with a per-frame
+brightness counter the seek is frame-exact (output frame 0 is source frame 25, the last frame of the
+first clip is its last source frame, the second file starts on the exact boundary frame); Route B with
+a gap, a portrait clip letterboxed on V1, a half-opacity picture-in-picture on V2 and an image →
+10.000 s / 250 frames, black gaps, no stall before a clip, no smear after one, transparent letterbox
+over the black canvas, correct opacity.
+
+### Per-video transcription, alignment, silence, waveforms and thumbnails
+
+- A **video picker** (Captions panel, Remove Silence dialog) chooses the video these work on, defaulting
+  to the one under the playhead on the topmost visible video track. The transcription panel is offered
+  whenever the chosen video has no captions yet, so a second video can be transcribed after the first.
+- **`captionsOverlappingRange` gained an asset filter.** It compared times only, so transcribing video
+  B would have offered to replace video A's captions whose source times merely overlap numerically.
+  `applyTranscription` binds new captions to the transcribed video and never removes another video's.
+  Transcription and alignment runs record `mediaAssetId`. The transcribed video is captured when the
+  job starts, since the picker may move on before the result arrives.
+- **Silence removal** runs per video into `clips-set`, rippling each track that plays it.
+- **Waveforms** are one map by asset id (the video's own and every audio file's), each extracted once
+  per file and sliced per clip; the per-fingerprint cache in main is unchanged.
+- No IPC changed for any of this — only which fingerprint is sent.
+
+### Deferred, to keep this shippable
+
+Transitions and crossfades (overlapping clips on one track); speed/retime (hence the length rule);
+blur in export (V4); preview gain above 1; solo, track colours, nested sequences, ducking; cross-track
+ripple; measuring the cross-file boundary gap on real media.
+
+## Commands and undo (V1 history — see Schema 5 for the current commands)
 
 `src/core/itemCommands.ts` adds a second discriminated union beside `CaptionCommand`, sharing
 `CommandResult`/`ValidationIssue` from `captionCommands.ts` (issue kinds widened with
@@ -145,7 +380,7 @@ cue / overlay / blurRegion / audioClip   + mediaAssetId?: string          // the
 `validateItems` runs after every item command exactly as `validateCaptions` does after every caption
 command. `asset-remove` fails with `asset-in-use` while any overlay/clip references the asset.
 
-## Timeline
+## Timeline (V1 history — see Schema 5)
 
 `src/core/timelineItems.ts` defines `TimelineItem { kind: 'cue' | 'overlay' | 'blur' | 'audio' |
 'segment', id, startUs, endUs, label, bounds? }`, `Selection { kind, id }` and `TimelineTrack`.
@@ -156,7 +391,7 @@ becomes a track entry so the existing split logic is unchanged) and drags a `Tim
 than a `Cue`. `App.tsx` replaces `selectedId` with `selection` and derives `selectedCueId` for the
 existing read sites. The captions track keeps its specialised cue/word rendering.
 
-## Preview compositing and playback
+## Preview compositing and playback (V1–V3 history — see Schema 5)
 
 `src/captions/CompositionLayers.tsx` renders, inside the one projected and scaled wrapper that
 `CaptionPreview.tsx` already positions (factored into `useCompositionProjection`), in order: blur
@@ -177,7 +412,7 @@ per frame it updates `currentUs`, and when `nextKeptSourceUs` reports a removed 
 the next kept start (or pauses past the end). Expected preview behaviour is 0–1 removed frame
 visible and one seek stall per cut; export is exact.
 
-## Edit manifest and filtergraph
+## Edit manifest v2 and filtergraph (still the exact route for flat sequences)
 
 X2's `exportManifestSchema` v1 is `{ version: 1, cues, style }`; V1 adds v2 as a strict superset:
 

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Row, SliderWithNumber } from './style/controls'
 import { formatClock, US_PER_SECOND } from './core/time'
 import { keptRangesFromSilences, SILENCE_DETECTION_DEFAULTS, summarizeSilenceRemoval, type SilenceDetectionOptions } from './core/silenceRemoval'
-import type { TimeRange } from './core/sequence'
+import type { TimeRange } from './core/timelineModel'
 
 type DetectionState =
   | { kind: 'idle' }
@@ -18,9 +18,13 @@ type DetectionState =
  * them and Apply is disabled until Detect runs again — padding alone re-summarises instantly
  * since it never needs another pass over the audio.
  */
-export function SilenceRemovalDialog({ open, mediaReady, onClose, onDetect, onCancelDetect, onApply, hasExistingCuts }: {
+export function SilenceRemovalDialog({ open, mediaReady, onClose, onDetect, onCancelDetect, onApply, hasExistingCuts, videoName = null, picker = null }: {
   open: boolean
   mediaReady: boolean
+  /** The video silence is detected in (the picked one, else the one under the playhead). */
+  videoName?: string | null
+  /** A video picker, shown when the timeline has several videos. */
+  picker?: ReactNode
   onClose(): void
   onDetect(requestId: string, options: SilenceDetectionOptions, onProgress: (percent: number | null) => void): Promise<{ durationUs: number; silences: TimeRange[] }>
   onCancelDetect(requestId: string): void
@@ -59,9 +63,11 @@ export function SilenceRemovalDialog({ open, mediaReady, onClose, onDetect, onCa
 
   return <dialog ref={dialog} className="model-dialog silence-removal-dialog" aria-labelledby="silence-removal-title" onClose={onClose} onKeyDown={(event) => event.stopPropagation()}>
     <div className="model-panel-heading"><h2 id="silence-removal-title">Remove Silence</h2><button onClick={onClose}>Close</button></div>
+    {picker}
     {!mediaReady ? <p>Open or relink the video before detecting silence.</p> : <>
-      <p>Detects long quiet spans below a dB threshold and cuts them out — of preview, exported video and exported SRT.
-        {hasExistingCuts && ' Applying replaces the project’s current cuts.'}</p>
+      <p>Detects long quiet spans below a dB threshold in {videoName ? <strong>{videoName}</strong> : 'the video'} and cuts them out of every clip of it —
+        preview, exported video and exported SRT. Later clips on the same track close up; other tracks do not move.
+        {hasExistingCuts && ' Clips already trimmed stay trimmed: silence is removed from what they still play.'}</p>
       <Row label="Silence threshold" htmlFor="silence-threshold" hint="Audio quieter than this, for at least the minimum duration below, counts as silence.">
         <SliderWithNumber id="silence-threshold" min={-80} max={0} step={1} unit="dB" value={options.thresholdDbfs}
           onDraft={(value) => setOptions((current) => ({ ...current, thresholdDbfs: value }))}

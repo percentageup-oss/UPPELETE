@@ -168,6 +168,23 @@ describe('JobScheduler: progress', () => {
     expect(await a.outcome).toMatchObject({ state: 'failed', error: { code: 'INVALID_PROGRESS' } })
   })
 
+  it('still reports INVALID_PROGRESS when the aborted run rejects with a cancellation', async () => {
+    // A real run (the export) observes the progress abort on its own signal and rejects with
+    // CANCELLED. Taking that at face value retires the job as "cancelled" and throws away the
+    // actual reason it was stopped.
+    const scheduler = new JobScheduler()
+    const a = scheduler.enqueue({
+      kind: 'export', label: 'A',
+      run: async (ctx) => {
+        ctx.reportProgress({ kind: 'measured', phase: 'encoding', completed: 50, total: 100, unit: 'frames' })
+        ctx.reportProgress({ kind: 'measured', phase: 'encoding', completed: 10, total: 100, unit: 'frames' })
+        if (ctx.signal.aborted) throw mediaFailure('CANCELLED', 'Export interrupted')
+        return 'unused'
+      },
+    })
+    expect(await a.outcome).toMatchObject({ state: 'failed', error: { code: 'INVALID_PROGRESS' } })
+  })
+
   it('forwards valid, advancing progress to subscribers and ignores progress reported after settlement', async () => {
     const scheduler = new JobScheduler()
     // Isolate reports made *while running*: the terminal snapshot legitimately still

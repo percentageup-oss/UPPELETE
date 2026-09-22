@@ -199,8 +199,11 @@ export class JobScheduler {
       },
       (error: unknown) => {
         if (job.cancelRequested && !job.commitEntered) { this.finalize(job, 'cancelled', null); return }
-        if (isCancellationSignal(error)) { this.finalize(job, 'cancelled', null); return }
+        // A job aborted for malformed progress reports the abort as a cancellation, so this must
+        // precede `isCancellationSignal` — otherwise the real reason is swallowed and the job
+        // retires silently as "cancelled", exactly as the success path already avoids.
         if (job.pendingProgressFailure) { this.finalize(job, 'failed', job.pendingProgressFailure); return }
+        if (isCancellationSignal(error)) { this.finalize(job, 'cancelled', null); return }
         this.finalize(job, 'failed', describeError(error))
       },
     )

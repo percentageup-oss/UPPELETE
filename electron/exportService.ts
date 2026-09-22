@@ -2,10 +2,9 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { jobFailure, type JobSnapshot } from '../src/core/jobs'
-import type { MediaMetadata } from '../src/core/media'
-import { planFromMedia } from '../src/export/plan'
-import type { ExportManifest } from '../src/export/plan'
+import type { ExportManifest, ExportPlan } from '../src/export/plan'
 import type { MediaWorkerClient } from '../workers/media/client'
+import { MediaWorkerError } from '../workers/media/protocol'
 import type { JobContext, JobHandle, JobScheduler } from './jobScheduler'
 
 export type ExportServiceOptions = {
@@ -15,8 +14,10 @@ export type ExportServiceOptions = {
 }
 
 export type ExportRequest = {
-  mediaPath: string
-  metadata: MediaMetadata
+  /** Every file the export reads: the one source for manifests v1/v2, one per FFmpeg-read clip for v3. */
+  inputPaths: string[]
+  /** Output size, rate and range — derived by main from the project's format (or the probed first video). */
+  plan: ExportPlan
   manifest: ExportManifest
   /** The user's chosen final destination (a native save dialog), never the source media path. */
   destinationPath: string
@@ -26,6 +27,30 @@ export type ExportJobValue = { path: string; durationUs: number; frameCount: num
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/**
+ * Everything the worker knew about why a job stopped, in the one string a job error can carry: the
+ * message, the process exit status and the tool's own stderr. The message alone ("Export process
+ * failed") names nothing; the stderr is what says what the export host or encoder objected to.
+ */
+function describeFailure(error: unknown): string {
+  if (!(error instanceof MediaWorkerError)) return messageOf(error)
+  const { message, exitCode, signal, diagnostic } = error.detail
+  const status = [exitCode != null ? `exit ${exitCode}` : '', signal ? `signal ${signal}` : ''].filter(Boolean).join(', ')
+  return [message, status && `(${status})`, diagnostic && `— ${diagnostic}`].filter(Boolean).join(' ').slice(-8192)
+}
+
+/**
+ * The media worker reports its own internal teardown — a dead export host, a closed pipe, an
+ * aborted task — with the same `CANCELLED` code a user cancellation carries, and the scheduler
+ * retires any `CANCELLED` job silently. An export that stopped on its own would therefore
+ * disappear from the UI as "Export cancelled" (or, with the failure never surfaced, as nothing at
+ * all) and leave no file. A cancellation the job never requested is a failure, so it is relabelled
+ * here — before the scheduler sees it — keeping the worker's own message as the diagnostic.
+ */
+function isUnrequestedCancellation(error: unknown, ctx: JobContext): boolean {
+  return !ctx.signal.aborted && error instanceof MediaWorkerError && error.detail.code === 'CANCELLED'
 }
 
 /**
@@ -56,9 +81,7 @@ export class ExportService {
   }
 
   private async run(request: ExportRequest, ctx: JobContext): Promise<ExportJobValue> {
-    let plan
-    try { plan = planFromMedia(request.metadata) }
-    catch (error) { throw jobFailure('INVALID_INPUT', `This media cannot be exported: ${messageOf(error)}`) }
+    const { plan } = request
     const directory = await mkdtemp(path.join(this.options.temporaryRoot, 'caption-studio-export-'))
     const manifestPath = path.join(directory, 'manifest.json')
     // A fresh, unpredictable temp name beside the real destination — the encoder's own `-n` flag
@@ -68,13 +91,26 @@ export class ExportService {
       await writeFile(manifestPath, JSON.stringify(request.manifest))
       ctx.reportProgress({ kind: 'indeterminate', phase: 'rendering' })
       const durationUs = plan.range.endUs - plan.range.startUs
-      const result = await this.options.worker.start({
-        operation: 'export', inputPath: request.mediaPath, renderManifestPath: manifestPath,
+      const result = await this.render(request, ctx, durationUs, manifestPath, temporaryOutputPath)
+      if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Export was cancelled before it could be finalized.')
+      await rename(temporaryOutputPath, request.destinationPath)
+      return { path: request.destinationPath, durationUs: result.durationUs, frameCount: result.frameCount }
+    } finally {
+      await rm(temporaryOutputPath, { force: true })
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+
+  private async render(request: ExportRequest, ctx: JobContext, durationUs: number, manifestPath: string, temporaryOutputPath: string) {
+    const { plan } = request
+    try {
+      return await this.options.worker.start({
+        operation: 'export', inputPaths: request.inputPaths, renderManifestPath: manifestPath,
         outputPath: temporaryOutputPath, range: plan.range, frameRate: plan.frameRate, width: plan.width, height: plan.height,
         profile: 'mp4-caption-renderer-v1',
       }, {
         signal: ctx.signal,
-        // Generous ceiling scaled from source duration; real progress still drives the UI.
+        // Generous ceiling scaled from the output duration; real progress still drives the UI.
         timeoutMs: Math.min(86_400_000, 600_000 + Math.ceil(durationUs / 1000) * 20),
         onProgress: (message) => {
           const value = message.progress
@@ -85,12 +121,12 @@ export class ExportService {
           }
         },
       }).result
-      if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Export was cancelled before it could be finalized.')
-      await rename(temporaryOutputPath, request.destinationPath)
-      return { path: request.destinationPath, durationUs: result.durationUs, frameCount: result.frameCount }
-    } finally {
-      await rm(temporaryOutputPath, { force: true })
-      await rm(directory, { recursive: true, force: true })
+    } catch (error) {
+      if (isUnrequestedCancellation(error, ctx)) {
+        throw jobFailure('BACKEND_FAILED', 'The export stopped before it finished. See the export log for details.',
+          { retryable: true, diagnostic: describeFailure(error) })
+      }
+      throw error
     }
   }
 }

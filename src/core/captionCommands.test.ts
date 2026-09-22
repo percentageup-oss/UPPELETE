@@ -23,12 +23,11 @@ const timedWords = (text: string, idPrefix = 'w'): CaptionWord[] => captionToken
 }))
 
 const project = (...cues: Cue[]): CaptionProject => ({
-  schemaVersion: 4,
+  schemaVersion: 5,
+  tracks: [],
   clips: [],
   assets: [],
-  overlays: [],
-  blurRegions: [],
-  audioClips: [],
+  blurRegions: [], markers: [],
   id: 'project',
   title: 'Test',
   cues,
@@ -156,7 +155,7 @@ describe('word-boundary caption editing', () => {
   it('adds a grapheme-safe visual line break without changing word IDs or timing', () => {
     const text = 'മലയാളം React tutorial'
     const c = cue('a', 0, 3_000, text, { words: timedWords(text) })
-    const result = applyCaptionCommand(project(c), { type: 'line-break-before-word', cueId: 'a', wordId: 'w1' })
+    const result = applyCaptionCommand(project(c), { type: 'line-break-before-word', cueId: 'a', target: { wordId: 'w1' } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.project.cues[0].text).toBe('മലയാളം\nReact tutorial')
@@ -258,7 +257,7 @@ describe('caption display mode', () => {
 describe('deleting a single word from a caption', () => {
   it('collapses a middle word together with its trailing space', () => {
     const c = cue('a', 0, 5_000, 'hello brave world', { words: timedWords('hello brave world') })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w1' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w1' } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const updated = result.project.cues[0]
@@ -270,7 +269,7 @@ describe('deleting a single word from a caption', () => {
 
   it('collapses the last word together with the space before it', () => {
     const c = cue('a', 0, 5_000, 'hello world', { words: timedWords('hello world') })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w1' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w1' } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.project.cues[0].text).toBe('hello')
@@ -280,7 +279,7 @@ describe('deleting a single word from a caption', () => {
   it('swallows parenthesised punctuation attached to the deleted word', () => {
     const text = '(hello) world'
     const c = cue('a', 0, 5_000, text, { words: timedWords(text) })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w0' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w0' } })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.project.cues[0].text).toBe('world')
   })
@@ -288,7 +287,7 @@ describe('deleting a single word from a caption', () => {
   it('swallows a trailing comma attached to the deleted word', () => {
     const text = 'hello, world'
     const c = cue('a', 0, 5_000, text, { words: timedWords(text) })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w0' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w0' } })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.project.cues[0].text).toBe('world')
   })
@@ -296,7 +295,7 @@ describe('deleting a single word from a caption', () => {
   it('deletes a Malayalam conjunct word without mangling the remaining grapheme clusters', () => {
     const text = 'ഒന്ന് ഉപയോഗിച്ച് മൂന്ന്'
     const c = cue('a', 0, 5_000, text, { words: timedWords(text) })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w1' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w1' } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const updated = result.project.cues[0]
@@ -310,7 +309,7 @@ describe('deleting a single word from a caption', () => {
     const words = timedWords(text)
     const emphasized = [{ text: 'the', textStart: words[0].textStart!, textEnd: words[0].textEnd! }]
     const c = cue('a', 0, 5_000, text, { words, emphasized })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w3' }) // the second "the"
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w3' } }) // the second "the"
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const updated = result.project.cues[0]
@@ -323,7 +322,7 @@ describe('deleting a single word from a caption', () => {
   it('removes the line break when the deleted word was alone on its own line', () => {
     const text = 'hello\nworld\nagain'
     const c = cue('a', 0, 5_000, text, { words: timedWords(text) })
-    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'w1' })
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'w1' } })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.project.cues[0].text).toBe('hello\nagain')
   })
@@ -331,7 +330,7 @@ describe('deleting a single word from a caption', () => {
   it('deletes the whole cue when its only word is removed, selecting a neighbour', () => {
     const before = cue('a', 0, 1_000, 'hello', { words: timedWords('hello') })
     const after = cue('b', 2_000, 3_000, 'next')
-    const result = applyCaptionCommand(project(before, after), { type: 'delete-word', cueId: 'a', wordId: 'w0' })
+    const result = applyCaptionCommand(project(before, after), { type: 'delete-word', cueId: 'a', target: { wordId: 'w0' } })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.project.cues.map((item) => item.id)).toEqual(['b'])
@@ -340,7 +339,7 @@ describe('deleting a single word from a caption', () => {
 
   it('fails cleanly for an unknown word ID', () => {
     const c = cue('a', 0, 1_000, 'hello', { words: timedWords('hello') })
-    expect(applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', wordId: 'missing' }).ok).toBe(false)
+    expect(applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { wordId: 'missing' } }).ok).toBe(false)
   })
 })
 
@@ -349,9 +348,11 @@ describe('captions of several videos', () => {
     id, kind: 'video' as const, name: `${id}.mp4`, reference: { relativePath: null, absolutePath: `/${id}.mp4` }, fingerprint: null,
     metadata: { durationUs, width: 1920, height: 1080, rotationDegrees: 0, frameRate: null, nominalFrameRate: null, streams: [] },
   })
+  const clip = (id: string, assetId: string, timelineStartUs: number, sourceEndUs: number) => ({ kind: 'video' as const, id, trackId: 'V1', assetId, timelineStartUs, sourceStartUs: 0, sourceEndUs, opacity: 1, fit: 'contain' as const, gain: 1 })
   const twoVideos = (...cues: Cue[]): CaptionProject => ({
     ...project(...cues), assets: [videoAsset('v1', 10_000_000), videoAsset('v2', 5_000_000)],
-    clips: [{ id: 'k1', assetId: 'v1', startUs: 0, endUs: 10_000_000 }, { id: 'k2', assetId: 'v2', startUs: 0, endUs: 5_000_000 }],
+    tracks: [{ id: 'V1', kind: 'video', name: '', muted: false, hidden: false, locked: false }],
+    clips: [clip('k1', 'v1', 0, 10_000_000), clip('k2', 'v2', 10_000_000, 5_000_000)],
   })
 
   it('does not report an overlap between cues of different videos, since their times are on different timelines', () => {
@@ -378,7 +379,7 @@ describe('captions of several videos', () => {
   })
 
   it('binds a cue added without a video to the sequence’s only video, and to an explicit default when there are several', () => {
-    const one = { ...twoVideos(), clips: [{ id: 'k1', assetId: 'v1', startUs: 0, endUs: 10_000_000 }] }
+    const one = { ...twoVideos(), clips: [clip('k1', 'v1', 0, 10_000_000)] }
     const added = applyCaptionCommand(one, { type: 'add', cue: cue('new', 0, 1_000_000, 'new') })
     expect(added.ok && added.project.cues[0].mediaAssetId).toBe('v1')
     const both = applyCaptionCommand(twoVideos(), { type: 'add', cue: cue('new', 0, 1_000_000, 'new') }, { defaultAssetId: 'v2' })
@@ -409,5 +410,68 @@ describe('captions of several videos', () => {
     const base = twoVideos(cue('a', 0, 4_000_000, 'one two three four', { mediaAssetId: 'v2' }))
     const split = applyCaptionCommand(base, { type: 'split', cueId: 'a', atUs: 2_000_000, rightCueId: 'a2' })
     expect(split.ok && split.project.cues.map((item) => item.mediaAssetId)).toEqual(['v2', 'v2'])
+  })
+})
+
+describe('word-menu actions on a caption with no word timing', () => {
+  it('deletes a plain text token addressed by its offset, with no word entries involved', () => {
+    const c = cue('a', 0, 5_000_000, 'hello brave world')
+    const target = captionTokens('hello brave world')[1] // "brave"
+    const result = applyCaptionCommand(project(c), { type: 'delete-word', cueId: 'a', target: { textStart: target.textStart } })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.project.cues[0].text).toBe('hello world')
+  })
+
+  it('adds a line break before a plain text token addressed by its offset', () => {
+    const text = 'one two three'
+    const c = cue('a', 0, 5_000_000, text)
+    const target = captionTokens(text)[1] // "two"
+    const result = applyCaptionCommand(project(c), { type: 'line-break-before-word', cueId: 'a', target: { textStart: target.textStart } })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.project.cues[0].text).toBe('one\ntwo three')
+  })
+
+  it('refuses a line break before the caption’s first token, whether addressed by word or offset', () => {
+    const text = 'one two'
+    const untimed = cue('a', 0, 5_000_000, text)
+    const byOffset = applyCaptionCommand(project(untimed), { type: 'line-break-before-word', cueId: 'a', target: { textStart: 0 } })
+    expect(byOffset.ok).toBe(false)
+    const timed = cue('b', 0, 5_000_000, text, { words: timedWords(text) })
+    const byWord = applyCaptionCommand(project(timed), { type: 'line-break-before-word', cueId: 'b', target: { wordId: 'w0' } })
+    expect(byWord.ok).toBe(false)
+  })
+
+  it('emphasizes a caption typed into a cue that started empty (word: []), independent of word timing', () => {
+    const added = cue('a', 0, 5_000_000, '')
+    const edited = applyCaptionCommand(project(added), { type: 'update-text', cueId: 'a', text: 'ഇത് React ആണ്' })
+    expect(edited.ok).toBe(true)
+    if (!edited.ok) return
+    expect(edited.project.cues[0].words).toEqual([]) // no timing was fabricated
+    const secondToken = captionTokens(edited.project.cues[0].text)[1] // "React"
+    const emphasized = applyCaptionCommand(edited.project, { type: 'toggle-emphasis', cueId: 'a', textStart: secondToken.textStart })
+    expect(emphasized.ok).toBe(true)
+    if (emphasized.ok) expect(emphasized.project.cues[0].emphasized).toEqual([{ text: 'React', textStart: secondToken.textStart, textEnd: secondToken.textEnd }])
+  })
+})
+
+describe('estimate-words with missingOnly', () => {
+  it('fills only the untimed gap, leaving already-timed words and their provenance untouched', () => {
+    const text = 'one two three'
+    const c = cue('a', 0, 5_000, text, { words: [timedWords(text)[0], timedWords(text)[2]] })
+    const result = applyCaptionCommand(project(c), { type: 'estimate-words', cueId: 'a', idPrefix: 'e', missingOnly: true })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const words = result.project.cues[0].words
+    expect(words.find((word) => word.id === 'w0')).toMatchObject({ timingSource: 'model' })
+    expect(words.find((word) => word.id === 'w2')).toMatchObject({ timingSource: 'model' })
+    expect(words.find((word) => word.text === 'two')).toMatchObject({ timingSource: 'estimated', needsReview: true })
+  })
+
+  it('replaces every word when missingOnly is not set, unlike missingOnly', () => {
+    const text = 'one two three'
+    const c = cue('a', 0, 5_000, text, { words: [timedWords(text)[0], timedWords(text)[2]] })
+    const result = applyCaptionCommand(project(c), { type: 'estimate-words', cueId: 'a', idPrefix: 'e' })
+    expect(result.ok).toBe(true)
+    if (result.ok) expect(result.project.cues[0].words.every((word) => word.timingSource === 'estimated')).toBe(true)
   })
 })

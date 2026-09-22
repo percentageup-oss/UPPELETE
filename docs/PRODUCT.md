@@ -41,5 +41,11 @@ The editor remains local-first and fully usable offline. A user may explicitly a
 ## Optional translation
 With the same Gemini API key, a **"Translate to"** choice in **Transcribe** (either engine) sends only the recognized caption text — never audio — to Gemini and creates captions in the chosen language instead of the spoken one. The original spoken-language recognition is always retained in the project. Translated captions get estimated word timing and are marked Needs review, since a translated word cannot correspond to the original audio's word position. Default is off (no target chosen), unchanged behavior.
 
+## Optional local agent control ([MCP.md](MCP.md))
+A user may explicitly enable a loopback-only MCP server so a local Claude client (Claude Code today) can inspect and edit the open project — captions, style, tracks/clips, blur, markers — through the same undoable command path the UI itself uses, with the change visible in the app as it happens and reversible with the normal Undo. Off by default; nothing leaves the computer; no account, cloud provider or subscription is involved. Core editing, transcription and export remain fully usable without it.
+
+## Timeline editing (post first release)
+A stacked multi-track timeline (schema 5, [EDITING.md](EDITING.md)): several videos in one project, named video and audio tracks, clips at any position with gaps, trim/split/move/ripple, picture-in-picture, images over the video, music and sound effects in sequence time, per-video transcription, and export of the whole timeline.
+
 ## Deferred
-Multi-clip sequencing, transitions, keyframed or tracked effects, multitrack compositions, additional cloud providers, accounts, collaboration, diarization, AI emojis/keywords, Manglish transliteration, marketplace and batch export.
+Transitions and crossfades, speed/retime, keyframed or tracked effects, nested sequences, audio ducking, additional cloud providers, accounts, collaboration, diarization, AI emojis/keywords, Manglish transliteration, marketplace and batch export.

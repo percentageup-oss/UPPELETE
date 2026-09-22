@@ -197,7 +197,7 @@ export function layoutCaption(text: string, inputs: LayoutInputs, measure: Measu
   const checkedMeasure = (value: string, font: CaptionFont, offset = 0) => {
     const emphasis = inputs.emphasized?.length ? { spans: sliceEmphasis(inputs.emphasized, offset, offset + value.length), font: fittedEmphasisFont(inputs, font) } : undefined
     const size = measure(value, font, emphasis)
-    if (!Number.isFinite(size.width) || size.width < 0 || !Number.isFinite(size.height) || size.height <= 0) throw new Error('Invalid shaped text metrics.')
+    if (!Number.isFinite(size.width) || size.width < 0 || !Number.isFinite(size.height) || size.height <= 0) throw new Error(`Invalid shaped text metrics (measured ${size.width} x ${size.height}, ${value.length} UTF-16 units${emphasis ? ', with emphasis' : ''}).`)
     return size
   }
   let font = { ...inputs.font }

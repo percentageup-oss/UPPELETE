@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { ImageOverlay } from './core/edit'
+import type { Clip, CompositionRect, Track, VisualClip } from './core/edit'
 import type { Size } from './core/composition'
 import type { PlaybackClock } from './core/playbackClock'
 import { moveRect, nudgeRect, resizeRect, roundRect, type RectHandle } from './core/overlayRect'
-import { projectCaptionViewport } from './captions/renderer'
+import { activeClipsAt } from './core/timelineModel'
+import { useCompositionProjection } from './captions/CaptionPreview'
+
+/** A picture clip placed in the frame: an image, or a video shown picture-in-picture. */
+type Placed = VisualClip & { rect: CompositionRect }
 
 const HANDLES: RectHandle[] = ['nw', 'n', 'ne', 'w', 'e', 'sw', 's', 'se']
 
@@ -12,36 +16,36 @@ const CURSOR_FOR_HANDLE: Record<RectHandle, string> = {
   ne: 'nesw-resize', sw: 'nesw-resize', nw: 'nwse-resize', se: 'nwse-resize',
 }
 
-type MoveDrag = { kind: 'move'; overlayId: string; base: ImageOverlay; startClientX: number; startClientY: number; pointerId: number; clone: boolean }
-type ResizeDrag = { kind: 'resize'; overlayId: string; base: ImageOverlay; handle: RectHandle; startClientX: number; startClientY: number; pointerId: number; keepAspect: boolean }
+type MoveDrag = { kind: 'move'; clipId: string; base: Placed; startClientX: number; startClientY: number; pointerId: number; clone: boolean }
+type ResizeDrag = { kind: 'resize'; clipId: string; base: Placed; handle: RectHandle; startClientX: number; startClientY: number; pointerId: number; keepAspect: boolean }
 type DragState = MoveDrag | ResizeDrag
 
 /**
  * The stage manipulation layer (drag/resize/Alt-clone directly on the preview), rendered as a
- * sibling of `CaptionStage` inside `.video-frame`. Only overlay hit boxes and their handles are
- * `pointer-events: auto` — the wrapper itself stays click-through so the native `<video controls>`
- * bar and the empty-stage buttons are unaffected. Composition-unit ↔ screen-pixel mapping reuses
- * `projectCaptionViewport`, the exact function `CaptionPreview` positions its own wrapper with, so
- * a handle always sits exactly on the painted overlay's edge.
+ * sibling of `CaptionStage` inside `.video-frame`. It edits every picture clip under the playhead
+ * that has a `rect` — images, and videos shown picture-in-picture; a full-frame clip has nothing to
+ * drag (the inspector's Picture-in-picture toggle gives it a rect). Only hit boxes and their handles
+ * are `pointer-events: auto`, so the rest of the stage stays click-through. Composition-unit ↔
+ * screen-pixel mapping reuses `useCompositionProjection`, the exact projection `CaptionPreview`
+ * positions its own wrapper with, so a handle always sits exactly on the painted clip's edge.
  *
- * `overlays` is the caller's already-drafted, time-visible list — same contract as
- * `CaptionStage`'s `overlays` prop (`App.tsx`'s `visibleOverlays`) — so a rect this editor is
- * actively dragging reflects the live draft the moment the caller applies it; this component never
- * keeps its own copy of the dragged rect, only the gesture's starting point.
+ * `clips` is the caller's already-drafted list, so a rect this editor is actively dragging reflects
+ * the live draft the moment the caller applies it; this component never keeps its own copy of the
+ * dragged rect, only the gesture's starting point.
  */
-export function OverlayStageEditor({ overlays, composition, clock, selectedId, onSelect, onRectDraft, onRectCommit, onCloneDraft, onCloneCommit }: {
-  overlays: readonly ImageOverlay[]
+export function ClipStageEditor({ tracks, clips, composition, clock, selectedId, onSelect, onRectDraft, onRectCommit, onCloneDraft, onCloneCommit }: {
+  tracks: readonly Track[]
+  clips: readonly Clip[]
   composition: Size
   clock: PlaybackClock
   selectedId: string | null
   onSelect: (id: string) => void
-  onRectDraft: (rect: ImageOverlay['rect']) => void
-  onRectCommit: (rect: ImageOverlay['rect']) => void
-  onCloneDraft: (overlay: ImageOverlay | null) => void
-  onCloneCommit: (overlay: ImageOverlay) => void
+  onRectDraft: (rect: CompositionRect) => void
+  onRectCommit: (rect: CompositionRect) => void
+  onCloneDraft: (clip: VisualClip | null) => void
+  onCloneCommit: (clip: VisualClip) => void
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
-  const [preview, setPreview] = useState<Size | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
   const frameUs = useSyncExternalStore(clock.subscribe, clock.getUs)
   // Mirrors Timeline.tsx's own drag-effect pattern: callbacks live in refs, not the effect's
@@ -52,16 +56,10 @@ export function OverlayStageEditor({ overlays, composition, clock, selectedId, o
   const cloneDraftRef = useRef(onCloneDraft); cloneDraftRef.current = onCloneDraft
   const cloneCommitRef = useRef(onCloneCommit); cloneCommitRef.current = onCloneCommit
 
-  useEffect(() => {
-    const element = rootRef.current
-    if (!element) return
-    const resize = new ResizeObserver(([entry]) => setPreview({ width: entry.contentRect.width, height: entry.contentRect.height }))
-    resize.observe(element)
-    return () => resize.disconnect()
-  }, [])
-
-  const projection = preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
-  const visible = useMemo(() => overlays.filter((overlay) => frameUs >= overlay.startUs && frameUs < overlay.endUs), [overlays, frameUs])
+  const projection = useCompositionProjection(rootRef, composition)
+  // Back to front, so a picture on a higher track is hit first (it is also later in the DOM).
+  const visible = useMemo(() => activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio'), { skipHidden: true })
+    .map((entry) => entry.clip).filter((clip): clip is Placed => clip.kind !== 'audio' && clip.rect !== undefined), [tracks, clips, frameUs])
 
   useEffect(() => {
     if (!drag) return
@@ -110,30 +108,30 @@ export function OverlayStageEditor({ overlays, composition, clock, selectedId, o
     }
   }, [drag, projection, composition])
 
-  const beginMove = (event: ReactPointerEvent<HTMLElement>, overlay: ImageOverlay) => {
+  const beginMove = (event: ReactPointerEvent<HTMLElement>, overlay: Placed) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
     onSelect(overlay.id)
     if (event.altKey) {
-      const cloned: ImageOverlay = { ...overlay, id: crypto.randomUUID() }
+      const cloned: Placed = { ...overlay, id: crypto.randomUUID() }
       onCloneDraft(cloned)
-      setDrag({ kind: 'move', overlayId: cloned.id, base: cloned, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, clone: true })
+      setDrag({ kind: 'move', clipId: cloned.id, base: cloned, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, clone: true })
     } else {
-      setDrag({ kind: 'move', overlayId: overlay.id, base: overlay, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, clone: false })
+      setDrag({ kind: 'move', clipId: overlay.id, base: overlay, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, clone: false })
     }
   }
 
-  const beginResize = (event: ReactPointerEvent<HTMLElement>, overlay: ImageOverlay, handle: RectHandle) => {
+  const beginResize = (event: ReactPointerEvent<HTMLElement>, overlay: Placed, handle: RectHandle) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
-    setDrag({ kind: 'resize', overlayId: overlay.id, base: overlay, handle, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, keepAspect: !event.shiftKey })
+    setDrag({ kind: 'resize', clipId: overlay.id, base: overlay, handle, startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId, keepAspect: !event.shiftKey })
   }
 
-  const handleKeyNudge = (event: ReactKeyboardEvent<HTMLElement>, overlay: ImageOverlay) => {
+  const handleKeyNudge = (event: ReactKeyboardEvent<HTMLElement>, overlay: Placed) => {
     const step = event.shiftKey ? 10 : 1
     let dx = 0, dy = 0
     if (event.key === 'ArrowLeft') dx = -step
@@ -148,7 +146,7 @@ export function OverlayStageEditor({ overlays, composition, clock, selectedId, o
 
   if (!projection) return <div ref={rootRef} className="overlay-stage" aria-hidden="true" />
 
-  const toPx = (rect: ImageOverlay['rect']) => ({
+  const toPx = (rect: CompositionRect) => ({
     left: projection.x + rect.x * projection.scale, top: projection.y + rect.y * projection.scale,
     width: rect.width * projection.scale, height: rect.height * projection.scale,
   })
@@ -157,12 +155,12 @@ export function OverlayStageEditor({ overlays, composition, clock, selectedId, o
     {visible.map((overlay) => {
       const box = toPx(overlay.rect)
       const selected = overlay.id === selectedId
-      const dragging = drag?.overlayId === overlay.id
+      const dragging = drag?.clipId === overlay.id
       return <div key={overlay.id} className={`overlay-hit ${selected ? 'selected' : ''} ${dragging ? 'dragging' : ''}`}
         style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
         tabIndex={selected ? 0 : -1}
         role="button"
-        aria-label={`Image overlay at ${Math.round(overlay.rect.x)}, ${Math.round(overlay.rect.y)}`}
+        aria-label={`${overlay.kind === 'video' ? 'Picture-in-picture video' : 'Image'} at ${Math.round(overlay.rect.x)}, ${Math.round(overlay.rect.y)}`}
         onPointerDown={(event) => beginMove(event, overlay)}
         onKeyDown={(event) => handleKeyNudge(event, overlay)}>
         {selected && HANDLES.map((handle) => <span key={handle} className="overlay-handle" data-handle={handle}

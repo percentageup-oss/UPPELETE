@@ -3,12 +3,17 @@ import { readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { exportSupportFromConfiguration, type ExportSupport } from '../src/core/exportSupport'
 import { exportStartRequestSchema, type ExportOutcome } from '../src/export/ipc'
-import { buildExportManifest, exportManifestSchema, planFromMedia, type ExportPlan } from '../src/export/plan'
+import { buildExportManifest, exportManifestSchema, planFromMedia, type BuiltExport, type ExportPlan } from '../src/export/plan'
 import { mediaUrlForPath } from './projectMedia'
 import { DEFAULT_CAPTION_STYLE } from '../src/captions/style'
 import type { MediaFingerprint, ProjectMedia } from '../src/core/media'
+import type { ProjectAsset } from '../src/core/edit'
+import { formatFromMedia } from '../src/core/format'
+import { primaryVideoAsset } from '../src/core/projectClips'
+import type { CaptionProject } from '../src/core/model'
 import { parseSrt } from '../src/core/srt'
 import { ExportService } from './exportService'
+import { logExport } from './exportLog'
 import { getJobScheduler } from './jobs'
 import { getMediaWorker, configuredToolchain } from './mediaWorker'
 
@@ -54,55 +59,73 @@ async function checkExportSupport(): Promise<ExportSupport> {
 
 const failed = (message: string): ExportOutcome => ({ state: 'failed', error: { code: 'INVALID_INPUT', message, retryable: false } })
 
+type LookupMedia = (fingerprint: MediaFingerprint) => { path: string; media: ProjectMedia } | undefined
+
+const KIND_NAME: Record<ProjectAsset['kind'], string> = { video: 'Video', image: 'Image', audio: 'Sound' }
+
+/**
+ * Builds the manifest for the live project. Every file the timeline plays is resolved through this
+ * session's fingerprint registry — exactly like the source video always was — never from the project
+ * JSON's stored path, so a missing or unrelinked file refuses the export by name before the job
+ * starts rather than being silently omitted. The output frame is the project's own `format`, else
+ * what the first video on the timeline probes to (X2's `planFromMedia` rule).
+ */
+export function buildExportForProject(project: CaptionProject, lookupMedia: LookupMedia): BuiltExport {
+  const resolve = (asset: ProjectAsset) => {
+    const found = asset.fingerprint && lookupMedia(asset.fingerprint)
+    if (!found) throw new Error(`${KIND_NAME[asset.kind]} "${asset.name}" is missing. Relink it before exporting.`)
+    return found
+  }
+  const primary = primaryVideoAsset(project)
+  const registered = primary?.fingerprint ? lookupMedia(primary.fingerprint) : undefined
+  const fallback = formatFromMedia(registered?.media.metadata ?? primary?.metadata)
+  return buildExportManifest(project, { assetUrl: (asset) => mediaUrlForPath(resolve(asset).path), assetPath: (asset) => resolve(asset).path }, fallback)
+}
+
 /** Media is resolved only from fingerprints this session probed; the renderer never supplies a path. */
-export function registerExportIpc(lookupMedia: (fingerprint: MediaFingerprint) => { path: string; media: ProjectMedia } | undefined) {
+export function registerExportIpc(lookupMedia: LookupMedia) {
   ipcMain.handle('export:support', async () => checkExportSupport())
 
   ipcMain.handle('export:start', async (event, value: unknown): Promise<ExportOutcome | null> => {
     const request = exportStartRequestSchema.parse(value)
-    const registered = lookupMedia(request.fingerprint)
-    if (!registered) return failed('Open or relink this media in the current session before exporting it.')
-    if (!registered.media.metadata) return failed('Export needs the media duration/dimensions reported by the media probe.')
     const support = await checkExportSupport()
     if (!support.supported) return failed(support.reason ?? 'MP4 export is unavailable.')
+    let built: BuiltExport
+    try { built = buildExportForProject(request.project, lookupMedia) }
+    catch (error) { logExport('build-failed', { requestId: request.requestId, message: messageOf(error) }); return failed(messageOf(error)) }
     const defaultName = `${request.project.title || 'export'}.mp4`
     const dialogResult = await dialog.showSaveDialog({ defaultPath: defaultName, filters: [{ name: 'MP4 video', extensions: ['mp4'] }] })
     if (dialogResult.canceled || !dialogResult.filePath) return null
     const destinationPath = path.resolve(dialogResult.filePath)
-    if (destinationPath === path.resolve(registered.path)) return failed('Choose a destination different from the source media.')
+    if (built.inputPaths.some((input) => path.resolve(input) === destinationPath)) return failed('Choose a destination different from every file the timeline uses.')
     const key = `${event.sender.id}:${request.requestId}`
     if (activeRequests.has(key)) return failed('This export request is already running.')
-    // Manifest v2 (docs/EDITING.md): a strict superset of X2's v1, so an unedited project still
-    // encodes exactly as before while any edit it does carry reaches the worker as data, never flags.
-    // An overlay's asset path comes from this session's fingerprint registry — exactly like the
-    // source media — never from the project JSON's stored path, so a missing/unrelinked asset
-    // refuses the export before the job starts rather than silently omitting the overlay.
-    let manifest
-    try {
-      manifest = buildExportManifest(request.project, planFromMedia(registered.media.metadata), (asset) => {
-        const found = asset.fingerprint && lookupMedia(asset.fingerprint)
-        if (!found) throw new Error(`Overlay image "${asset.name}" is missing. Relink it in the inspector before exporting.`)
-        return mediaUrlForPath(found.path)
-      }, (asset) => {
-        // A sound effect's path never comes from the project JSON either — exactly like the
-        // overlay `assetUrl` above, it is looked up in this session's fingerprint registry.
-        const found = asset.fingerprint && lookupMedia(asset.fingerprint)
-        if (!found) throw new Error(`Sound effect "${asset.name}" is missing. Relink it in the inspector before exporting.`)
-        return found.path
-      })
-    } catch (error) { return failed(messageOf(error)) }
-    const handle = getService().start({ mediaPath: registered.path, metadata: registered.media.metadata, manifest, destinationPath },
+    logExport('start', {
+      requestId: request.requestId, destinationPath, manifestVersion: built.manifest.version,
+      inputCount: built.inputPaths.length, cueCount: built.manifest.cues.length,
+      clipCount: built.manifest.version === 3 ? built.manifest.clips.length : undefined,
+      overlayCount: built.manifest.overlays.length,
+      plan: built.plan,
+    })
+    const handle = getService().start({ inputPaths: built.inputPaths, plan: built.plan, manifest: built.manifest, destinationPath },
       (job) => { if (!event.sender.isDestroyed()) event.sender.send('export:progress', { requestId: request.requestId, job }) })
     activeRequests.set(key, handle)
-    const cancelForDestroyedRenderer = () => handle.cancel()
-    event.sender.once('destroyed', cancelForDestroyedRenderer)
+    // A destroyed renderer deliberately does *not* cancel the job. The user already chose a
+    // destination, so the export's product is a file on disk, not a live window: losing a
+    // half-hour encode because the window was closed or reloaded (which on macOS does not quit
+    // the app) discarded real work silently, with no file and no message. App shutdown still
+    // cancels every job through `closeJobs()`.
+    const noteDestroyedRenderer = () => logExport('renderer-destroyed', { requestId: request.requestId })
+    event.sender.once('destroyed', noteDestroyedRenderer)
     try {
       const outcome = await handle.outcome
+      logExport('outcome', { requestId: request.requestId, state: outcome.state, ...(outcome.state === 'failed' ? { error: outcome.error } : {}),
+        ...(outcome.state === 'succeeded' ? { path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount } : {}) })
       if (outcome.state === 'succeeded') return { state: 'succeeded', path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount }
       return outcome.state === 'failed' ? { state: 'failed', error: outcome.error } : { state: 'cancelled' }
     } finally {
       activeRequests.delete(key)
-      event.sender.removeListener('destroyed', cancelForDestroyedRenderer)
+      event.sender.removeListener('destroyed', noteDestroyedRenderer)
     }
   })
 
@@ -122,6 +145,7 @@ export async function runExportSmoke(mediaPath: string, media: ProjectMedia, srt
   const support = await checkExportSupport()
   if (!support.supported) throw new Error(support.reason ?? 'MP4 export is unavailable.')
   if (path.resolve(outputPath) === path.resolve(mediaPath)) throw new Error('Smoke output path must differ from the source media')
+  const plan: ExportPlan = planFromMedia(media.metadata)
   let manifest
   if (manifestPath) {
     manifest = exportManifestSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
@@ -129,9 +153,8 @@ export async function runExportSmoke(mediaPath: string, media: ProjectMedia, srt
     const cues = srtPath ? parseSrt(await readFile(srtPath, 'utf8')).cues : []
     manifest = { version: 2 as const, cues, style: DEFAULT_CAPTION_STYLE, overlays: [], blurRegions: [], audioClips: [] }
   }
-  const plan: ExportPlan = planFromMedia(media.metadata)
   await rm(outputPath, { force: true })
-  const outcome = await getService().start({ mediaPath, metadata: media.metadata, manifest, destinationPath: outputPath }, () => {}).outcome
+  const outcome = await getService().start({ inputPaths: [mediaPath], plan, manifest, destinationPath: outputPath }, () => {}).outcome
   if (outcome.state !== 'succeeded') throw new Error(`Export ${outcome.state}: ${JSON.stringify(outcome)}`)
   return {
     parentPid: process.pid, nodeVersion: process.versions.node, electronVersion: process.versions.electron,

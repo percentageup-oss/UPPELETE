@@ -1,96 +1,54 @@
 import { describe, expect, it } from 'vitest'
+import type { CaptionProject } from './model'
 import type { Clip, ProjectAsset } from './edit'
-import { createProject, type CaptionProject, type Cue } from './model'
-import {
-  assetDurations, bindUnboundItems, defaultBindingAssetId, hasCuts, legacySegmentsOf, primaryVideoAsset, sequenceAssetIds, videoAssetUsers, videoAssets,
-} from './projectClips'
+import { assetUsers, bindUnboundItems, clipCountByAsset, defaultBindingAssetId, hasTrimmedClips, primaryVideoAsset, sequenceAssetIds, videoAssets } from './projectClips'
 
-const video = (id: string, durationUs: number | null = 10_000_000): ProjectAsset => ({
-  id, kind: 'video', name: `${id}.mp4`, reference: { relativePath: null, absolutePath: `/${id}.mp4` }, fingerprint: null,
+const US = 1_000_000
+const asset = (id: string, kind: ProjectAsset['kind'], durationUs: number | null = 10 * US): ProjectAsset => ({
+  id, kind, name: `${id}.bin`, reference: { relativePath: null, absolutePath: `/m/${id}` }, fingerprint: null,
   metadata: { durationUs, width: 1920, height: 1080, rotationDegrees: 0, frameRate: null, nominalFrameRate: null, streams: [] },
 })
-const image = (id: string): ProjectAsset => ({ id, kind: 'image', name: id, reference: { relativePath: null, absolutePath: `/${id}.png` }, fingerprint: null, metadata: null })
-const clip = (id: string, assetId: string, startUs: number, endUs: number): Clip => ({ id, assetId, startUs, endUs })
-const cue = (id: string, mediaAssetId?: string): Cue =>
-  ({ id, startUs: 0, endUs: 1_000_000, text: 'x', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...(mediaAssetId ? { mediaAssetId } : {}) })
-const projectOf = (extra: Partial<CaptionProject> = {}): CaptionProject => ({ ...createProject(), ...extra })
-
-describe('project video helpers', () => {
-  it('lists video assets and known durations, ignoring other kinds and unprobed files', () => {
-    const project = projectOf({ assets: [video('v1'), image('i1'), video('v2', null)] })
-    expect(videoAssets(project).map((asset) => asset.id)).toEqual(['v1', 'v2'])
-    expect([...assetDurations(project)]).toEqual([['v1', 10_000_000]])
-  })
-
-  it('lists the videos in the sequence once each, in order of first appearance', () => {
-    const project = projectOf({ clips: [clip('a', 'v2', 0, 1), clip('b', 'v1', 0, 1), clip('c', 'v2', 1, 2)] })
-    expect(sequenceAssetIds(project)).toEqual(['v2', 'v1'])
-  })
-
-  it('picks the first clip’s video as primary, else the first video asset, else nothing', () => {
-    expect(primaryVideoAsset(projectOf({ assets: [video('v1'), video('v2')], clips: [clip('a', 'v2', 0, 1)] }))?.id).toBe('v2')
-    expect(primaryVideoAsset(projectOf({ assets: [image('i1'), video('v1')] }))?.id).toBe('v1')
-    expect(primaryVideoAsset(projectOf({ assets: [image('i1')] }))).toBeNull()
-    expect(primaryVideoAsset(projectOf())).toBeNull()
-  })
+const video = (id: string, assetId: string, timelineStartUs: number, sourceStartUs = 0, sourceEndUs = 10 * US): Clip =>
+  ({ kind: 'video', id, trackId: 'V1', assetId, timelineStartUs, sourceStartUs, sourceEndUs, opacity: 1, fit: 'contain', gain: 1 })
+const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
+  schemaVersion: 5, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video'), asset('img', 'image')],
+  tracks: [{ id: 'V1', kind: 'video', name: '', muted: false, hidden: false, locked: false }], clips: [], blurRegions: [], markers: [],
+  createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
 })
+const cue = (id: string, mediaAssetId?: string) => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'imported' as const, needsReview: false, textSource: 'imported' as const, words: [] })
 
-describe('the schema-3 view of clips', () => {
-  const base = { assets: [video('v1'), video('v2', 5_000_000)] }
-
-  it('reports the identity edit — no segments — for one clip over the whole video, and for no clips at all', () => {
-    expect(legacySegmentsOf(projectOf({ ...base, clips: [clip('a', 'v1', 0, 10_000_000)] }))).toBeUndefined()
-    expect(legacySegmentsOf(projectOf({ ...base, clips: [] }))).toBeUndefined()
-    expect(legacySegmentsOf(projectOf())).toBeUndefined()
-    expect(hasCuts(projectOf({ ...base, clips: [clip('a', 'v1', 0, 10_000_000)] }))).toBe(false)
+describe('project clip helpers', () => {
+  it('lists the videos in order of first appearance on the timeline, and picks the first as primary', () => {
+    const value = project({ clips: [video('b', 'y', 10 * US), video('a', 'x', 0)].sort((a, b) => a.timelineStartUs - b.timelineStartUs) })
+    expect(sequenceAssetIds(value)).toEqual(['x', 'y'])
+    expect(primaryVideoAsset(value)?.id).toBe('x')
+    expect(primaryVideoAsset(project())?.id).toBe('x') // no clips yet: the first video asset
+    expect(videoAssets(value).map((entry) => entry.id)).toEqual(['x', 'y'])
   })
 
-  it('reports a trimmed or split video as kept ranges', () => {
-    expect(legacySegmentsOf(projectOf({ ...base, clips: [clip('a', 'v1', 2_000_000, 10_000_000)] }))).toEqual([{ id: 'a', startUs: 2_000_000, endUs: 10_000_000 }])
-    const split = projectOf({ ...base, clips: [clip('a', 'v1', 0, 4_000_000), clip('b', 'v1', 4_000_000, 10_000_000)] })
-    expect(legacySegmentsOf(split)).toHaveLength(2)
-    expect(hasCuts(split)).toBe(true)
+  it('says when any video clip plays less than its whole file', () => {
+    expect(hasTrimmedClips(project({ clips: [video('a', 'x', 0)] }))).toBe(false)
+    expect(hasTrimmedClips(project({ clips: [video('a', 'x', 0, 0, 5 * US)] }))).toBe(true)
   })
 
-  it('only sees the primary video’s clips', () => {
-    const mixed = projectOf({ ...base, clips: [clip('a', 'v1', 0, 3_000_000), clip('b', 'v2', 0, 5_000_000), clip('c', 'v1', 5_000_000, 10_000_000)] })
-    expect(legacySegmentsOf(mixed)?.map((segment) => segment.id)).toEqual(['a', 'c'])
-  })
-})
-
-describe('binding unbound items', () => {
-  it('stamps every unbound cue and item, and leaves already-bound ones alone', () => {
-    const project = projectOf({ assets: [video('v1'), video('v2')], clips: [clip('k', 'v1', 0, 1)], cues: [cue('a'), cue('b', 'v2')] })
-    expect(bindUnboundItems(project, 'v1').cues.map((item) => item.mediaAssetId)).toEqual(['v1', 'v2'])
+  it('binds unbound captions only once the timeline has video, and returns the same object when nothing changes', () => {
+    const noVideo = project({ cues: [cue('c')] })
+    expect(bindUnboundItems(noVideo, 'x')).toBe(noVideo)
+    const withVideo = project({ cues: [cue('c'), cue('d', 'y')], clips: [video('a', 'x', 0)] })
+    expect(bindUnboundItems(withVideo, 'x').cues.map((entry) => entry.mediaAssetId)).toEqual(['x', 'y'])
+    const bound = project({ cues: [cue('d', 'y')], clips: [video('a', 'x', 0)] })
+    expect(bindUnboundItems(bound, 'x')).toBe(bound)
   })
 
-  it('returns the same object when nothing needs stamping, so history records no change', () => {
-    const bound = projectOf({ assets: [video('v1')], clips: [clip('k', 'v1', 0, 1)], cues: [cue('a', 'v1')] })
-    expect(bindUnboundItems(bound, 'v1')).toBe(bound)
+  it('binds new captions to the explicit video, else the sequence’s only one, else nothing', () => {
+    expect(defaultBindingAssetId(project({ clips: [video('a', 'x', 0)] }))).toBe('x')
+    expect(defaultBindingAssetId(project({ clips: [video('a', 'x', 0), video('b', 'y', 10 * US)] }))).toBeNull()
+    expect(defaultBindingAssetId(project(), 'y')).toBe('y')
   })
 
-  it('does nothing while there are no clips, or with no asset to bind to', () => {
-    const noClips = projectOf({ cues: [cue('a')] })
-    expect(bindUnboundItems(noClips, 'v1')).toBe(noClips)
-    const withClips = projectOf({ assets: [video('v1')], clips: [clip('k', 'v1', 0, 1)], cues: [cue('a')] })
-    expect(bindUnboundItems(withClips, null)).toBe(withClips)
-  })
-
-  it('chooses the explicit video, else the only video in the sequence, else none', () => {
-    expect(defaultBindingAssetId(projectOf({ clips: [clip('a', 'v1', 0, 1), clip('b', 'v1', 1, 2)] }))).toBe('v1')
-    expect(defaultBindingAssetId(projectOf({ clips: [clip('a', 'v1', 0, 1), clip('b', 'v2', 0, 1)] }))).toBeNull()
-    expect(defaultBindingAssetId(projectOf({ clips: [clip('a', 'v1', 0, 1), clip('b', 'v2', 0, 1)] }), 'v2')).toBe('v2')
-    expect(defaultBindingAssetId(projectOf())).toBeNull()
-  })
-})
-
-describe('what a video asset is used by', () => {
-  it('lists its clips and every caption and item bound to it', () => {
-    const project = projectOf({
-      assets: [video('v1'), video('v2')], clips: [clip('k1', 'v1', 0, 1), clip('k2', 'v2', 0, 1)],
-      cues: [cue('a', 'v1'), cue('b', 'v2')],
-    })
-    expect(videoAssetUsers(project, 'v1')).toEqual(['k1', 'a'])
-    expect(videoAssetUsers(project, 'v3')).toEqual([])
+  it('finds every clip and caption using an asset, and counts clips per asset', () => {
+    const value = project({ clips: [video('a', 'x', 0), video('b', 'x', 10 * US)], cues: [cue('c', 'x'), cue('d', 'y')] })
+    expect(assetUsers(value, 'x')).toEqual(['a', 'b', 'c'])
+    expect(clipCountByAsset(value.clips)).toEqual(new Map([['x', 2]]))
   })
 })

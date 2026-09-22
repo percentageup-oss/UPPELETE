@@ -14,6 +14,15 @@ let setRequest: (request: FrameRequest) => void
 let evaluated: CaptionFrame | null = null
 let current: FrameRequest = parityFixture
 const interactive = new URLSearchParams(location.search).has('interactive')
+/** `loading` events since the current frame was requested: a font that never settles and a font state
+ * that keeps re-arming itself both read "fonts still loading" — this count tells them apart. */
+let fontLoadingEvents = 0
+document.fonts.addEventListener('loading', () => { fontLoadingEvents++ })
+/** The last uncaught page error. React unmounts the whole tree when a render throws, which leaves the
+ * previous (still `loading`) frame behind and otherwise looks exactly like a slow font. */
+let pageError: string | null = null
+window.addEventListener('error', (event) => { pageError = `${event.message}${event.error?.stack ? ` @ ${String(event.error.stack).split('\n').slice(1, 3).join(' ').trim()}` : ''}` })
+window.addEventListener('unhandledrejection', (event) => { pageError = `unhandled rejection: ${String((event.reason as Error)?.message ?? event.reason)}` })
 
 function Harness() {
   const [request, update] = useState(parityFixture)
@@ -31,7 +40,7 @@ function Harness() {
   return <>
     <div style={{ position: 'relative', ...request.composition }}>
       <CaptionPreview {...request} inputs={inputs} motion={request.style.motion} onFrame={observe} diagnostics={false}
-        layers={<CompositionLayers images={images} composition={request.composition} />} />
+        layers={<CompositionLayers layers={images} composition={request.composition} />} />
     </div>
     {interactive && <div style={{ position: 'fixed', top: 0, left: 0 }}>
       <label>Primary color <input id="parity-color" type="color" value={request.style.appearance.primaryColor}
@@ -51,7 +60,11 @@ async function ready() {
     return matrix.a === 1 && matrix.d === 1 && painter.style.left === '0px' && painter.style.top === '0px'
   }
   while (!evaluated || evaluated.layout.status === 'loading' || (evaluated.layout.status === 'ready' && !projectionReady())) {
-    if (performance.now() - start > 10000) throw new Error('Caption font/geometry readiness timeout')
+    if (performance.now() - start > 10000) {
+      // Which condition never held: no frame evaluated, fonts still loading, or the projection never reached 1:1.
+      const unmet = !evaluated ? 'no frame evaluated' : evaluated.layout.status === 'loading' ? 'fonts still loading' : 'projection not 1:1'
+      throw new Error(`Caption font/geometry readiness timeout after 10000 ms (${unmet}; document.fonts ${document.fonts.status}, ${fontLoadingEvents} loading events this frame${pageError ? `; page error: ${pageError}` : ''})`)
+    }
     await new Promise((resolve) => setTimeout(resolve, 1))
   }
   if (evaluated.layout.status !== 'ready') throw new Error('Caption font failed; refusing frame')
@@ -82,7 +95,7 @@ Object.assign(window, {
     sampleTexts: captionFixtures,
     async render(value: unknown, marker: number) {
       const request = frameRequestSchema.parse(value)
-      evaluated = null; current = request
+      evaluated = null; current = request; fontLoadingEvents = 0; pageError = null
       flushSync(() => setRequest(request))
       const result = await ready()
       document.getElementById('frame-marker')!.style.background = `rgb(${marker & 255}, ${(marker >> 8) & 255}, ${(marker >> 16) & 255})`

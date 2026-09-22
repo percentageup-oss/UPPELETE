@@ -62,7 +62,7 @@ describe('real worker process', () => {
         .rejects.toMatchObject({ detail: { code: 'TOOL_NOT_CONFIGURED' } })
       await expect(client.start({ operation: 'extractAudio', inputPath: path.join(directory, 'media.mp4'), range: { startUs: 0, endUs: 1_000_000 }, outputPath: path.join(directory, 'audio.wav'), sampleRate: 16000, channels: 1 }).result)
         .rejects.toMatchObject({ detail: { code: 'TOOL_NOT_CONFIGURED' } })
-      await expect(client.start({ operation: 'export', inputPath: path.join(directory, 'input.mp4'), renderManifestPath: path.join(directory, 'frames.json'), outputPath: path.join(directory, 'out.mp4'), range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1' }).result)
+      await expect(client.start({ operation: 'export', inputPaths: [path.join(directory, 'input.mp4')], renderManifestPath: path.join(directory, 'frames.json'), outputPath: path.join(directory, 'out.mp4'), range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1' }).result)
         .rejects.toMatchObject({ detail: { code: 'TOOL_NOT_CONFIGURED' } })
       await expect(missing.start({ operation: 'inspectToolchain' }).result).rejects.toMatchObject({ detail: { code: 'SPAWN_FAILED' } })
       // An FFmpeg pair alone never enables transcription; whisper-cli must be configured explicitly.

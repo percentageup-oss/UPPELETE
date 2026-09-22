@@ -39,8 +39,11 @@ export const taskSchema = z.discriminatedUnion('operation', [
   // Cloud transcription: split job-owned audio at long silences into per-chunk WAVs inside a job-owned directory.
   z.strictObject({ operation: z.literal('speechChunks'), audioPath: filePath, outputDirectory: filePath, durationUs: positiveInt,
     maxChunkUs: positiveInt }),
-  // A future shared-renderer manifest, never arbitrary FFmpeg flags or drawtext.
-  z.strictObject({ operation: z.literal('export'), inputPath: filePath, renderManifestPath: filePath,
+  // A versioned render manifest, never arbitrary FFmpeg flags or drawtext. `inputPaths` lists every
+  // file the export reads (one for manifests v1/v2; one per FFmpeg-read clip for v3) so the worker can
+  // refuse a destination that would overwrite any of them. Nothing here is persisted, so the protocol
+  // version is unchanged.
+  z.strictObject({ operation: z.literal('export'), inputPaths: z.array(filePath).min(1).max(256), renderManifestPath: filePath,
     outputPath: filePath, range: exportPlanSchema.shape.range, frameRate: exportPlanSchema.shape.frameRate, width: exportPlanSchema.shape.width, height: exportPlanSchema.shape.height,
     profile: z.literal('mp4-caption-renderer-v1') }),
 ])

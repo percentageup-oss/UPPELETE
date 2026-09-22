@@ -103,6 +103,18 @@ export const audioClipSchema = z.strictObject({
 
 export const clipSchema = z.discriminatedUnion('kind', [videoClipSchema, imageClipSchema, audioClipSchema])
 
+/**
+ * A point note on the sequence-time ruler — not an edit, just a place to come back to. Authored by
+ * the user or, over MCP (`docs/MCP.md`), by an agent proposing a shot list from the transcript; the
+ * user accepts or dismisses each one on the timeline rather than the suggestion living only in chat.
+ */
+export const markerSchema = z.strictObject({
+  id: itemId,
+  atUs: sourceUs,
+  text: z.string().max(200).default(''),
+  color: z.string().regex(/^#[\da-fA-F]{6}$/).optional(),
+})
+
 /** An effect over the composited program: sequence-timed, with no asset, source or in point. */
 export const blurRegionSchema = z.strictObject({
   id: itemId,
@@ -134,6 +146,7 @@ export type Clip = z.infer<typeof clipSchema>
 export type ClipKind = Clip['kind']
 export type VisualClip = VideoClip | ImageClip
 export type BlurRegion = z.infer<typeof blurRegionSchema>
+export type Marker = z.infer<typeof markerSchema>
 export type SequenceFormat = z.infer<typeof sequenceFormatSchema>
 export type ClipFit = z.infer<typeof fitSchema>
 

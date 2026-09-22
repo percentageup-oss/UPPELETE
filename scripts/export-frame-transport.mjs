@@ -14,6 +14,8 @@ export function markedBitmap(image, composition, marker) {
   return bitmap
 }
 
+const PAINT_TIMEOUT_MS = 15000
+
 export async function renderOffscreen(window, request, marker) {
   const wc = window.webContents
   let committed = false, stalePaints = 0
@@ -29,7 +31,11 @@ export async function renderOffscreen(window, request, marker) {
     } catch (error) { rejectPaint(error) }
   }
   wc.on('paint', listener)
-  const timer = setTimeout(() => rejectPaint(new Error('Offscreen committed paint timeout')), 15000)
+  // Says which stall it was: no paint at all, paints that never carried this request's marker, or
+  // a request that never committed — three different bugs behind one deadline.
+  const timer = setTimeout(() => rejectPaint(new Error(`Offscreen committed paint timeout after ${PAINT_TIMEOUT_MS} ms `
+    + `(${committed ? 'request committed' : 'request not yet committed'}, ${stalePaints} unmarked paints, `
+    + `${request.composition.width}x${request.composition.height})`)), PAINT_TIMEOUT_MS)
   // Handle rejection immediately, including failures while awaiting font readiness.
   painted.catch(() => {})
   try {

@@ -40,7 +40,7 @@
     "electron": "44.3.0",
     "chrome": "152.0.7977.78"
   },
-  "workDir": "/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-x3-neHtun",
+  "workDir": "/private/tmp/claude-501/-Volumes-Sadique-SSD-projects-subs/aabe09ce-6a0c-408d-9b41-003c4a139d3c/scratchpad/parity3/caption-x3-dEAd13",
   "captionLayer": [
     {
       "motion": "static-clean",
@@ -6060,21 +6060,24 @@
     "src/core/captionText.ts": "478678c694a70df407144cc690fc277481ca8883891b0f765a8f9621226780cb",
     "src/core/emphasis.ts": "7d1a5a008be2dcf5dfb4ceb0f28dd027d3f584aa5304db546a209737f2f63735",
     "src/captions/renderer.ts": "0583b72c5819ef9447d07a54f0506ed83cf52c369254589bb70629ccf889e4c2",
-    "src/captions/CaptionPreview.tsx": "6972c6f1a65ba7b053c92851b563c741e7d648a5adfc44bfddb6defb54166bb3",
+    "src/captions/CaptionPreview.tsx": "9c42417aa70c383cef45490ec2fdbd0923d1b85c9aa2a4da6b4d68f4e2ecb9a7",
     "src/core/media.ts": "bb92ba58319211516d7bc424e0f08b28b19c0434ce6156caa881d7c95edefbe6",
-    "src/core/edit.ts": "f780b1a3749463d3a96f6cf71a5c3ed21d832a5b05c7ecffd1f71a62c8c7fd87",
+    "src/core/edit.ts": "19945b6020035032cbe150bce6b01c51f38a7d05134b6ea392884f7626f4cca7",
     "src/core/composition.ts": "ba7c7aa9e5114ab7bba29fb04f0381b96741a3c191eed6f72c0f331a21c9dd8d",
-    "src/captions/CompositionLayers.tsx": "ea732027eb4c1ecaef11d988df1afbcf3bc73b59694d1aecd2fde1a8026826d6",
+    "src/captions/CompositionLayers.tsx": "e2aa933226dce8baffa70f5c0b2ac9848dc128ab5056b5c1f18fe48554024591",
     "src/captions/style.ts": "cd2dde3ebedecfb1634ba139f688987ef83c48471ff6f5e34d82b56028e1b986",
     "src/core/jobs.ts": "49340d99918f492af4032ac4b226eeebb49f4a9cec8b76a8ca60ce2d31c119c5",
     "src/core/scriptCheck.ts": "3f4c7174feb26b93395b63dc5325a8c713c46019c12d81a55d46248f70aba226",
     "src/core/transcription.ts": "11dac37eb78e64bea37cd050c7124cb56db32cd3645cc17f0ca08d35304f671e",
     "src/captions/wordDisplay.ts": "13691d86841ec1df31986fc0067fa3d70791e9b207cd17442bcc0a1ec206efbf",
-    "src/core/model.ts": "db7c966155151c6d19443c6362ba3fef4df86f56e3266ab656254b36a0f88e94",
+    "src/core/timelineModel.ts": "a75f716da61b77e7aa514b5e3f9375011ae925c13c38cfee319eb5000adf3a19",
+    "src/core/format.ts": "be4f14ad53ef0239e298c9f8ec92c175266cbaa332765c4bb47b0f92d38fa28a",
+    "src/core/migrateV4.ts": "928dc2d1670c1fbd73cf594ec4bf2f79f6dcb9b1edb0d1fd644e16a91c2f06b0",
+    "src/core/model.ts": "5fb991b087869989142b120619fb75bb76260cd7ba41b4a7c8a2fb6f5c519f02",
     "src/export/frameRequest.ts": "973a20b399b6f8ff5b7566bd6e3ba2ee4b69ca355b2ee1acb7c9526dbb33e7f8",
     "src/export/parityFixture.ts": "88bb3878dd9f7cd7aceb3cbd58c3e49a8d6b1498b58472669275d2e149f6e3d9",
     "src/captions/fixtures.ts": "ccfd4d52d070372c5e873701b46e0289f115f808ec25c283dabee8a4b34f5e2d",
-    "src/export/frameHarness.tsx": "fc82b77ac709d48825c8002508943af43d0da55b0588604319272abe7f4e8f84"
+    "src/export/frameHarness.tsx": "9eba30b0148c1d81d1bab3349aa0770ccc30e31e6fd913fe7f3eaca4758d12ea"
   },
   "summary": {
     "captionLayerCases": 200,

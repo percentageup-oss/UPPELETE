@@ -1,25 +1,31 @@
 import { TimingProvenance } from './TimingProvenance'
 import { untimedTokenCount } from './core/wordTiming'
 import { parseEditedTimestamp } from './core/time'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ChangeEvent, CSSProperties } from 'react'
 import { validateCaptions, type ValidationIssue } from './core/captionCommands'
 import { applyEditCommand, type CommandContext, type EditCommand } from './core/commands'
 import { validateItems } from './core/itemCommands'
-import { cuesInSequenceForClips, sequenceDurationUs, sequenceToSource, sourceToSequence } from './core/sequence'
+import { summarizeCue, summarizeProject, type CommandOutcome, type ProjectSummary } from './core/agentProtocol'
+import { useAgentBridge, type AgentBridgeHandlers } from './agent/useAgentBridge'
+import {
+  activeClipsAt, activeCueAt, captionClips, clipEndUs, clipLengthUs, cuesInSequence, firstSequenceUsOf, sequenceDurationUs, sourceUsOfAssetAt,
+  spansInSequence, trackLabel, videoUnderPlayhead,
+} from './core/timelineModel'
 import type { Selection } from './core/timelineItems'
-import { createCutPlaybackController } from './core/playbackController'
-import { compositionFor, displayAspect } from './core/composition'
+import { formatAspect } from './core/format'
+import { compositionFor } from './core/composition'
 import { commitHistory, createHistory, redoHistory, undoHistory } from './core/history'
-import { createProject, projectSchema, PROJECT_FILE_EXTENSION, type CaptionProject, type CaptionWord, type Cue } from './core/model'
-import type { JobSnapshot } from './core/jobs'
+import { createProject, projectSchema, PROJECT_FILE_EXTENSION, type CaptionProject, type CaptionWord, type Cue, type MigrationNote } from './core/model'
+import type { JobSnapshot, JobStructuredError } from './core/jobs'
 import { parseSrt, serializeSrt } from './core/srt'
 import { formatClock, formatTimestamp, US_PER_SECOND } from './core/time'
 import { isEditableTarget, shortcutForEvent, type ShortcutAction } from './core/shortcuts'
 import { trimToPlayhead, type CueDragMode } from './core/timeline'
-import { createPlaybackClock, type PlaybackClock } from './core/playbackClock'
+import type { PlaybackClock } from './core/playbackClock'
 import { MenuButton, type MenuEntry } from './MenuButton'
 import { SettingsDialog, type SettingsTab } from './SettingsDialog'
+import type { McpStatus } from '../electron/mcp/config'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
 import type { AlignmentSettingsStatus } from './core/alignmentIpc'
@@ -30,18 +36,17 @@ import { translationTargetLabel } from './core/translationLanguages'
 import { Timeline } from './Timeline'
 import type { MediaCandidate } from '../electron/projectMedia'
 import type { MediaMetadata, ProjectMedia } from './core/media'
-import { bindUnboundItems, hasCuts, legacySegmentsOf, primaryVideoAsset } from './core/projectClips'
+import { assetUsers, bindUnboundItems, clipCountByAsset, hasTrimmedClips, primaryVideoAsset, videoAssets } from './core/projectClips'
 import { TIMELINE_WAVEFORM_PEAKS, type WaveformData } from './core/waveform'
 import { containerPlaybackHint, describeMediaError, describePlayFailure } from './core/codecSupport'
 import { CaptionPreview } from './captions/CaptionPreview'
-import { CompositionLayers, type CompositionLayerImage } from './captions/CompositionLayers'
-import { OverlayInspector } from './OverlayInspector'
-import { OverlayStageEditor } from './OverlayStageEditor'
-import { defaultOverlayRange, defaultOverlayRect } from './core/overlayDefaults'
-import type { AudioClip, ImageOverlay, ProjectAsset } from './core/edit'
-import { SfxInspector } from './SfxInspector'
-import { clipDurationUs, clipRange, defaultClipAt, droppedSoundEffects } from './core/sfxClip'
-import { createSfxScheduler, type SfxClipSpec } from './playback/SfxScheduler'
+import { CompositionLayers, type CompositionLayer } from './captions/CompositionLayers'
+import { ClipInspector } from './ClipInspector'
+import { ClipStageEditor } from './ClipStageEditor'
+import { defaultOverlayRect } from './core/overlayDefaults'
+import type { Clip, ClipFit, CompositionRect, ProjectAsset, Track, VisualClip } from './core/edit'
+import { freeTrackFor, trackEndUs, type ClipEdge, type EditMode } from './core/clipEdits'
+import type { TrackFlags } from './core/trackCommands'
 import { wordMotionAvailability, type LayoutInputs, type Size } from './captions/renderer'
 import { activeWordIndex, wordDisplayCue, type CaptionDisplay } from './captions/wordDisplay'
 import { applyCaptionPreset, deleteCaptionPreset, saveCaptionPreset } from './captions/presets'
@@ -53,29 +58,22 @@ import { AlignmentControls } from './AlignmentControls'
 import { applyAlignment } from './core/alignment'
 import { LeftRail, type RailTab } from './LeftRail'
 import { MediaBin } from './MediaBin'
-import { CaptionsPanel } from './CaptionsPanel'
+import { CaptionsPanel, VideoPicker } from './CaptionsPanel'
+import { wordActionCommand, type TranscriptSpan } from './transcript'
 import { OverlaysPanel } from './OverlaysPanel'
 import { TransitionsPanel } from './TransitionsPanel'
 import { dropContent } from './core/dragPayload'
 import type { AssetDragPayload } from './core/dragPayload'
-import { dropPlanForAsset } from './core/timelineDrop'
+import { DEFAULT_IMAGE_CLIP_US, dropPlanForAsset } from './core/timelineDrop'
 import { findAssetByFingerprint, type InspectedFile } from './core/assetImport'
+import { useAssetUrls } from './app/useAssetUrls'
+import { useProjectPlayback } from './app/useProjectPlayback'
+import { createThumbnailQueue } from './timeline/thumbnailQueue'
 
 type Notice = { tone: 'info' | 'error' | 'warning'; text: string } | null
 type SaveStatus = { kind: 'saved'; at: number } | { kind: 'saving' } | { kind: 'error'; message: string }
 /** Changes settle for this long before a named project is rewritten; a window blur flushes sooner. */
 const AUTOSAVE_DELAY_MS = 1000
-type WaveformState =
-  | { kind: 'idle' }
-  | { kind: 'loading'; requestId: string; percent: number | null }
-  | { kind: 'ready'; data: WaveformData; cache: 'hit' | 'generated' }
-  | { kind: 'error'; message: string }
-type CodecDiagnostics =
-  | { kind: 'unknown' }
-  | { kind: 'checking' }
-  | { kind: 'likely-unsupported' }
-  | { kind: 'confirmed-unsupported'; message: string }
-  | { kind: 'playable' }
 type ProxyState =
   | { kind: 'idle' }
   | { kind: 'checking-support' }
@@ -91,14 +89,20 @@ type ExportState =
   | { kind: 'ready' }
   | { kind: 'running'; requestId: string; job: JobSnapshot | null }
   | { kind: 'error'; message: string }
+/** What the embedded player made of one video file, per asset id. */
+type CodecIssue = { kind: 'likely-unsupported' } | { kind: 'confirmed-unsupported'; message: string }
 
 const initial = createProject()
+const EDIT_MODE_STORAGE_KEY = 'caption-studio.edit-mode'
+function storedEditMode(): EditMode {
+  try { return localStorage.getItem(EDIT_MODE_STORAGE_KEY) === 'ripple' ? 'ripple' : 'overwrite' } catch { return 'overwrite' }
+}
+/** A project with nothing on its timeline still shows a minute of ruler, like an empty editor. */
+const EMPTY_TIMELINE_US = 60 * US_PER_SECOND
+const newTrack = (kind: Track['kind']): Track => ({ id: crypto.randomUUID(), kind, name: '', muted: false, hidden: false, locked: false })
 
 export default function App() {
   const [history, setHistory] = useState(() => createHistory(initial))
-  // Runtime `media://` URLs of the project's video files, keyed by the file's fingerprint rather than
-  // its asset id, so undoing a relink or replace immediately points the player back at the right file.
-  const [videoUrls, setVideoUrls] = useState<Map<string, string>>(new Map())
   // Set by Save As / Open. Once known, every history change autosaves there (see the effect below `saveProjectAs`).
   const [projectPath, setProjectPath] = useState<string | null>(null)
   // A schema-migrated project is never rewritten silently: autosave waits for an explicit Save so the original file survives.
@@ -107,139 +111,105 @@ export default function App() {
   const lastSavedProject = useRef<CaptionProject | null>(null)
   // Writes to one file are serialized so a slow earlier write can never land after a newer one.
   const writeQueue = useRef(Promise.resolve())
-  // Asset state (V2): runtime `media://` URLs the renderer never persists, plus a per-asset issue
-  // badge for a missing/mismatched file, exactly parallel to the single source-media relink flow.
-  // What the `<video>` element measured, used only when the probe reported no duration.
-  const [measuredDurationUs, setMeasuredDurationUs] = useState<number | null>(null)
   const project = history.present
-  // Single-clip-era shim (docs/EDITING.md, ticket V7): the UI still plays one video and speaks kept
-  // `segments`; both are views over schema 4's video asset + clips until the timeline learns clips.
+  const media = useAssetUrls()
   const primary = useMemo(() => primaryVideoAsset(project), [project.assets, project.clips])
-  const segments = useMemo(() => legacySegmentsOf(project), [project.assets, project.clips])
-  const videoUrl = primary?.fingerprint ? videoUrls.get(primary.fingerprint.value) ?? null : null
-  const mediaDurationUs = primary?.metadata?.durationUs ?? measuredDurationUs
-  useEffect(() => setMeasuredDurationUs(null), [primary?.fingerprint?.value])
-  const [assetUrls, setAssetUrls] = useState<Map<string, string>>(new Map())
-  const [assetIssues, setAssetIssues] = useState<Map<string, 'missing' | 'mismatch'>>(new Map())
+  const assetById = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets])
   const [pendingAssetRelink, setPendingAssetRelink] = useState<{ asset: ProjectAsset; candidate: MediaCandidate } | null>(null)
-  // One draft overlay substituted into the visible list, shared by the timeline drag preview and
-  // the inspector's live rect/opacity draft — exactly `dragPreview`'s role for captions.
-  const [overlayDraft, setOverlayDraft] = useState<ImageOverlay | null>(null)
-  // Same draft/commit role as `overlayDraft`, for the SFX timeline drag preview and the
-  // inspector's live gain draft (V3).
-  const [sfxDraft, setSfxDraft] = useState<AudioClip | null>(null)
-  // Per-asset waveforms for the SFX track, keyed by asset id — separate from `waveform` (the
-  // source media's own), reusing the same `loadWaveform` IPC by the asset's own fingerprint.
-  const [assetWaveforms, setAssetWaveforms] = useState<Map<string, WaveformData>>(new Map())
-  // One selection for every kind of timeline item (schema 3 shares a single ID namespace).
-  // `selectedCueId` keeps every existing caption read site unchanged.
+  // One draft clip substituted into the visible list, for the inspector's and the stage editor's
+  // live rect/opacity/gain drafts — exactly `dragPreview`'s role for captions.
+  const [clipDraft, setClipDraft] = useState<Clip | null>(null)
+  // An Alt+drag clone on the stage, previewed on a transient track above everything until it commits.
+  const [cloneDraft, setCloneDraft] = useState<VisualClip | null>(null)
+  const [waveforms, setWaveforms] = useState<Map<string, WaveformData>>(new Map())
+  const [waveformsLoading, setWaveformsLoading] = useState(0)
+  // One selection for every kind of timeline item (one ID namespace). `selectedCueId` keeps every
+  // caption read site unchanged.
   const [selection, setSelection] = useState<Selection | null>(null)
   const selectedCueId = selection?.kind === 'cue' ? selection.id : null
   const setSelectedId = (id: string | null) => setSelection(id === null ? null : { kind: 'cue', id })
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null)
-  const [currentUs, setCurrentUs] = useState(0)
   const [dragPreview, setDragPreview] = useState<Cue | null>(null)
   const [focusCueId, setFocusCueId] = useState<string | null | undefined>(undefined)
   const [notice, setNotice] = useState<Notice>({ tone: 'info', text: 'Open a video to transcribe it, or import an SRT file.' })
-  const [waveform, setWaveform] = useState<WaveformState>({ kind: 'idle' })
-  const [codecDiagnostics, setCodecDiagnostics] = useState<CodecDiagnostics>({ kind: 'unknown' })
+  const [codecIssues, setCodecIssues] = useState<Map<string, CodecIssue>>(new Map())
   const [proxyState, setProxyState] = useState<ProxyState>({ kind: 'idle' })
   const [exportState, setExportState] = useState<ExportState>({ kind: 'idle' })
-  const cancelledWaveformRequest = useRef<string | null>(null)
-  const videoRef = useRef<HTMLVideoElement>(null)
   const addCueButtonRef = useRef<HTMLButtonElement>(null)
   const cueButtonRefs = useRef(new Map<string, HTMLElement>())
-  const [measuredAspect, setMeasuredAspect] = useState<number | null>(null)
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('edit')
   // The left rail's active panel. `initial` (module scope) never has media, so 'media' is always
   // the correct default at first mount, matching a fresh project with nothing to caption yet.
-  const [railTab, setRailTab] = useState<RailTab>(initial.clips.length ? 'captions' : 'media')
+  const [railTab, setRailTab] = useState<RailTab>('media')
   const [pendingSrt, setPendingSrt] = useState<{ name: string; parsed: ReturnType<typeof parseSrt> } | null>(null)
-  const [pendingReplaceSource, setPendingReplaceSource] = useState<{ media: ProjectMedia; url: string } | null>(null)
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null)
   const [silenceDialogOpen, setSilenceDialogOpen] = useState(false)
   const [geminiKey, setGeminiKey] = useState<AlignmentSettingsStatus | null>(null)
+  const [editMode, setEditModeState] = useState<EditMode>(storedEditMode)
+  const setEditMode = (mode: EditMode) => { setEditModeState(mode); try { localStorage.setItem(EDIT_MODE_STORAGE_KEY, mode) } catch { /* a convenience only */ } }
+  // The video transcription, alignment and silence removal work on: `null` follows the playhead.
+  const [pickedVideoId, setPickedVideoId] = useState<string | null>(null)
   useEffect(() => { void window.captionStudio?.alignmentSettingsStatus().then(setGeminiKey).catch(() => setGeminiKey({ configured: false, source: 'keychain' })) }, [])
-  // The only prior playback clock was <video onTimeUpdate>, which Chromium fires ~4x/second —
-  // far coarser than a word (150-400ms) or word-pop's own 200ms curve, which is why word-by-word
-  // motion looked broken: the highlight skipped words and pop was never sampled mid-animation.
-  // This clock ticks once per presented video frame; only the caption preview/playhead subscribe
-  // to it, so the rest of the app does not re-render at frame rate.
-  const clock = useMemo(() => createPlaybackClock(), [])
+  // Local agent control (docs/MCP.md): the top bar's "Agent connected" chip, driven live so a
+  // client connecting or disconnecting shows up without reopening Settings.
+  const [agentStatus, setAgentStatusState] = useState<McpStatus | null>(null)
   useEffect(() => {
-    const video = videoRef.current
-    if (!video || !videoUrl) return
-    clock.attach(video)
-    return () => clock.detach()
-  }, [videoUrl, clock])
-  // Sound effects (V3): scheduled against the same `<video>` element, independent of the frame
-  // clock above — see `docs/EDITING.md`'s "Preview compositing and playback".
-  const sfx = useMemo(() => createSfxScheduler({
-    createContext: () => new AudioContext(),
-    fetchArrayBuffer: (url) => fetch(url).then((response) => response.arrayBuffer()),
-    onIssue: (clipId, message) => setNotice({ tone: 'warning', text: `Sound effect could not be decoded: ${message}` }),
-  }), [])
-  useEffect(() => {
-    const video = videoRef.current
-    if (!video || !videoUrl) return
-    sfx.attach(video)
-    return () => sfx.detach()
-  }, [videoUrl, sfx])
+    void window.captionStudio?.agentStatus().then(setAgentStatusState).catch(() => {})
+    return window.captionStudio?.onAgentStatus(setAgentStatusState)
+  }, [])
+
+  // Sequence time: the output timeline the ruler, playhead, transport and scrubber all speak.
+  const clipsDurationUs = sequenceDurationUs(project.clips)
+  const hasVideo = project.clips.some((clip) => clip.kind === 'video')
+  // A project with no clips (SRT first) times its captions in sequence time directly.
+  const durationUs = clipsDurationUs || (hasVideo ? 0 : Math.max(EMPTY_TIMELINE_US, ...project.cues.map((cue) => cue.endUs)))
+  const playback = useProjectPlayback(project, durationUs, media.urlOf, {
+    onPlayError: (error, element) => {
+      // AbortError (play superseded by a pause/seek/load) is not an error; anything else is reported.
+      const text = describePlayFailure(error, element.error)
+      if (!text) return
+      console.error('video.play() rejected', error, { mediaError: element.error, readyState: element.readyState })
+      setNotice({ tone: 'error', text })
+    },
+    onMediaError: (assetId, element) => setCodecIssues((issues) => new Map(issues).set(assetId, { kind: 'confirmed-unsupported', message: describeMediaError(element.error) ?? 'The embedded player could not play this media.' })),
+    onMediaReady: (assetId) => setCodecIssues((issues) => { if (!issues.has(assetId)) return issues; const next = new Map(issues); next.delete(assetId); return next }),
+    onSoundIssue: (message) => setNotice({ tone: 'warning', text: `A sound could not be decoded: ${message}` }),
+  })
+  const { clock, currentUs } = playback
+  const thumbnailQueue = useMemo(() => window.captionStudio ? createThumbnailQueue(async (request) => {
+    const result = await window.captionStudio!.loadThumbnails({ requestId: crypto.randomUUID(), ...request })
+    return result.thumbnails
+  }) : null, [])
+
   const projectRef = useRef(project)
   projectRef.current = project
-  // Cut-skipping playback rides the same per-frame clock. It reads the live project on each frame,
-  // so undoing a cut takes effect immediately, and with no segments it never does anything at all.
-  const cutPlaybackRef = useRef<{ mediaDurationUs: number | null }>({ mediaDurationUs: null })
-  useEffect(() => {
-    const controller = createCutPlaybackController({
-      clock,
-      segments: () => legacySegmentsOf(projectRef.current),
-      mediaDurationUs: () => cutPlaybackRef.current.mediaDurationUs,
-      playing: () => videoRef.current ? !videoRef.current.paused : false,
-      seek: (sourceUs) => {
-        setCurrentUs(sourceUs)
-        clock.set(sourceUs)
-        if (videoRef.current) videoRef.current.currentTime = sourceUs / US_PER_SECOND
-      },
-      pause: () => videoRef.current?.pause(),
-    })
-    return controller.start()
-  }, [clock])
-  useEffect(() => setMeasuredAspect(null), [videoUrl])
-  // The same rotation rule main uses to build the export manifest (src/core/composition.ts).
-  const fallbackAspect = useMemo(() => displayAspect(primary?.metadata), [primary?.metadata])
-  const videoAspect = measuredAspect ?? fallbackAspect ?? 16 / 9
-  const captionComposition = useMemo(() => compositionFor(videoAspect), [videoAspect])
+  // Mirrors `projectRef`'s pattern for the same reason: the agent bridge (`useAgentBridge`) needs a
+  // selection value it can read synchronously right after setting it, which `useState` alone cannot
+  // give it within the same tick (a batched update is not visible until the next render).
+  const selectionRef = useRef(selection)
+  selectionRef.current = selection
+  // The output frame (`project.format`) fixes the caption composition, so captions never re-layout
+  // when the playhead crosses into a video of a different aspect.
+  const captionComposition = useMemo(() => compositionFor(formatAspect(project.format)), [project.format])
   const visibleCues = useMemo(() => dragPreview ? project.cues.map((cue) => cue.id === dragPreview.id ? dragPreview : cue) : project.cues, [project.cues, dragPreview])
   const selected = visibleCues.find((cue) => cue.id === selectedCueId) ?? null
-  // `overlayDraft.id` is absent from `project.overlays` while an Alt-drag clone is in progress
-  // (`beginCloneDraft`/`OverlayStageEditor`) — the ghost is appended rather than replacing anything,
-  // so it paints and hit-tests alongside the untouched original until the clone commits.
-  const visibleOverlays = useMemo(() => {
-    if (!overlayDraft) return project.overlays
-    return project.overlays.some((overlay) => overlay.id === overlayDraft.id)
-      ? project.overlays.map((overlay) => overlay.id === overlayDraft.id ? overlayDraft : overlay)
-      : [...project.overlays, overlayDraft]
-  }, [project.overlays, overlayDraft])
-  const overlayBase = selection?.kind === 'overlay' ? project.overlays.find((overlay) => overlay.id === selection.id) ?? null : null
-  const selectedOverlay = overlayBase && overlayDraft?.id === overlayBase.id ? overlayDraft : overlayBase
-  const visibleAudioClips = useMemo(() => {
-    if (!sfxDraft) return project.audioClips
-    return project.audioClips.some((clip) => clip.id === sfxDraft.id)
-      ? project.audioClips.map((clip) => clip.id === sfxDraft.id ? sfxDraft : clip)
-      : [...project.audioClips, sfxDraft]
-  }, [project.audioClips, sfxDraft])
-  const sfxBase = selection?.kind === 'audio' ? project.audioClips.find((clip) => clip.id === selection.id) ?? null : null
-  const selectedClip = sfxBase && sfxDraft?.id === sfxBase.id ? sfxDraft : sfxBase
-  const activeCue = dragPreview ?? visibleCues.find((cue) => currentUs >= cue.startUs && currentUs < cue.endUs)
+  const visibleClips = useMemo(() => {
+    let clips = clipDraft ? project.clips.map((clip) => clip.id === clipDraft.id ? clipDraft : clip) : project.clips
+    if (cloneDraft) clips = [...clips, { ...cloneDraft, trackId: CLONE_TRACK.id }]
+    return clips
+  }, [project.clips, clipDraft, cloneDraft])
+  const visibleTracks = useMemo(() => cloneDraft ? [...project.tracks, CLONE_TRACK] : project.tracks, [project.tracks, cloneDraft])
+  const clipBase = selection?.kind === 'clip' ? project.clips.find((clip) => clip.id === selection.id) ?? null : null
+  const selectedClip = clipBase && clipDraft?.id === clipBase.id ? clipDraft : clipBase
+  const captionVideo = useMemo(() => captionClips(project.tracks, project.clips), [project.tracks, project.clips])
+  const under = useMemo(() => videoUnderPlayhead(currentUs, project.tracks, project.clips), [currentUs, project.tracks, project.clips])
+  const underAsset = under ? assetById.get(under.clip.assetId) ?? null : null
+  const pickedVideo = (pickedVideoId ? assetById.get(pickedVideoId) : undefined) ?? underAsset ?? primary
+  const activeCue = activeCueAt(currentUs, project.tracks, project.clips, visibleCues)?.cue
   const timelineDisplay: CaptionDisplay = project.timelineDisplay ?? 'line'
   const captionDisplay: CaptionDisplay = project.captionDisplay ?? 'line'
-  // Derived, not cleared by an effect: an effect keyed on selection would race the click that sets
-  // both the selection and selectedWordId together. A stale selectedWordId simply stops matching once
-  // the selected cue's words change (e.g. after delete/undo/re-estimate) and disappears on its own.
-  // Transcript words remain actionable in either timeline display mode. Tying this lookup to the
-  // WORD timeline toggle made a click appear to do nothing in LINE mode and forced users back to
-  // the row's double-click editor just to reach the caption actions.
+  // Derived, not cleared by an effect: a stale selectedWordId simply stops matching once the
+  // selected cue's words change (e.g. after delete/undo/re-estimate) and disappears on its own.
   const selectedWord = selected?.words.find((word) => word.id === selectedWordId) ?? null
 
   // Style is project state so it saves/reopens and is undoable; a live draft feeds the preview
@@ -250,22 +220,13 @@ export default function App() {
   const captionInputs = useMemo(() => captionStyleInputs(effectiveStyle, captionComposition), [effectiveStyle, captionComposition])
   useEffect(() => setStyleDraft(null), [project.id])
 
-  // Source time: the real media length, used for clamping edits and every media-worker request.
-  const sourceDurationUs = mediaDurationUs ?? Math.max(...project.cues.map((cue) => cue.endUs), 60 * US_PER_SECOND)
-  // Sequence time: the output timeline the ruler, playhead, transport and scrubber all speak.
-  const durationUs = useMemo(() => sequenceDurationUs(segments, sourceDurationUs), [segments, sourceDurationUs])
-  const toSequence = (sourceUs: number) => sourceToSequence(sourceUs, segments, sourceDurationUs).sequenceUs
-  const toSource = (sequenceUs: number) => segments?.length ? sequenceToSource(sequenceUs, segments, sourceDurationUs) : sequenceUs
-  const currentSequenceUs = toSequence(currentUs)
-  cutPlaybackRef.current.mediaDurationUs = sourceDurationUs
-  // Every command and validation shares this: the primary video's duration may come from the element
-  // (probe reported none), and new unbound captions/items belong to the video being edited.
+  // Every command and validation shares this: new unbound captions belong to the video under the
+  // playhead, and a project with no video bounds its captions by the timeline shown.
   const commandContext = useMemo<CommandContext>(() => ({
-    mediaDurationUs,
-    assetDurationUs: (assetId) => assetId === primary?.id ? mediaDurationUs : undefined,
-    defaultAssetId: primary?.id ?? null,
+    mediaDurationUs: hasVideo ? null : durationUs,
+    defaultAssetId: under?.clip.assetId ?? null,
     compositionHeight: captionComposition.height,
-  }), [mediaDurationUs, primary?.id, captionComposition.height])
+  }), [hasVideo, durationUs, under?.clip.assetId, captionComposition.height])
   const validation = useMemo(() => {
     const captions = validateCaptions(visibleCues, commandContext)
     const items = validateItems(project, commandContext)
@@ -273,11 +234,11 @@ export default function App() {
   }, [visibleCues, project, commandContext])
   const warningCueIds = useMemo(() => new Set(validation.warnings.flatMap((warning) => warning.cueIds)), [validation.warnings])
 
-  // A project with clips needs every caption bound to a video; stamp any that a direct commit created
-  // (SRT import, transcription) with the video being edited. Commands do this themselves.
-  const bindToPrimary = (next: CaptionProject) => bindUnboundItems(next, primaryVideoAsset(next)?.id)
+  // A project with video needs every caption bound to one; stamp any that a direct commit created
+  // (SRT import) with the video under the playhead. Commands do this themselves.
+  const bindToVideo = (next: CaptionProject) => bindUnboundItems(next, videoUnderPlayhead(clock.getUs(), next.tracks, next.clips)?.clip.assetId ?? primaryVideoAsset(next)?.id)
   const commit = (update: (project: CaptionProject) => CaptionProject) => setHistory((state) => commitHistory(state, {
-    ...bindToPrimary(update(state.present)),
+    ...bindToVideo(update(state.present)),
     updatedAt: new Date().toISOString(),
   }))
 
@@ -289,23 +250,44 @@ export default function App() {
   })
 
   const errorText = (error: unknown) => error instanceof Error ? error.message : 'The operation failed.'
-  const migrationNote = (from: 1 | 2 | 3 | null) => from ? ` and migrated from schema ${from} — autosave starts once you save it in the current format (⌘/Ctrl+S)` : ''
+  /** A job's `diagnostic` carries the encoder's own stderr or a worker exit code. It used to be
+   * dropped here, leaving a one-line message that could not be acted on; a trimmed tail of it now
+   * reaches the notice, and the whole of it is in the export log. */
+  const exportErrorText = (error: JobStructuredError) => {
+    const diagnostic = error.diagnostic?.trim().split('\n').filter(Boolean).slice(-2).join(' ').slice(-300)
+    return diagnostic ? `${error.message} — ${diagnostic}` : error.message
+  }
+  const migrationNote = (from: 1 | 2 | 3 | 4 | null) => from ? ` and migrated from schema ${from} — autosave starts once you save it in the current format (⌘/Ctrl+S)` : ''
+  const describeMigration = (notes: MigrationNote[]) => {
+    if (!notes.length) return ''
+    const shown = notes.slice(0, 3).map((note) => note.message).join(' ')
+    return ` ${notes.length} item${notes.length === 1 ? '' : 's'} could not be carried over exactly: ${shown}${notes.length > 3 ? ` …and ${notes.length - 3} more.` : ''}`
+  }
+
+  // Codec diagnostics ask the real embedded player (`canPlayType`, then its actual `error` event)
+  // rather than a hardcoded matrix, per video file.
+  useEffect(() => {
+    const probe = document.createElement('video')
+    setCodecIssues((issues) => {
+      let next = issues
+      for (const asset of videoAssets(project)) {
+        if (!media.urlOf(asset) || next.has(asset.id)) continue
+        const hint = containerPlaybackHint(asset.name, (type) => probe.canPlayType(type))
+        if (hint.checked && hint.verdict === '') next = new Map(next).set(asset.id, { kind: 'likely-unsupported' })
+      }
+      return next
+    })
+  }, [project.assets, media.urlOf])
+  const issueAsset = (underAsset && codecIssues.has(underAsset.id) ? underAsset : null) ?? videoAssets(project).find((asset) => codecIssues.has(asset.id)) ?? null
+  const codecIssue = issueAsset ? codecIssues.get(issueAsset.id)! : null
 
   useEffect(() => {
-    setProxyState({ kind: 'idle' })
-    if (!videoUrl) { setCodecDiagnostics({ kind: 'unknown' }); return }
-    const hint = containerPlaybackHint(primary?.name ?? '', (type) => videoRef.current?.canPlayType(type) ?? '')
-    setCodecDiagnostics(hint.checked && hint.verdict === '' ? { kind: 'likely-unsupported' } : { kind: 'checking' })
-  }, [videoUrl, primary?.name])
-
-  useEffect(() => {
-    const needsProxyCheck = codecDiagnostics.kind === 'likely-unsupported' || codecDiagnostics.kind === 'confirmed-unsupported'
-    if (!needsProxyCheck || !window.captionStudio || proxyState.kind !== 'idle') return
+    if (!codecIssue || !window.captionStudio || proxyState.kind !== 'idle') return
     setProxyState({ kind: 'checking-support' })
     window.captionStudio.checkProxySupport()
       .then((support) => setProxyState(support.supported ? { kind: 'ready' } : { kind: 'unsupported', reason: support.reason ?? 'Local proxy conversion is unavailable.' }))
       .catch((error) => setProxyState({ kind: 'error', message: errorText(error) }))
-  }, [codecDiagnostics.kind, proxyState.kind])
+  }, [codecIssue?.kind, proxyState.kind])
 
   useEffect(() => window.captionStudio?.onProxyProgress((message) => {
     setProxyState((state) => {
@@ -316,14 +298,14 @@ export default function App() {
   }), [])
 
   const createProxy = async () => {
-    if (!window.captionStudio || !primary?.fingerprint) return
+    if (!window.captionStudio || !issueAsset?.fingerprint) return
     const requestId = crypto.randomUUID()
     setProxyState({ kind: 'creating', requestId, percent: null })
     try {
-      const result = await window.captionStudio.createProxy({ requestId, fingerprint: primary.fingerprint })
+      const result = await window.captionStudio.createProxy({ requestId, fingerprint: issueAsset.fingerprint })
       if (!result) { setProxyState({ kind: 'ready' }); return }
       setProxyState({ kind: 'done', path: result.path })
-      setNotice({ tone: 'info', text: `Created a playable local proxy at ${result.path}. Source media was not modified.` })
+      setNotice({ tone: 'info', text: `Created a playable local proxy of ${issueAsset.name} at ${result.path}. Source media was not modified.` })
     } catch (error) { setProxyState({ kind: 'error', message: errorText(error) }) }
   }
 
@@ -344,21 +326,37 @@ export default function App() {
       .catch((error) => setExportState({ kind: 'error', message: errorText(error) }))
   }, [exportState.kind])
 
+  // Which export request has actually reported progress, so a `null` outcome can be told apart
+  // from a dismissed save dialog: once a job has run, a result that names no outcome is a bug,
+  // not a dismissal, and must never return the UI to idle without saying anything.
+  const exportStartedRef = useRef<string | null>(null)
   useEffect(() => window.captionStudio?.onExportProgress((message) => {
+    exportStartedRef.current = message.requestId
     setExportState((state) => state.kind === 'running' && state.requestId === message.requestId ? { ...state, job: message.job } : state)
   }), [])
 
+  // Every file the export would read, and which of them are not playable this session.
+  const hidden = new Set(project.tracks.filter((track) => track.hidden).map((track) => track.id))
+  const exportAssets = [...new Set(project.clips.filter((clip) => !hidden.has(clip.trackId)).map((clip) => clip.assetId))].flatMap((id) => assetById.get(id) ?? [])
+  const offlineAssets = exportAssets.filter((asset) => !media.urlOf(asset))
+  const offlineVideos = videoAssets(project).filter((asset) => project.clips.some((clip) => clip.assetId === asset.id) && !media.urlOf(asset))
+
   const startExportVideo = async () => {
-    if (!window.captionStudio || !primary?.fingerprint) return
+    if (!window.captionStudio) return
     const requestId = crypto.randomUUID()
     setExportState({ kind: 'running', requestId, job: null })
     try {
-      const outcome = await window.captionStudio.startExport({ requestId, fingerprint: primary.fingerprint, project })
-      if (!outcome) { setExportState({ kind: 'ready' }); return } // the user dismissed the save dialog
+      const outcome = await window.captionStudio.startExport({ requestId, project })
       setExportState({ kind: 'ready' })
+      if (!outcome) {
+        // No outcome and no job: the user dismissed the save dialog, which needs no message.
+        if (exportStartedRef.current !== requestId) return
+        setNotice({ tone: 'error', text: 'The export stopped without reporting a result. Check the export log in the app data folder.' })
+        return
+      }
       if (outcome.state === 'succeeded') setNotice({ tone: 'info', text: `Exported video to ${outcome.path}. Source media was not modified.` })
       else if (outcome.state === 'cancelled') setNotice({ tone: 'info', text: 'Export cancelled.' })
-      else setNotice({ tone: 'error', text: outcome.error.message })
+      else setNotice({ tone: 'error', text: exportErrorText(outcome.error) })
     } catch (error) { setExportState({ kind: 'ready' }); setNotice({ tone: 'error', text: errorText(error) }) }
   }
 
@@ -367,111 +365,36 @@ export default function App() {
     void window.captionStudio.cancelExport(exportState.requestId)
   }
 
-  useEffect(() => window.captionStudio?.onWaveformProgress((message) => {
-    setWaveform((state) => {
-      if (state.kind !== 'loading' || state.requestId !== message.requestId) return state
-      if (message.progress.kind !== 'measured' || message.progress.phase !== 'waveform') return state
-      return { ...state, percent: Math.round(message.progress.completed / message.progress.total * 100) }
-    })
-  }), [])
-
-  useEffect(() => {
-    const api = window.captionStudio
-    const fingerprint = primary?.fingerprint
-    const duration = primary?.metadata?.durationUs ?? null
-    if (!api || !videoUrl || !fingerprint || !duration) {
-      setWaveform({ kind: 'idle' })
-      return
-    }
-    const requestId = crypto.randomUUID()
-    let disposed = false
-    cancelledWaveformRequest.current = null
-    setWaveform({ kind: 'loading', requestId, percent: null })
-    void api.loadWaveform({ requestId, fingerprint, range: { startUs: 0, endUs: duration }, maxPeaks: TIMELINE_WAVEFORM_PEAKS })
-      .then((result) => {
-        if (!disposed && cancelledWaveformRequest.current !== requestId) setWaveform({ kind: 'ready', data: result.waveform, cache: result.cache })
-      })
-      .catch((error) => {
-        if (disposed || cancelledWaveformRequest.current === requestId) return
-        const message = errorText(error)
-        setWaveform({ kind: 'error', message })
-        setNotice({ tone: 'warning', text: `Waveform unavailable: ${message}` })
-      })
-    return () => {
-      disposed = true
-      void api.cancelWaveform(requestId).catch(() => {})
-    }
-  }, [videoUrl, primary?.fingerprint?.value, primary?.metadata?.durationUs])
-
-  // Per-asset waveforms for the SFX track (V3), by the asset's own fingerprint — no new IPC beyond
-  // the source media's own `loadWaveform`. Requested once per asset id, not re-requested on every
-  // render; a failed request is retried the next time this effect runs (e.g. after a relink).
-  const loadedAssetWaveformsRef = useRef<Set<string>>(new Set())
+  // Waveforms: one extraction per file, cached in main by fingerprint and sliced per clip. Requested
+  // once per asset id; a failed request is retried the next time this runs (e.g. after a relink).
+  const loadedWaveformsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     const api = window.captionStudio
     if (!api) return
     for (const asset of project.assets) {
-      if (asset.kind !== 'audio' || !asset.fingerprint || !asset.metadata?.durationUs) continue
-      if (loadedAssetWaveformsRef.current.has(asset.id)) continue
-      loadedAssetWaveformsRef.current.add(asset.id)
+      if (asset.kind === 'image' || !asset.fingerprint || !asset.metadata?.durationUs || !media.urlOf(asset)) continue
+      if (loadedWaveformsRef.current.has(asset.id)) continue
+      loadedWaveformsRef.current.add(asset.id)
       const assetId = asset.id
+      setWaveformsLoading((count) => count + 1)
       void api.loadWaveform({ requestId: crypto.randomUUID(), fingerprint: asset.fingerprint, range: { startUs: 0, endUs: asset.metadata.durationUs }, maxPeaks: TIMELINE_WAVEFORM_PEAKS })
-        .then((result) => setAssetWaveforms((map) => new Map(map).set(assetId, result.waveform)))
-        .catch(() => { loadedAssetWaveformsRef.current.delete(assetId) })
+        .then((result) => setWaveforms((map) => new Map(map).set(assetId, result.waveform)))
+        .catch((error) => {
+          loadedWaveformsRef.current.delete(assetId)
+          setNotice({ tone: 'warning', text: `Waveform unavailable for ${asset.name}: ${errorText(error)}` })
+        })
+        .finally(() => setWaveformsLoading((count) => count - 1))
     }
-  }, [project.assets])
-
-  // Hands the scheduler resolved clip specs whenever what it needs to know changes: which clips
-  // exist (including the live drag/gain draft), which assets they resolve to, and how cuts remap
-  // their anchors. A clip with no known URL yet (asset not resolved this session) is silently
-  // omitted from preview — the same "missing" state the inspector's badge and export both surface.
-  useEffect(() => {
-    const specs: SfxClipSpec[] = visibleAudioClips.flatMap((clip) => {
-      const url = assetUrls.get(clip.assetId)
-      if (!url) return []
-      const asset = project.assets.find((candidate) => candidate.id === clip.assetId) ?? null
-      return [{ id: clip.id, url, atUs: clip.atUs, inPointUs: clip.inPointUs, durationUs: clipDurationUs(clip, asset), gain: clip.gain }]
-    })
-    sfx.setClips(specs, segments, sourceDurationUs)
-  }, [visibleAudioClips, project.assets, assetUrls, segments, sourceDurationUs, sfx])
-
-  /** Remembers where a probed video file can be played from. */
-  const registerVideoUrl = (media: ProjectMedia, url: string) => {
-    const key = media.fingerprint?.value
-    if (key) setVideoUrls((urls) => new Map(urls).set(key, url))
-  }
+  }, [project.assets, media.urlOf])
 
   /** Registers a relinked asset's runtime URL and rewrites its stored media fields in one undo step
    * (an initial open patches the project directly — see `openProject` — since there is nothing yet
-   * to undo back to). A video's URL is keyed by fingerprint, so undoing this restores the old player. */
+   * to undo back to). A video's URL is keyed by fingerprint, so undoing this restores the old file. */
   const useAssetCandidate = (asset: ProjectAsset, candidate: MediaCandidate) => {
-    if (asset.kind === 'video') { registerVideoUrl(candidate.media, candidate.url); setCurrentUs(0) }
-    else setAssetUrls((urls) => new Map(urls).set(asset.id, candidate.url))
-    setAssetIssues((issues) => { if (!issues.has(asset.id)) return issues; const next = new Map(issues); next.delete(asset.id); return next })
+    media.register({ id: asset.id, kind: asset.kind, fingerprint: candidate.media.fingerprint }, candidate.url)
+    media.clearIssue(asset.id)
+    setCodecIssues((issues) => { if (!issues.has(asset.id)) return issues; const next = new Map(issues); next.delete(asset.id); return next })
     runCommand({ type: 'asset-update', assetId: asset.id, changes: candidate.media })
-  }
-
-  /**
-   * Opens a probed video file. With no video yet it becomes the first clip — one undoable step that
-   * also binds any captions imported before it. With a video already open it replaces that video's
-   * file under the same asset id, so captions and items keep their timing (the same undoable
-   * `asset-update` a relink uses); inserting a further clip arrives with the multi-clip timeline.
-   */
-  const openVideoMedia = (media: ProjectMedia, url: string, retitle = false): boolean => {
-    if (primary) {
-      useAssetCandidate(primary, { path: media.reference.absolutePath ?? '', url, media, mismatches: [] })
-    } else {
-      const durationUs = media.metadata?.durationUs ?? null
-      if (durationUs === null) { setNotice({ tone: 'error', text: `${media.name}’s duration could not be read, so it cannot be opened as a video.` }); return false }
-      const asset: ProjectAsset = { id: crypto.randomUUID(), kind: 'video', ...media }
-      if (!runCommand({ type: 'clip-add', clip: { id: crypto.randomUUID(), assetId: asset.id, startUs: 0, endUs: durationUs }, asset })) return false
-      registerVideoUrl(media, url)
-      setSelection(null)
-      setCurrentUs(0)
-    }
-    setWaveform({ kind: 'idle' })
-    if (retitle) retitleProject(media.name.replace(/\.[^.]+$/, ''))
-    return true
   }
 
   useEffect(() => {
@@ -481,15 +404,16 @@ export default function App() {
     setFocusCueId(undefined)
   }, [focusCueId, project.cues])
 
-  // `describe` overrides the default notice for commands (like set-display) whose outcome the
-  // caller can explain more usefully than the generic overlap warning.
+  // `describe` overrides the default notice for commands whose outcome the caller can explain more
+  // usefully than the generic overlap warning.
   const runCommand = (command: EditCommand, describe?: (warnings: ValidationIssue[]) => Notice) => {
-    const result = applyEditCommand(project, command, commandContext)
+    const result = applyEditCommand(projectRef.current, command, commandContext)
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.errors.map((issue) => issue.message).join(' ') })
       return false
     }
-    if (result.project === project) return true
+    if (result.project === projectRef.current) return true
+    projectRef.current = result.project
     setHistory((state) => commitHistory(state, { ...result.project, updatedAt: new Date().toISOString() }))
     if (result.selection !== undefined) setSelection(result.selection)
     else if (result.selectedId !== undefined) setSelectedId(result.selectedId)
@@ -498,12 +422,48 @@ export default function App() {
     return true
   }
 
+  const projectWarnings = (value: CaptionProject) => [...validateCaptions(value.cues, commandContext).warnings, ...validateItems(value, commandContext).warnings]
+  const summarizeAgentState = (value: CaptionProject, selectionValue: Selection | null): ProjectSummary =>
+    summarizeProject(value, projectPath, clock.getUs(), selectionValue, projectWarnings(value))
+
+  /** The MCP agent's batch entry point (`useAgentBridge`): every command in the array applies
+   * against the same working project and commits as **one** undo step, exactly like one
+   * `runCommand` call — mirroring its selection handling but without the toast, since the agent
+   * (not the mouse) is the caller. Nothing commits if any command fails; the failing index and its
+   * errors are returned so the caller knows exactly which command to fix and retry. */
+  const runCommands = (commands: EditCommand[]): { outcomes: CommandOutcome[]; failedIndex: number | null; state: ProjectSummary } => {
+    let working = projectRef.current
+    let nextSelection = selectionRef.current
+    let failedIndex: number | null = null
+    const outcomes: CommandOutcome[] = []
+    for (const [index, command] of commands.entries()) {
+      const result = applyEditCommand(working, command, commandContext)
+      if (!result.ok) {
+        outcomes.push({ ok: false, errors: result.errors, warnings: result.warnings })
+        failedIndex = index
+        break
+      }
+      outcomes.push({ ok: true, warnings: result.warnings })
+      working = result.project
+      if (result.selection !== undefined) nextSelection = result.selection
+      else if (result.selectedId !== undefined) nextSelection = result.selectedId === null ? null : { kind: 'cue', id: result.selectedId }
+    }
+    if (failedIndex === null && working !== projectRef.current) {
+      projectRef.current = working
+      selectionRef.current = nextSelection
+      setHistory((state) => commitHistory(state, { ...working, updatedAt: new Date().toISOString() }))
+      setSelection(nextSelection)
+      setNotice({ tone: 'info', text: `Agent applied ${commands.length} edit${commands.length === 1 ? '' : 's'}.` })
+    }
+    return { outcomes, failedIndex, state: summarizeAgentState(working, nextSelection) }
+  }
+
   // One undoable history step; human-authored captions are only replaced by an explicit choice (applyTranscription).
   const applyTranscript: ApplyTranscript = (result, choice) => {
     try {
-      const { run, transcript, translation } = result
-      const applied = applyTranscription(projectRef.current, transcript, run, choice, () => crypto.randomUUID(), translation)
-      setHistory((state) => commitHistory(state, { ...bindToPrimary(applied.project), updatedAt: new Date().toISOString() }))
+      const { run, transcript, translation, assetId } = result
+      const applied = applyTranscription(projectRef.current, transcript, run, choice, () => crypto.randomUUID(), translation, assetId)
+      setHistory((state) => commitHistory(state, { ...applied.project, updatedAt: new Date().toISOString() }))
       setSelectedId(applied.project.cues.find((cue) => cue.transcriptionRunId === run.id)?.id ?? selectedCueId)
       const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
       const parts = [transcript.segments.length ? `added ${plural(applied.summary.added, 'caption')}` : 'no speech was recognized, so no captions were added']
@@ -512,15 +472,16 @@ export default function App() {
       if (run.adjustedSegmentCount) parts.push(`${plural(run.adjustedSegmentCount, 'caption')} with adjusted timing marked Needs review`)
       if (translation) parts.push(`translated to ${translationTargetLabel(translation.targetLanguage)} (${translation.model}), word timing estimated and marked Needs review`)
       const language = run.language ? `, language ${run.language}` : ''
+      const name = assetById.get(assetId)?.name
       const how = 'provider' in run
-        ? `Transcribed with Gemini (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
-        : `Transcribed locally (${run.engine.id} ${run.engine.version}, ${run.model.fileName}, ${run.backends.join(' + ') || 'recognizer not run'}${language})`
+        ? `Transcribed${name ? ` ${name}` : ''} with Gemini (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
+        : `Transcribed${name ? ` ${name}` : ''} locally (${run.engine.id} ${run.engine.version}, ${run.model.fileName}, ${run.backends.join(' + ') || 'recognizer not run'}${language})`
       setNotice({ tone: applied.summary.skippedOverlapping || run.adjustedSegmentCount || translation ? 'warning' : 'info', text: `${how}: ${parts.join('; ')}.` })
       return { ok: true }
     } catch (error) { return { ok: false, message: errorText(error) } }
   }
 
-  const applyAlignedTiming = (transcript: Parameters<typeof applyAlignment>[1], run: Parameters<typeof applyAlignment>[2], snapshot: { id: string; startUs: number; endUs: number; text: string }[]) => {
+  const applyAlignedTiming = (transcript: Parameters<typeof applyAlignment>[1], run: Parameters<typeof applyAlignment>[2], snapshot: { id: string; startUs: number; endUs: number; text: string }[], assetId: string) => {
     try {
       const current = projectRef.current
       const unchanged = new Set(snapshot.filter((before) => {
@@ -531,12 +492,53 @@ export default function App() {
       if (!filtered.segments.length) return setNotice({ tone: 'warning', text: 'Captions changed while alignment was running, so no timing was applied.' })
       const appliedSnapshots = snapshot.filter((segment) => unchanged.has(segment.id))
       const sourceRange = { startUs: Math.min(...appliedSnapshots.map((segment) => segment.startUs)), endUs: Math.max(...appliedSnapshots.map((segment) => segment.endUs)) }
-      const aligned = applyAlignment(current, filtered, { ...run, sourceRange, segmentCount: filtered.segments.length }, () => crypto.randomUUID())
+      const aligned = applyAlignment(current, filtered, { ...run, mediaAssetId: assetId, sourceRange, segmentCount: filtered.segments.length }, () => crypto.randomUUID())
       setHistory((state) => commitHistory(state, aligned))
       const appliedRun = aligned.alignmentRuns?.at(-1)
       const skipped = transcript.segments.length - filtered.segments.length
       setNotice({ tone: appliedRun?.estimatedWordCount || skipped ? 'warning' : 'info', text: `Audio aligned: ${appliedRun?.alignedWordCount ?? 0} words matched${appliedRun?.estimatedWordCount ? `; ${appliedRun.estimatedWordCount} remain estimated` : ''}${skipped ? `; ${skipped} changed caption${skipped === 1 ? '' : 's'} skipped` : ''}.` })
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
+  }
+
+  /** Where a clip of `kind` can go at `range`: a free track (preferring `preferTrackId`), or a new
+   * track created in the same undo step. */
+  const placementTrack = (kind: Clip['kind'], range: { startUs: number; endUs: number }, preferTrackId?: string | null) => {
+    const current = projectRef.current
+    const existing = freeTrackFor(current.tracks, current.clips, kind, range, preferTrackId)
+    return existing ? { trackId: existing, track: undefined } : (() => { const track = newTrack(kind === 'audio' ? 'audio' : 'video'); return { trackId: track.id, track } })()
+  }
+
+  /**
+   * A video goes onto the timeline — never replacing what is there. With no video yet it starts V1
+   * at 0 (one undoable step that also binds captions imported before it and sets the output
+   * format); otherwise it is appended to the end of V1.
+   */
+  const addVideoClip = (asset: ProjectAsset, mediaAsset?: ProjectAsset, at?: { startUs: number; trackId: string | null }) => {
+    const current = projectRef.current
+    const durationUs = asset.metadata?.durationUs ?? null
+    if (durationUs === null) { setNotice({ tone: 'error', text: `${asset.name}’s duration could not be read, so it cannot be placed on the timeline.` }); return false }
+    const v1 = current.tracks.find((track) => track.kind === 'video' && !track.locked)
+    const track = at?.trackId ? undefined : v1 ? undefined : newTrack('video')
+    const trackId = at?.trackId ?? v1?.id ?? track!.id
+    const startUs = at?.startUs ?? trackEndUs(current.clips, trackId)
+    const clip: Clip = { kind: 'video', id: crypto.randomUUID(), trackId, assetId: asset.id, timelineStartUs: startUs, sourceStartUs: 0, sourceEndUs: durationUs, opacity: 1, fit: 'contain', gain: 1 }
+    const first = !current.clips.some((candidate) => candidate.kind === 'video')
+    if (!runCommand({ type: 'clip-add', clip, asset: mediaAsset, track, mode: at ? editMode : 'overwrite', idPrefix: crypto.randomUUID() })) return false
+    // The first video starts a captioning session: nothing selected, playhead at the start.
+    if (first) { playback.seek(0); setSelection(null) }
+    else if (!at) setNotice({ tone: 'info', text: `Added ${asset.name} to the end of ${trackLabel(current.tracks.find((entry) => entry.id === trackId) ?? track!, current.tracks)}.` })
+    return true
+  }
+
+  const openVideoMedia = (probed: ProjectMedia, url: string, retitle = false): boolean => {
+    const current = projectRef.current
+    const existing = findAssetByFingerprint(current.assets.filter((asset) => asset.kind === 'video'), probed)
+    const asset: ProjectAsset = existing ?? { id: crypto.randomUUID(), kind: 'video', ...probed }
+    media.register({ id: asset.id, kind: 'video', fingerprint: probed.fingerprint }, url)
+    const first = !current.clips.some((clip) => clip.kind === 'video')
+    if (!addVideoClip(asset, existing ? undefined : asset)) return false
+    if (retitle && first) retitleProject(probed.name.replace(/\.[^.]+$/, ''))
+    return true
   }
 
   const openVideo = async () => {
@@ -547,7 +549,8 @@ export default function App() {
       if (!result) return setNotice(null)
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       const { candidate } = result
-      if (openVideoMedia(candidate.media, candidate.url, true)) setNotice({ tone: 'info', text: `Opened ${candidate.media.name}; metadata and fingerprint stored locally.` })
+      const first = !projectRef.current.clips.some((clip) => clip.kind === 'video')
+      if (openVideoMedia(candidate.media, candidate.url, true) && first) setNotice({ tone: 'info', text: `Opened ${candidate.media.name}; metadata and fingerprint stored locally.` })
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
 
@@ -573,39 +576,55 @@ export default function App() {
     importSrtContent(file.path.split(/[\\/]/).pop() ?? file.path, file.content)
   }
 
-  const overlayAtSequence = (assetId: string, metadata: MediaMetadata | null, sequenceUs: number): ImageOverlay => ({
-    id: crypto.randomUUID(), ...defaultOverlayRange(toSource(sequenceUs), mediaDurationUs),
-    assetId, rect: defaultOverlayRect(metadata, captionComposition), opacity: 1, fit: 'contain',
-  })
+  /** A new image clip: three seconds at `startUs`, sized like a title, on a track above the video. */
+  const addImageClip = (asset: ProjectAsset, metadata: MediaMetadata | null, startUs: number, preferTrackId?: string | null, inlineAsset?: ProjectAsset) => {
+    const range = { startUs: Math.max(0, Math.round(startUs)), endUs: Math.max(0, Math.round(startUs)) + DEFAULT_IMAGE_CLIP_US }
+    const { trackId, track } = placementTrack('image', range, preferTrackId)
+    const clip: Clip = { kind: 'image', id: crypto.randomUUID(), trackId, assetId: asset.id, timelineStartUs: range.startUs, sourceStartUs: 0, sourceEndUs: DEFAULT_IMAGE_CLIP_US,
+      rect: defaultOverlayRect(metadata, captionComposition), opacity: 1, fit: 'contain' }
+    return runCommand({ type: 'clip-add', clip, asset: inlineAsset, track, idPrefix: crypto.randomUUID() })
+  }
 
-  /** Imports/places every file the media bin, an OS drop, or the stage resolved. `placement` is the
-   * sequence-time drop point; only an image is placed there (as an overlay) — audio placement isn't
-   * offered yet (ticket V3) and video always goes through the replace-source confirmation instead. */
-  const addAssetsFromInspected = (results: InspectedFile[], placement?: { sequenceUs: number }) => {
+  /** A new audio clip: the whole file at `startUs`, on a free audio track. */
+  const addAudioClip = (asset: ProjectAsset, startUs: number, preferTrackId?: string | null, inlineAsset?: ProjectAsset) => {
+    const lengthUs = asset.metadata?.durationUs ?? null
+    if (lengthUs === null) { setNotice({ tone: 'error', text: `${asset.name}’s duration could not be read, so it cannot be placed on the timeline.` }); return false }
+    const range = { startUs: Math.max(0, Math.round(startUs)), endUs: Math.max(0, Math.round(startUs)) + lengthUs }
+    const { trackId, track } = placementTrack('audio', range, preferTrackId)
+    const clip: Clip = { kind: 'audio', id: crypto.randomUUID(), trackId, assetId: asset.id, timelineStartUs: range.startUs, sourceStartUs: 0, sourceEndUs: lengthUs, gain: 1 }
+    return runCommand({ type: 'clip-add', clip, asset: inlineAsset, track, idPrefix: crypto.randomUUID() })
+  }
+
+  /** Imports/places every file the media bin, an OS drop, or the stage resolved. With a `placement`
+   * each lands on the timeline there; without one images and sounds just join the bin, and videos
+   * are appended to V1. */
+  const addAssetsFromInspected = (results: InspectedFile[], placement?: { sequenceUs: number; trackId: string | null; appendVideos?: boolean }) => {
     const fragments: string[] = []
     let tone: 'info' | 'warning' | 'error' = 'info'
     for (const result of results) {
       if (!result.ok) { fragments.push(result.message); tone = 'error'; continue }
       if (result.kind === 'subtitle') { importSrtContent(result.name, result.content); continue }
       if (result.kind === 'video') {
-        if (primary) setPendingReplaceSource({ media: result.media, url: result.url })
-        else if (openVideoMedia(result.media, result.url)) fragments.push(`opened ${result.media.name}`)
+        const current = projectRef.current
+        const existing = findAssetByFingerprint(current.assets.filter((asset) => asset.kind === 'video'), result.media)
+        const asset: ProjectAsset = existing ?? { id: crypto.randomUUID(), kind: 'video', ...result.media }
+        media.register({ id: asset.id, kind: 'video', fingerprint: result.media.fingerprint }, result.url)
+        const plan = placement && !placement.appendVideos ? dropPlanForAsset({ kind: 'video', durationUs: asset.metadata?.durationUs ?? null }, placement.sequenceUs, current.tracks, current.clips, placement.trackId) : null
+        const ok = plan?.kind === 'clip'
+          ? addVideoClip(asset, existing ? undefined : asset, { startUs: plan.placement.startUs, trackId: plan.placement.trackId })
+          : addVideoClip(asset, existing ? undefined : asset)
+        if (ok) fragments.push(`added ${result.media.name}`)
         continue
       }
       const existing = findAssetByFingerprint(project.assets, result.media)
-      if (existing) {
-        setAssetUrls((urls) => new Map(urls).set(existing.id, result.url))
-        if (placement && result.kind === 'image') runCommand({ type: 'overlay-add', overlay: overlayAtSequence(existing.id, existing.metadata, placement.sequenceUs) })
-        else fragments.push(`${result.media.name} is already in the project`)
-        continue
-      }
-      const asset: ProjectAsset = { id: crypto.randomUUID(), kind: result.kind, ...result.media }
-      const ok = placement && result.kind === 'image'
-        ? runCommand({ type: 'overlay-add', overlay: overlayAtSequence(asset.id, result.media.metadata, placement.sequenceUs), asset })
-        : runCommand({ type: 'asset-add', asset })
+      const asset: ProjectAsset = existing ?? { id: crypto.randomUUID(), kind: result.kind, ...result.media }
+      media.register({ id: asset.id, kind: asset.kind, fingerprint: result.media.fingerprint }, result.url)
+      const inline = existing ? undefined : asset
+      const ok = placement
+        ? result.kind === 'image' ? addImageClip(asset, result.media.metadata, placement.sequenceUs, placement.trackId, inline) : addAudioClip(asset, placement.sequenceUs, placement.trackId, inline)
+        : existing ? true : runCommand({ type: 'asset-add', asset })
       if (!ok) continue
-      setAssetUrls((urls) => new Map(urls).set(asset.id, result.url))
-      fragments.push(`added ${result.media.name}`)
+      fragments.push(existing && !placement ? `${result.media.name} is already in the project` : `added ${result.media.name}`)
     }
     if (fragments.length) setNotice({ tone, text: `${fragments.join('; ')}.` })
   }
@@ -616,44 +635,37 @@ export default function App() {
     if (results) addAssetsFromInspected(results)
   }
 
-  const inspectAndAdd = (files: File[], placement?: { sequenceUs: number }) => {
+  const inspectAndAdd = (files: File[], placement?: { sequenceUs: number; trackId: string | null; appendVideos?: boolean }) => {
     if (!window.captionStudio || !files.length) return
     void window.captionStudio.inspectDroppedFiles(files).then((results) => addAssetsFromInspected(results, placement))
   }
 
-  const onTimelineDropAsset = (payload: AssetDragPayload, sequenceUs: number) => {
-    const plan = dropPlanForAsset(payload.kind, sequenceUs, toSource, mediaDurationUs)
-    if (plan.kind === 'refused') { setNotice({ tone: 'warning', text: plan.reason }); return }
-    if (plan.kind === 'replace-source') { setNotice({ tone: 'info', text: 'This is already the open video.' }); return }
+  const onTimelineDropAsset = (payload: AssetDragPayload, sequenceUs: number, trackId: string | null) => {
     const asset = project.assets.find((candidate) => candidate.id === payload.assetId)
     if (!asset) return
-    runCommand({ type: 'overlay-add', overlay: overlayAtSequence(asset.id, asset.metadata, sequenceUs) })
+    const plan = dropPlanForAsset({ kind: asset.kind, durationUs: asset.metadata?.durationUs ?? null }, sequenceUs, project.tracks, project.clips, trackId)
+    if (plan.kind === 'refused') { setNotice({ tone: 'warning', text: plan.reason }); return }
+    if (asset.kind === 'video') addVideoClip(asset, undefined, { startUs: plan.placement.startUs, trackId: plan.placement.trackId })
+    else if (asset.kind === 'image') addImageClip(asset, asset.metadata, plan.placement.startUs, plan.placement.trackId)
+    else addAudioClip(asset, plan.placement.startUs, plan.placement.trackId)
   }
-  const onTimelineDropFiles = (files: File[], sequenceUs: number) => inspectAndAdd(files, { sequenceUs })
+  const onTimelineDropFiles = (files: File[], sequenceUs: number, trackId: string | null) => inspectAndAdd(files, { sequenceUs, trackId })
 
-  const addOverlayAtPlayhead = (asset: ProjectAsset) => {
-    if (runCommand({ type: 'overlay-add', overlay: { id: crypto.randomUUID(), ...defaultOverlayRange(currentUs, mediaDurationUs), assetId: asset.id, rect: defaultOverlayRect(asset.metadata, captionComposition), opacity: 1, fit: 'contain' } })) setInspectorTab('edit')
-  }
-  const addSfxAtPlayhead = (asset: ProjectAsset) => {
-    if (runCommand({ type: 'audio-add', clip: defaultClipAt(crypto.randomUUID(), asset.id, currentUs) })) setInspectorTab('edit')
-  }
+  const addOverlayAtPlayhead = (asset: ProjectAsset) => { if (addImageClip(asset, asset.metadata, currentUs)) setInspectorTab('edit') }
+  const addSfxAtPlayhead = (asset: ProjectAsset) => { if (addAudioClip(asset, currentUs)) setInspectorTab('edit') }
 
-  const overlayCountByAsset = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const overlay of project.overlays) map.set(overlay.assetId, (map.get(overlay.assetId) ?? 0) + 1)
-    return map
-  }, [project.overlays])
-  const audioCountByAsset = useMemo(() => {
-    const map = new Map<string, number>()
-    for (const clip of project.audioClips) map.set(clip.assetId, (map.get(clip.assetId) ?? 0) + 1)
-    return map
-  }, [project.audioClips])
+  const useCountByAsset = useMemo(() => {
+    const counts = clipCountByAsset(project.clips)
+    for (const cue of project.cues) if (cue.mediaAssetId) counts.set(cue.mediaAssetId, (counts.get(cue.mediaAssetId) ?? 0) + 1)
+    return counts
+  }, [project.clips, project.cues])
 
-  /** Removing an asset never drops its cached runtime URL — Undo must restore a working overlay/clip
+  /** Removing an asset never drops its cached runtime URL — Undo must restore a working clip
    * immediately, without asking the user to relink a file that never actually left the project. */
   const removeAsset = (assetId: string) => {
+    if (assetUsers(project, assetId).length) return
     if (!runCommand({ type: 'asset-remove', assetId })) return
-    setAssetIssues((issues) => { if (!issues.has(assetId)) return issues; const next = new Map(issues); next.delete(assetId); return next })
+    media.clearIssue(assetId)
   }
 
   // Dialog-free write to the named project. The queue keeps writes ordered; `force` is for explicit ⌘S so it
@@ -715,19 +727,23 @@ export default function App() {
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       const opened = projectSchema.parse(result.project)
       setHistory(createHistory(opened))
+      projectRef.current = opened
       lastSavedProject.current = opened
       setProjectPath(result.path)
       setMigrationPending(result.migratedFrom !== null)
       setSaveStatus({ kind: 'saved', at: Date.now() })
       setSelectedId(opened.cues[0]?.id ?? null)
-      setMeasuredDurationUs(null)
-      setCurrentUs(0)
-      setWaveform({ kind: 'idle' })
-      setOverlayDraft(null)
+      playback.pause()
+      playback.seek(0)
+      setWaveforms(new Map())
+      loadedWaveformsRef.current = new Set()
+      setCodecIssues(new Map())
+      setClipDraft(null)
       setPendingAssetRelink(null)
-      // Every asset — the video included — resolves the same way. A resolved file gets its runtime URL; a
-      // missing or mismatched one only gets an issue badge, and a mismatched *video* opens the review
-      // dialog straight away (exactly like an explicit Relink…) because nothing plays without it.
+      setPickedVideoId(null)
+      // Every asset — every video included — resolves the same way. A resolved file gets its runtime
+      // URL; a missing or mismatched one only gets an issue badge, and a mismatched video the timeline
+      // plays opens the review dialog straight away (exactly like an explicit Relink…).
       const urls = new Map<string, string>()
       const videos = new Map<string, string>()
       const issues = new Map<string, 'missing' | 'mismatch'>()
@@ -740,23 +756,19 @@ export default function App() {
         } else if (entry.resolution.kind === 'missing') issues.set(entry.id, 'missing')
         else if (entry.resolution.kind === 'mismatch') issues.set(entry.id, 'mismatch')
       }
-      setVideoUrls(videos)
-      setAssetUrls(urls)
-      setAssetIssues(issues)
-      const opening = primaryVideoAsset(opened)
-      const openingResolution = opening ? result.assets.find((entry) => entry.id === opening.id)?.resolution : undefined
-      if (openingResolution?.kind === 'resolved') {
-        setNotice({ tone: 'info', text: `Project loaded${migrationNote(result.migratedFrom)}; media fingerprint verified.` })
-      } else if (opening && openingResolution?.kind === 'mismatch') {
-        setPendingAssetRelink({ asset: opening, candidate: openingResolution.candidate })
-        setNotice({ tone: 'warning', text: 'The media at the stored path does not match this project. Review the differences before using it.' })
-      } else if (opening && openingResolution?.kind === 'missing') {
-        setNotice({ tone: 'warning', text: `Project loaded, but ${opening.name} is missing. Choose Relink media to locate it.` })
-      } else setNotice({ tone: 'info', text: `Project loaded${migrationNote(result.migratedFrom)}.` })
+      media.reset(videos, urls, issues)
+      const migration = describeMigration(result.migrationNotes)
+      const onTimeline = new Set(opened.clips.map((clip) => clip.assetId))
+      const mismatched = result.assets.find((entry) => entry.resolution.kind === 'mismatch' && onTimeline.has(entry.id))
+      const missing = opened.assets.filter((asset) => onTimeline.has(asset.id) && issues.get(asset.id) === 'missing')
+      if (mismatched && mismatched.resolution.kind === 'mismatch') {
+        setPendingAssetRelink({ asset: opened.assets.find((asset) => asset.id === mismatched.id)!, candidate: mismatched.resolution.candidate })
+        setNotice({ tone: 'warning', text: `A file on the timeline does not match this project. Review the differences before using it.${migration}` })
+      } else if (missing.length) {
+        setNotice({ tone: 'warning', text: `Project loaded${migrationNote(result.migratedFrom)}, but ${missing.map((asset) => asset.name).join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. Relink from the media bin.${migration}` })
+      } else setNotice({ tone: result.migrationNotes.length ? 'warning' : 'info', text: `Project loaded${migrationNote(result.migratedFrom)}${opened.assets.length ? '; media fingerprints verified' : ''}.${migration}` })
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
-
-  const relinkMedia = () => primary ? relinkAsset(primary.id) : Promise.resolve()
 
   const importImageOverlay = async () => {
     if (!window.captionStudio) return
@@ -765,12 +777,8 @@ export default function App() {
       if (!result) return
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       const asset: ProjectAsset = { id: crypto.randomUUID(), kind: 'image', ...result.media }
-      const overlay: ImageOverlay = {
-        id: crypto.randomUUID(), ...defaultOverlayRange(currentUs, mediaDurationUs),
-        assetId: asset.id, rect: defaultOverlayRect(result.media.metadata, captionComposition), opacity: 1, fit: 'contain',
-      }
-      if (!runCommand({ type: 'overlay-add', overlay, asset })) return
-      setAssetUrls((urls) => new Map(urls).set(asset.id, result.url))
+      media.register(asset, result.url)
+      if (!addImageClip(asset, result.media.metadata, currentUs, null, asset)) return
       setInspectorTab('edit')
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
@@ -785,157 +793,109 @@ export default function App() {
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       if (result.candidate.mismatches.length) {
         setPendingAssetRelink({ asset, candidate: result.candidate })
-        setNotice({ tone: 'warning', text: 'The replacement differs from the stored asset. Review the details below.' })
+        setNotice({ tone: 'warning', text: 'The replacement differs from the stored file. Review the details below.' })
       } else {
         useAssetCandidate(asset, result.candidate)
         setNotice({ tone: 'info', text: `Relinked ${result.candidate.media.name}; fingerprint verified.` })
       }
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
+  const relinkOffline = () => { const first = offlineVideos[0] ?? offlineAssets[0]; if (first) void relinkAsset(first.id) }
 
-  const deleteSelectedOverlay = () => {
-    if (!overlayBase) return
-    runCommand({ type: 'item-delete', kind: 'overlay', id: overlayBase.id })
+  // ---- Clips ----------------------------------------------------------------------------------
+  const draftClip = (changes: Partial<{ rect: CompositionRect; opacity: number; gain: number }>) => {
+    if (!clipBase) return
+    setClipDraft({ ...(clipDraft ?? clipBase), ...changes } as Clip)
   }
-
-  const draftOverlay = (changes: Partial<Omit<ImageOverlay, 'id'>>) => {
-    if (!overlayBase) return
-    setOverlayDraft({ ...(overlayDraft ?? overlayBase), ...changes })
+  const commitClip = (changes: { rect?: CompositionRect | null; opacity?: number; fit?: ClipFit; gain?: number }) => {
+    if (!clipBase) return
+    setClipDraft(null)
+    runCommand({ type: 'clip-update', clipId: clipBase.id, changes })
   }
-  const commitOverlay = (changes: Partial<Omit<ImageOverlay, 'id'>>) => {
-    if (!overlayBase) return
-    setOverlayDraft(null)
-    runCommand({ type: 'overlay-update', overlayId: overlayBase.id, changes })
+  const deleteClip = (ripple: boolean) => {
+    if (!clipBase) return
+    runCommand({ type: 'clip-delete', clipId: clipBase.id, mode: ripple ? 'ripple' : 'overwrite' })
   }
-
-  const previewOverlayDrag = (overlay: ImageOverlay | null, seekUs?: number) => {
-    setOverlayDraft(overlay)
-    if (seekUs !== undefined) seekTo(seekUs)
+  /** A copy of a clip at the same time goes on a free track of its kind (a new one if none is free). */
+  const placeCopy = (clip: Clip, startUs = clip.timelineStartUs, preferTrackId: string | null = null) => {
+    const range = { startUs, endUs: startUs + clipLengthUs(clip) }
+    const { trackId, track } = placementTrack(clip.kind, range, preferTrackId)
+    return runCommand({ type: 'clip-add', clip: { ...clip, id: crypto.randomUUID(), trackId, timelineStartUs: startUs }, track, idPrefix: crypto.randomUUID() })
   }
-  const commitOverlayDrag = (original: ImageOverlay, preview: ImageOverlay, mode: CueDragMode, options?: { clone?: boolean }) => {
-    if (options?.clone) { runCommand({ type: 'overlay-add', overlay: preview }); return }
-    if (mode === 'move') runCommand({ type: 'item-move', kind: 'overlay', id: original.id, deltaUs: preview.startUs - original.startUs })
-    else runCommand({ type: 'item-resize', kind: 'overlay', id: original.id, startUs: preview.startUs, endUs: preview.endUs })
+  const duplicateSelectedClip = () => {
+    if (!clipBase) return
+    const offset = clipBase.kind !== 'audio' && clipBase.rect ? { ...clipBase, rect: { ...clipBase.rect, x: Math.min(clipBase.rect.x + 24, 1080 - clipBase.rect.width), y: clipBase.rect.y + 24 } } as Clip : clipBase
+    placeCopy(offset)
   }
-
-  // Alt+drag on the stage (OverlayStageEditor): a ghost overlay with its own id, appended by
-  // `visibleOverlays` rather than replacing the original. `null` clears it (drag ended or cancelled).
-  const draftOverlayClone = (overlay: ImageOverlay | null) => setOverlayDraft(overlay)
-  const commitOverlayClone = (overlay: ImageOverlay) => { setOverlayDraft(null); runCommand({ type: 'overlay-add', overlay }) }
-
-  const duplicateSelectedOverlay = () => {
-    if (!overlayBase) return
-    const rect = { ...overlayBase.rect, x: overlayBase.rect.x + 24, y: overlayBase.rect.y + 24 }
-    runCommand({ type: 'overlay-add', overlay: { ...overlayBase, id: crypto.randomUUID(), rect } })
+  const splitClips = () => {
+    const onlyIds = clipBase && currentUs > clipBase.timelineStartUs && currentUs < clipEndUs(clipBase) ? [clipBase.id] : undefined
+    runCommand({ type: 'clip-split', atUs: Math.round(currentUs), clipIds: onlyIds, idPrefix: crypto.randomUUID() }, () => null)
   }
-  const reorderSelectedOverlay = (direction: 'forward' | 'backward') => {
-    if (!overlayBase) return
-    runCommand({ type: 'overlay-reorder', overlayId: overlayBase.id, direction })
-  }
-
-  // Sound effects (V3): mirrors `importImageOverlay` — one undo step imports the asset and places
-  // the clip at the playhead together.
-  const importSoundEffect = async () => {
-    if (!window.captionStudio) return
-    try {
-      const result = await window.captionStudio.importAsset('audio')
-      if (!result) return
-      if (!result.ok) return setNotice({ tone: 'error', text: result.message })
-      const asset: ProjectAsset = { id: crypto.randomUUID(), kind: 'audio', ...result.media }
-      const clip = defaultClipAt(crypto.randomUUID(), asset.id, currentUs)
-      if (!runCommand({ type: 'audio-add', clip, asset })) return
-      setAssetUrls((urls) => new Map(urls).set(asset.id, result.url))
-      setInspectorTab('edit')
-    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
-  }
-
-  const deleteSelectedSfx = () => {
-    if (!sfxBase) return
-    runCommand({ type: 'item-delete', kind: 'audio', id: sfxBase.id })
-  }
-  const draftSfx = (changes: Partial<Omit<AudioClip, 'id'>>) => {
-    if (!sfxBase) return
-    setSfxDraft({ ...(sfxDraft ?? sfxBase), ...changes })
-  }
-  const commitSfx = (changes: Partial<Omit<AudioClip, 'id'>>) => {
-    if (!sfxBase) return
-    setSfxDraft(null)
-    runCommand({ type: 'audio-update', clipId: sfxBase.id, changes })
-  }
-  const previewSfxDrag = (clip: AudioClip | null, seekUs?: number) => {
-    setSfxDraft(clip)
-    if (seekUs !== undefined) seekTo(seekUs)
-  }
-  const commitSfxDrag = (original: AudioClip, preview: AudioClip, mode: CueDragMode) => {
-    if (mode === 'move') runCommand({ type: 'item-move', kind: 'audio', id: original.id, deltaUs: preview.atUs - original.atUs })
-    else {
-      const asset = project.assets.find((candidate) => candidate.id === original.assetId) ?? null
-      const range = clipRange(original, asset)
-      const startUs = mode === 'start' ? preview.atUs : range.startUs
-      const endUs = mode === 'end' ? preview.atUs + clipDurationUs(preview, asset) : range.endUs
-      runCommand({ type: 'item-resize', kind: 'audio', id: original.id, startUs, endUs })
-    }
+  const canSplitClips = project.clips.some((clip) => currentUs > clip.timelineStartUs && currentUs < clipEndUs(clip)
+    && !project.tracks.find((track) => track.id === clip.trackId)?.locked)
+  const moveClip = (clipId: string, trackId: string, startUs: number) => runCommand({ type: 'clip-move', clipId, trackId, startUs, mode: editMode, idPrefix: crypto.randomUUID() })
+  const trimClip = (clipId: string, edge: ClipEdge, deltaUs: number) => runCommand({ type: 'clip-trim', clipId, edge, deltaUs, mode: editMode })
+  const trackActions = {
+    onUpdate: (trackId: string, changes: TrackFlags) => runCommand({ type: 'track-update', trackId, changes }),
+    onReorder: (trackId: string, direction: 'forward' | 'backward') => runCommand({ type: 'track-reorder', trackId, direction }),
+    onRemove: (trackId: string) => runCommand({ type: 'track-remove', trackId }),
+    onAdd: (kind: Track['kind']) => runCommand({ type: 'track-add', track: newTrack(kind) }),
   }
 
   const exportSrt = async () => {
     if (!window.captionStudio) return
-    // Cuts are stored as source-time segments (docs/EDITING.md); SRT for a cut project must speak
-    // sequence time — the timeline the viewer of the *exported* video actually sees.
-    const cues = hasCuts(project) ? cuesInSequenceForClips(project.cues, project.clips) : project.cues
+    // Captions are stored in their video's source time; SRT for the timeline must speak sequence
+    // time — what the viewer of the *exported* video actually sees.
+    const cues = cuesInSequence(project.cues, captionVideo)
     const result = await window.captionStudio.saveText({ content: serializeSrt(cues), defaultName: `${project.title}.srt` })
     if (result) setNotice({ tone: 'info', text: `Exported SRT to ${result.path}` })
   }
 
   /** One detection request/response round trip for the Remove Silence dialog; `App.tsx` owns the
    * fingerprint and IPC bridge so the dialog itself stays a pure "options in, ranges out" form. */
+  const silenceVideo = pickedVideo
   const detectSilence = async (requestId: string, options: SilenceDetectionOptions, onProgress: (percent: number | null) => void) => {
-    if (!window.captionStudio || !primary?.fingerprint) throw new Error('Open or relink the video before detecting silence.')
+    if (!window.captionStudio || !silenceVideo?.fingerprint) throw new Error('Open or relink the video before detecting silence.')
     const unsubscribe = window.captionStudio.onSilenceProgress((message) => {
       if (message.requestId !== requestId) return
       onProgress(message.progress.kind === 'measured' ? Math.round(message.progress.completed / message.progress.total * 100) : null)
     })
     try {
-      const result = await window.captionStudio.detectSilence({ requestId, fingerprint: primary.fingerprint, thresholdDbfs: options.thresholdDbfs, minSilenceMs: options.minSilenceMs })
+      const result = await window.captionStudio.detectSilence({ requestId, fingerprint: silenceVideo.fingerprint, thresholdDbfs: options.thresholdDbfs, minSilenceMs: options.minSilenceMs })
       return { durationUs: result.durationUs, silences: result.silences }
     } finally { unsubscribe() }
   }
   const cancelSilenceDetection = (requestId: string) => void window.captionStudio?.cancelSilenceDetection(requestId)
 
   const applySilenceRemoval = (ranges: { startUs: number; endUs: number }[]) => {
-    if (!primary) return
-    runCommand({ type: 'clips-set', keptByAsset: [{ assetId: primary.id, ranges }], idPrefix: crypto.randomUUID() }, (warnings) => {
-      const removedUs = sourceDurationUs - ranges.reduce((total, range) => total + (range.endUs - range.startUs), 0)
-      return { tone: warnings.length ? 'warning' : 'info', text: removedUs > 0
-        ? `Removed ${formatClock(removedUs)} of silence; new length ${formatClock(sequenceDurationUs(ranges, sourceDurationUs))}.`
-        : 'No silence removed; the project is unchanged.' }
+    if (!silenceVideo) return
+    const before = sequenceDurationUs(projectRef.current.clips)
+    runCommand({ type: 'clips-set', keptByAsset: [{ assetId: silenceVideo.id, ranges }], idPrefix: crypto.randomUUID() }, (warnings) => {
+      const after = sequenceDurationUs(projectRef.current.clips)
+      return { tone: warnings.length ? 'warning' : 'info', text: before > after
+        ? `Removed ${formatClock(before - after)} of silence from ${silenceVideo.name}; new length ${formatClock(after)}.`
+        : 'No silence removed; the timeline is unchanged.' }
     })
-    // A removed range can no longer contain the playhead once the cut lands — collapse it to the
-    // nearest kept instant exactly as scrubbing past a cut already does. `ranges` (not the stale
-    // `segments` this closure captured before the command committed) is the mapping that
-    // now applies.
-    const collapsed = sourceToSequence(currentUs, ranges, sourceDurationUs)
-    seekTo(sequenceToSource(collapsed.sequenceUs, ranges, sourceDurationUs))
   }
 
   const restoreCuts = () => {
-    if (!hasCuts(project)) return
-    runCommand({ type: 'clips-restore' }, () => ({ tone: 'info', text: 'Restored the full, uncut timeline.' }))
+    if (!hasTrimmedClips(project)) return
+    runCommand({ type: 'clips-restore' }, () => ({ tone: 'info', text: 'Restored every trimmed clip to its whole video.' }))
   }
 
+  /** Seeks to where a caption is first seen; a caption no clip plays is only selected. */
   const seek = (cue: Cue) => {
-    seekTo(cue.startUs, cue.id)
+    setSelectedId(cue.id)
+    const at = cue.mediaAssetId ? firstSequenceUsOf(cue.mediaAssetId, cue.startUs, captionVideo) : hasVideo ? null : cue.startUs
+    if (at !== null) seekTo(at)
+    else setNotice({ tone: 'info', text: 'That caption’s part of its video is not on the timeline.' })
   }
 
-  /** `timeUs` is **source** time, which is what every caption, word and item is stored in. */
-  const seekTo = (timeUs: number, cueId?: string) => {
+  /** `sequenceUs` is timeline time; captions are converted by the caller. */
+  const seekTo = (sequenceUs: number, cueId?: string) => {
     if (cueId !== undefined) setSelectedId(cueId)
-    setCurrentUs(timeUs)
-    clock.set(timeUs)
-    if (videoRef.current) videoRef.current.currentTime = timeUs / US_PER_SECOND
+    playback.seek(sequenceUs)
   }
-
-  /** The timeline, ruler and transport scrubber all speak sequence time; map it back here. */
-  const seekToSequence = (sequenceUs: number, cueId?: string) => seekTo(toSource(sequenceUs), cueId)
 
   const previewCueDrag = (cue: Cue | null, seekUs?: number) => {
     setDragPreview(cue)
@@ -943,43 +903,43 @@ export default function App() {
   }
 
   const commitCueDrag = (original: Cue, preview: Cue, mode: CueDragMode) => {
-    if (mode === 'move') {
-      runCommand({ type: 'shift-time', cueId: original.id, deltaUs: preview.startUs - original.startUs })
-    } else {
-      runCommand({ type: 'update-time', cueId: original.id, startUs: preview.startUs, endUs: preview.endUs })
-    }
+    if (mode === 'move') runCommand({ type: 'shift-time', cueId: original.id, deltaUs: preview.startUs - original.startUs })
+    else runCommand({ type: 'update-time', cueId: original.id, startUs: preview.startUs, endUs: preview.endUs })
   }
 
   const undo = () => setHistory((state) => undoHistory(state))
   const redo = () => setHistory((state) => redoHistory(state))
 
+  // Agent bridge handlers (useAgentBridge): each computes `history`'s pure transition itself so it
+  // can hand back the resulting summary synchronously, the same reasoning as `runCommands` above.
+  const agentUndoRedo = (transition: typeof undoHistory | typeof redoHistory): ProjectSummary => {
+    const next = transition(history)
+    if (next !== history) { projectRef.current = next.present; setHistory(next) }
+    return summarizeAgentState(projectRef.current, selectionRef.current)
+  }
+  const agentHandlers: AgentBridgeHandlers = {
+    getState: () => summarizeAgentState(projectRef.current, selectionRef.current),
+    getCaptions: ({ range, cueIds }) => {
+      const idSet = cueIds ? new Set(cueIds) : null
+      const cues = projectRef.current.cues.filter((cue) =>
+        (!idSet || idSet.has(cue.id)) && (!range || (cue.startUs < range.endUs && cue.endUs > range.startUs)))
+      return { cues, total: cues.length }
+    },
+    runCommands,
+    seek: (sequenceUs) => { seekTo(sequenceUs); return summarizeAgentState(projectRef.current, selectionRef.current) },
+    select: (nextSelection) => { selectionRef.current = nextSelection; setSelection(nextSelection); return summarizeAgentState(projectRef.current, nextSelection) },
+    undo: () => agentUndoRedo(undoHistory),
+    redo: () => agentUndoRedo(redoHistory),
+  }
+  useAgentBridge(agentHandlers)
+
   const togglePlayback = () => {
-    const video = videoRef.current
-    if (!video) return setNotice({ tone: 'error', text: 'Open a video before using playback controls.' })
-    if (video.paused) {
-      // A swallowed rejection made every failure read the same. AbortError (play superseded by a
-      // pause/seek/load) is not an error; anything else is reported with its real name and cause.
-      void video.play().catch((error: unknown) => {
-        const text = describePlayFailure(error, video.error)
-        if (!text) return
-        console.error('video.play() rejected', error, { mediaError: video.error, readyState: video.readyState, networkState: video.networkState })
-        setNotice({ tone: 'error', text })
-      })
-    } else {
-      video.pause()
-    }
+    if (!project.clips.length && !project.cues.length) return setNotice({ tone: 'error', text: 'Open a video or import captions before playing.' })
+    if (playback.playing) playback.pause()
+    else playback.play()
   }
 
-  // Stepping moves along the output timeline, so a step never lands inside a removed range.
-  const seekBy = (deltaUs: number) => seekToSequence(Math.max(0, Math.min(durationUs, currentSequenceUs + deltaUs)))
-
-  const cancelWaveform = () => {
-    if (waveform.kind !== 'loading' || !window.captionStudio) return
-    const requestId = waveform.requestId
-    cancelledWaveformRequest.current = requestId
-    setWaveform({ kind: 'idle' })
-    void window.captionStudio.cancelWaveform(requestId)
-  }
+  const seekBy = (deltaUs: number) => seekTo(Math.max(0, Math.min(durationUs, currentUs + deltaUs)))
 
   const selectAdjacentCue = (direction: -1 | 1) => {
     if (!project.cues.length) return
@@ -990,9 +950,18 @@ export default function App() {
     setFocusCueId(cue.id)
   }
 
+  /** The selected caption's own source time under the playhead, when a clip of its video is there. */
+  const sourceUsForCue = (cue: Cue | null): number | null => {
+    if (!cue) return null
+    if (!cue.mediaAssetId) return hasVideo ? null : currentUs
+    return sourceUsOfAssetAt(currentUs, cue.mediaAssetId, project.tracks, project.clips)?.sourceUs ?? null
+  }
+  const selectedSourceUs = sourceUsForCue(selected)
+
   const splitSelectedCue = () => {
     if (!selected) return setNotice({ tone: 'error', text: 'Select a cue before splitting it.' })
-    runCommand({ type: 'split', cueId: selected.id, atUs: Math.round(currentUs), rightCueId: crypto.randomUUID() })
+    if (selectedSourceUs === null) return setNotice({ tone: 'error', text: 'Move the playhead over the caption’s video to split it there.' })
+    runCommand({ type: 'split', cueId: selected.id, atUs: Math.round(selectedSourceUs), rightCueId: crypto.randomUUID() })
   }
 
   const deleteSelectedCue = () => {
@@ -1007,37 +976,48 @@ export default function App() {
 
   const trimSelectedCue = () => {
     if (!selected) return setNotice({ tone: 'error', text: 'Select a cue before trimming it.' })
-    const next = trimToPlayhead(selected, currentUs)
+    if (selectedSourceUs === null) return setNotice({ tone: 'error', text: 'Move the playhead over the caption’s video to trim it there.' })
+    const next = trimToPlayhead(selected, selectedSourceUs)
     runCommand({ type: 'update-time', cueId: selected.id, startUs: next.startUs, endUs: next.endUs })
   }
 
-  const canAddCue = mediaDurationUs === null || currentUs < mediaDurationUs
-  const canSplitSelected = selected !== null && currentUs > selected.startUs && currentUs < selected.endUs
+  // A caption is added in the source time of the video under the playhead (or, with no video at
+  // all, in sequence time), and never runs past the end of the clip it starts in.
+  const canAddCue = hasVideo ? under !== null : currentUs < durationUs
+  const canSplitSelected = selected !== null && selectedSourceUs !== null && selectedSourceUs > selected.startUs && selectedSourceUs < selected.endUs
   const canMergeSelected = selected !== null && project.cues.at(-1)?.id !== selected.id
 
-  const addCue = (durationUs = 2 * US_PER_SECOND) => {
-    if (mediaDurationUs !== null && currentUs >= mediaDurationUs) {
-      setNotice({ tone: 'error', text: 'Move the playhead before the end of the media to add a cue.' })
-      return
-    }
-    const endUs = mediaDurationUs === null ? currentUs + durationUs : Math.min(currentUs + durationUs, mediaDurationUs)
-    runCommand({ type: 'add', cue: { id: crypto.randomUUID(), startUs: Math.round(currentUs), endUs: Math.round(endUs), text: '', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] } })
+  const addCue = (lengthUs = 2 * US_PER_SECOND) => {
+    if (hasVideo && !under) { setNotice({ tone: 'error', text: 'Move the playhead over a video to add a caption there.' }); return }
+    const startUs = Math.round(under ? under.sourceUs : currentUs)
+    const limitUs = under ? under.clip.sourceEndUs : durationUs
+    if (startUs >= limitUs) { setNotice({ tone: 'error', text: 'Move the playhead before the end of the media to add a cue.' }); return }
+    const endUs = Math.min(startUs + lengthUs, limitUs)
+    runCommand({ type: 'add', cue: { id: crypto.randomUUID(), ...(under ? { mediaAssetId: under.clip.assetId } : {}), startUs, endUs, text: '', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] } })
   }
   const addWord = () => addCue(600_000)
 
   const onSelectWord = (cue: Cue, word: CaptionWord) => {
-    seekTo(word.startUs, cue.id)
+    const at = cue.mediaAssetId ? firstSequenceUsOf(cue.mediaAssetId, word.startUs, captionVideo) : hasVideo ? null : word.startUs
+    setSelectedId(cue.id)
+    if (at !== null) seekTo(at, cue.id)
     setSelectedWordId(word.id)
+  }
+  // The captions panel also lets the user click a token that has no word timing yet. There is no
+  // honest time to seek to for it, so it only selects the caption and clears any word selection.
+  const onSelectSpan = (cue: Cue, span: TranscriptSpan) => {
+    if (span.word) return onSelectWord(cue, span.word)
+    setSelectedId(cue.id)
+    setSelectedWordId(null)
   }
 
   const deleteSelectedWord = () => {
     if (!selected || !selectedWord) return
     const index = selected.words.findIndex((word) => word.id === selectedWord.id)
     // delete-word never assigns new ids to the words it keeps (only offsets shift), so the
-    // remaining list is exactly today's list minus the deleted word — no need to wait for the
-    // command's deferred state update to know what to select next.
+    // remaining list is exactly today's list minus the deleted word.
     const remaining = selected.words.filter((word) => word.id !== selectedWord.id)
-    if (!runCommand({ type: 'delete-word', cueId: selected.id, wordId: selectedWord.id })) return
+    if (!runCommand({ type: 'delete-word', cueId: selected.id, target: { wordId: selectedWord.id } })) return
     setSelectedWordId(remaining[Math.min(index, remaining.length - 1)]?.id ?? null)
   }
 
@@ -1068,13 +1048,19 @@ export default function App() {
   const applyPreset = (id: string) => { setStyleDraft(null); commit((state) => applyCaptionPreset(state, id)) }
   const deletePreset = (id: string) => commit((state) => deleteCaptionPreset(state, id))
 
+  const deleteSelection = (ripple: boolean) => {
+    if (selection?.kind === 'clip') return deleteClip(ripple)
+    if (selection?.kind === 'blur') return runCommand({ type: 'blur-delete', blurId: selection.id })
+    if (ripple) return
+    if (selectedWord) return deleteSelectedWord()
+    return deleteSelectedCue()
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const action = shortcutForEvent(event, event.target)
       if (!action) return
-      // Space must toggle exactly once. A held key auto-repeats keydown, and a focused <video controls>
-      // handles Space itself; either way a second toggle calls pause() right behind play(), which
-      // rejects the play promise (AbortError) and left playback looking broken.
+      // Space must toggle exactly once: a held key auto-repeats keydown.
       if (action === 'toggle-playback' && event.repeat) return
       if (action === 'toggle-playback' && event.target instanceof Element && event.target.closest('button, summary, a, video, [role="button"]')) return
       event.preventDefault()
@@ -1083,7 +1069,9 @@ export default function App() {
         'seek-backward': () => seekBy(-US_PER_SECOND),
         'seek-forward': () => seekBy(US_PER_SECOND),
         'split-cue': splitSelectedCue,
-        'delete-cue': () => selection?.kind === 'overlay' ? deleteSelectedOverlay() : selectedWord ? deleteSelectedWord() : deleteSelectedCue(),
+        'delete-cue': () => deleteSelection(false),
+        'ripple-delete': () => deleteSelection(true),
+        'split-clips': splitClips,
         undo,
         redo,
         'previous-cue': () => selectAdjacentCue(-1),
@@ -1106,21 +1094,22 @@ export default function App() {
     redo: () => isEditableTarget(document.activeElement) ? void window.captionStudio?.editText('redo') : redo(),
     'export-srt': () => { if (project.cues.length) void exportSrt() },
     'export-video': () => { if (exportVideoBlocker === null) void startExportVideo() },
-    'remove-silence': () => { if (mediaReady) setSilenceDialogOpen(true) },
+    'remove-silence': () => { if (hasVideo) setSilenceDialogOpen(true) },
     'restore-cuts': () => restoreCuts(),
     settings: () => setSettingsTab('models'), shortcuts: () => setSettingsTab('shortcuts'),
   }
   useEffect(() => window.captionStudio?.onMenuCommand((command) => menuHandlers.current[command]()), [])
 
-  const mediaReady = Boolean(videoUrl && primary?.fingerprint)
+  const pickedReady = Boolean(pickedVideo?.fingerprint && media.urlOf(pickedVideo))
   const exportVideoBlocker = exportState.kind === 'running' ? 'An export is already running' : exportState.kind === 'unsupported' ? exportState.reason
     : exportState.kind === 'error' ? exportState.message
     : exportState.kind === 'checking-support' || exportState.kind === 'idle' ? 'Checking export support…'
-    : !mediaReady ? 'Open or relink the video first'
+    : !exportAssets.length ? 'Add a video, image or sound to the timeline first'
+    : offlineAssets.length ? `Relink ${offlineAssets[0].name} first`
     : null
   const shortcutLabel = (key: string) => `${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}${key}`
   const fileEntries: MenuEntry[] = [
-    { id: 'open-video', label: 'Open video…', onSelect: () => void openVideo(), shortcut: shortcutLabel('⇧O') },
+    { id: 'open-video', label: hasVideo ? 'Add video…' : 'Open video…', onSelect: () => void openVideo(), shortcut: shortcutLabel('⇧O') },
     { id: 'import-srt', label: 'Import SRT…', onSelect: () => void importSrt(), shortcut: shortcutLabel('I') },
     { id: 'sep', separator: true },
     { id: 'open-project', label: 'Open project…', onSelect: () => void openProject(), shortcut: shortcutLabel('O') },
@@ -1136,51 +1125,63 @@ export default function App() {
     { id: 'export-video', label: 'Video with captions (MP4)…', onSelect: () => void startExportVideo(), disabledReason: exportVideoBlocker, shortcut: shortcutLabel('E') },
     { id: 'export-srt', label: 'Subtitles (SRT)…', onSelect: () => void exportSrt(), disabledReason: project.cues.length ? null : 'No captions yet', shortcut: shortcutLabel('⇧E') },
   ]
-  // Video-level edits (cuts today; trim/overlays/blur later — docs/EDITING.md) get their own menu
-  // rather than the text-editing 'Edit' menu the native template already reserves for Undo/Cut/Paste.
+  // Timeline-level edits get their own menu rather than the text-editing 'Edit' menu the native
+  // template already reserves for Undo/Cut/Paste.
   const timelineEntries: MenuEntry[] = [
-    { id: 'add-image-overlay', label: 'Add image overlay…', onSelect: () => void importImageOverlay(), disabledReason: mediaReady ? null : 'Open or relink the video first' },
-    { id: 'remove-silence', label: 'Remove silence…', onSelect: () => setSilenceDialogOpen(true), disabledReason: mediaReady ? null : 'Open or relink the video first' },
-    { id: 'restore-cuts', label: 'Restore removed ranges', onSelect: restoreCuts, disabledReason: hasCuts(project) ? null : 'No cuts to restore' },
+    { id: 'add-image-overlay', label: 'Add image…', onSelect: () => void importImageOverlay() },
+    { id: 'split-clips', label: 'Split clips at playhead', onSelect: splitClips, disabledReason: canSplitClips ? null : 'No clip under the playhead', shortcut: shortcutLabel('B') },
+    { id: 'add-video-track', label: 'Add video track', onSelect: () => trackActions.onAdd('video') },
+    { id: 'add-audio-track', label: 'Add audio track', onSelect: () => trackActions.onAdd('audio') },
+    { id: 'sep-silence', separator: true },
+    { id: 'remove-silence', label: 'Remove silence…', onSelect: () => setSilenceDialogOpen(true), disabledReason: hasVideo ? null : 'Open a video first' },
+    { id: 'restore-cuts', label: 'Restore removed ranges', onSelect: restoreCuts, disabledReason: hasTrimmedClips(project) ? null : 'No trimmed clips to restore' },
   ]
+  const summaryAsset = underAsset ?? primary
 
   return <main className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">C</span><div><strong>Caption Studio</strong><small title={project.title}>{primary?.name ?? project.title}</small></div></div>
+      <div className="brand"><span className="brand-mark">C</span><div><strong>Caption Studio</strong><small title={project.title}>{project.title}</small></div></div>
       <div className="toolbar toolbar-workflow" role="group" aria-label="Captions">
-        <AlignmentControls fingerprint={primary?.fingerprint} mediaReady={mediaReady} cues={project.cues} keyConfigured={Boolean(geminiKey?.configured)}
+        {pickedVideo && <AlignmentControls fingerprint={pickedVideo.fingerprint} mediaReady={pickedReady}
+          cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}
           onNeedKey={() => { setSettingsTab('gemini'); setNotice({ tone: 'info', text: 'Add a Gemini API key to align audio.' }) }}
-          onApply={applyAlignedTiming} onMessage={(tone, text) => setNotice({ tone, text })} />
+          onApply={(transcript, run, snapshot) => applyAlignedTiming(transcript, run, snapshot, pickedVideo.id)} onMessage={(tone, text) => setNotice({ tone, text })} />}
         {exportState.kind === 'running' && <span className="job-pill" role="status">
           <span>Exporting · {describeJob(exportState.job).label}{describeJob(exportState.job).percent === null ? '' : ` ${describeJob(exportState.job).percent}%`}</span>
           <button onClick={cancelExportVideo}>Cancel</button>
         </span>}
-        {primary && !videoUrl && <button className="warning-chip" onClick={relinkMedia} title={`${primary.name} is not available at its stored location`}>Media offline · Relink</button>}
+        {offlineVideos.length > 0 && <button className="warning-chip" onClick={relinkOffline} title={`${offlineVideos.map((asset) => asset.name).join(', ')} not available at the stored location`}>Media offline · Relink</button>}
       </div>
       <div className="toolbar toolbar-file">
+        {agentStatus?.running && <button className="agent-chip" onClick={() => setSettingsTab('agent')}
+          title={agentStatus.connections ? `${agentStatus.connections} agent client connected` : 'Agent access is on; no client connected yet'}>
+          🤖 Agent{agentStatus.connections ? ` · ${agentStatus.connections}` : ''}
+        </button>}
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />
         <MenuButton label="Timeline" entries={timelineEntries} />
         <MenuButton label="Export" className="accent" entries={exportEntries} />
-        <button className="icon-button" aria-label="Settings" title="Settings: speech models, Gemini API key, shortcuts" onClick={() => setSettingsTab('models')}>⚙</button>
+        <button className="icon-button" aria-label="Settings" title="Settings: speech models, Gemini API key, AI agents, shortcuts" onClick={() => setSettingsTab('models')}>⚙</button>
       </div>
     </header>
     <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} geminiKey={geminiKey} onGeminiKey={setGeminiKey}
       onMessage={(tone, text) => setNotice({ tone, text })} />
-    <SilenceRemovalDialog open={silenceDialogOpen} mediaReady={mediaReady} onClose={() => setSilenceDialogOpen(false)}
-      onDetect={detectSilence} onCancelDetect={cancelSilenceDetection} onApply={applySilenceRemoval} hasExistingCuts={hasCuts(project)} />
+    <SilenceRemovalDialog open={silenceDialogOpen} mediaReady={pickedReady} onClose={() => setSilenceDialogOpen(false)} videoName={silenceVideo?.name ?? null}
+      picker={videoAssets(project).length > 1 ? <VideoPicker videos={videoAssets(project)} picked={pickedVideo} onPick={setPickedVideoId} label="Video" /> : null}
+      onDetect={detectSilence} onCancelDetect={cancelSilenceDetection} onApply={applySilenceRemoval} hasExistingCuts={hasTrimmedClips(project)} />
 
     <section className="workspace">
       <LeftRail active={railTab} onChange={setRailTab} onSettings={() => setSettingsTab('models')} />
       <aside className="panel side-panel" aria-label={railTab === 'media' ? 'Media' : railTab === 'captions' ? 'Captions' : railTab === 'overlays' ? 'Overlays' : 'Transitions'}>
-        {railTab === 'media' && <MediaBin media={primary} videoReady={Boolean(videoUrl)} mediaDurationUs={mediaDurationUs}
-          assets={project.assets} assetUrls={assetUrls} assetIssues={assetIssues}
-          overlayCountByAsset={overlayCountByAsset} audioCountByAsset={audioCountByAsset}
+        {railTab === 'media' && <MediaBin assets={project.assets} assetUrls={media.assetUrls} assetIssues={media.issues} useCountByAsset={useCountByAsset}
+          videoReady={(asset) => media.urlOf(asset) !== null}
           onImportFiles={() => void importAssetFiles()} onDropFiles={(files) => inspectAndAdd(files)}
-          onAddOverlayAtPlayhead={addOverlayAtPlayhead} onAddSfxAtPlayhead={addSfxAtPlayhead}
-          onRemoveAsset={removeAsset} onRelinkAsset={(assetId) => void relinkAsset(assetId)} onRelinkMedia={() => void relinkMedia()} />}
+          onAddVideo={(asset) => addVideoClip(asset)} onAddOverlayAtPlayhead={addOverlayAtPlayhead} onAddSfxAtPlayhead={addSfxAtPlayhead}
+          onRemoveAsset={removeAsset} onRelinkAsset={(assetId) => void relinkAsset(assetId)} />}
         {railTab === 'captions' && <CaptionsPanel cueCount={project.cues.length} visibleCues={visibleCues} selectedCueId={selectedCueId}
-          selectedWordId={selectedWord?.id ?? null} warningCueIds={warningCueIds} segments={segments} sourceDurationUs={sourceDurationUs}
+          selectedWordId={selectedWord?.id ?? null} warningCueIds={warningCueIds}
+          notInSequence={(cue) => hasVideo && (!cue.mediaAssetId || spansInSequence(cue, cue.mediaAssetId, captionVideo).length === 0)}
+          videoNameOf={(cue) => cue.mediaAssetId ? assetById.get(cue.mediaAssetId)?.name ?? null : null}
           historyPastLength={history.past.length} historyFutureLength={history.future.length} onUndo={undo} onRedo={redo}
           effectiveStyle={effectiveStyle} selected={selected} captionDisplay={captionDisplay} onCaptionDisplay={setCaptionDisplay} onProjectStyle={commitStyle}
           onOverride={(override) => selected && runCommand({ type: 'set-motion-override', cueId: selected.id, override })}
@@ -1189,19 +1190,18 @@ export default function App() {
           onGroup={(options, all) => runCommand(all
             ? { type: 'regroup-many', cueIds: project.cues.map((cue) => cue.id), idPrefix: crypto.randomUUID(), estimateMissing: false, options }
             : selected ? { type: 'regroup', cueId: selected.id, idPrefix: crypto.randomUUID(), estimateMissing: false, options } : { type: 'regroup-many', cueIds: [], idPrefix: crypto.randomUUID(), estimateMissing: false, options })}
-          onSelect={seek} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text })} onSelectWord={onSelectWord}
-          onWordAction={(cueId, type, word) => {
-            if (type === 'emphasis') runCommand({ type: 'toggle-emphasis', cueId, textStart: word.textStart ?? 0 })
-            else if (type === 'line-break') runCommand({ type: 'line-break-before-word', cueId, wordId: word.id })
-            else if (type === 'split') runCommand({ type: 'split-before-word', cueId, wordId: word.id, rightCueId: crypto.randomUUID() })
-            else if (type === 'next') runCommand({ type: 'move-from-word-to-next', cueId, wordId: word.id })
-            else if (type === 'delete') runCommand({ type: 'delete-word', cueId, wordId: word.id })
-            else runCommand({ type: 'move-through-word-to-previous', cueId, wordId: word.id })
-          }} cueButtonRefs={cueButtonRefs}
-          media={primary} mediaReady={mediaReady} onApplyTranscript={applyTranscript}
+          onSelect={seek} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text })} onSelectWord={onSelectSpan}
+          onWordAction={(cueId, type, span) => {
+            const command = wordActionCommand(cueId, type, span, () => crypto.randomUUID())
+            if (command) runCommand(command)
+            else setNotice({ tone: 'error', text: 'Estimate word timing for this caption first: this action needs the word’s timing.' })
+          }}
+          onEstimateMissing={() => selected && runCommand({ type: 'estimate-words', cueId: selected.id, idPrefix: crypto.randomUUID(), missingOnly: true })}
+          cueButtonRefs={cueButtonRefs}
+          videos={videoAssets(project)} pickedVideo={pickedVideo} onPickVideo={setPickedVideoId} mediaReady={pickedReady} onApplyTranscript={applyTranscript}
           geminiKeyConfigured={Boolean(geminiKey?.configured)} onNeedGeminiKey={() => setSettingsTab('gemini')} onImportSrt={() => void importSrt()} />}
-        {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
-          onImportAndAdd={() => void importImageOverlay()} mediaReady={mediaReady} />}
+        {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
+          onImportAndAdd={() => void importImageOverlay()} mediaReady />}
         {railTab === 'transitions' && <TransitionsPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []}
           onApplyTemplate={applyTemplate} onCommitMotion={(motion) => commitStyle({ ...effectiveStyle, motion })}
           onSavePreset={savePreset} onApplyPreset={applyPreset} onDeletePreset={deletePreset}
@@ -1209,42 +1209,34 @@ export default function App() {
       </aside>
 
       <section className="stage-panel" aria-label="Video preview and transport">
-        <div className={`video-stage ${videoUrl ? '' : 'empty-stage'}`}
+        <div className={`video-stage ${project.clips.length || project.cues.length ? '' : 'empty-stage'}`}
           onDragOver={(event) => { if (dropContent(event.dataTransfer)?.kind === 'files') { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
           onDrop={(event) => {
             const content = dropContent(event.dataTransfer)
             if (content?.kind !== 'files' || !content.files.length) return
             event.preventDefault()
-            inspectAndAdd(content.files, { sequenceUs: currentSequenceUs })
+            // Dropped on the preview: images and sounds land at the playhead; a video never covers
+            // what is already there — it joins the end of V1, like the media bin's Add.
+            inspectAndAdd(content.files, { sequenceUs: currentUs, trackId: null, appendVideos: true })
           }}>
-          {videoUrl ? <div className="video-frame" style={{ '--video-aspect': videoAspect } as CSSProperties}>
-            <video ref={videoRef} src={videoUrl} controls onTimeUpdate={(event) => {
-              const us = Math.round(event.currentTarget.currentTime * US_PER_SECOND)
-              setCurrentUs(us); clock.set(us)
-            }} onPause={(event) => setCurrentUs(Math.round(event.currentTarget.currentTime * US_PER_SECOND))} onLoadedMetadata={(event) => {
-              const { videoWidth, videoHeight } = event.currentTarget
-              if (videoWidth > 0 && videoHeight > 0) setMeasuredAspect(videoWidth / videoHeight)
-              if (primary?.metadata?.durationUs == null) setMeasuredDurationUs(Math.round(event.currentTarget.duration * US_PER_SECOND))
-            }} onLoadedData={() => setCodecDiagnostics({ kind: 'playable' })} onError={(event) => {
-              const message = describeMediaError(event.currentTarget.error) ?? 'The embedded player could not play this media.'
-              setCodecDiagnostics({ kind: 'confirmed-unsupported', message })
-            }} />
+          {project.clips.length || project.cues.length ? <div className="video-frame" style={{ '--video-aspect': formatAspect(project.format) } as CSSProperties}>
             <CaptionStage clock={clock} cues={visibleCues} dragPreview={dragPreview} composition={captionComposition} inputs={captionInputs} style={effectiveStyle} display={captionDisplay}
-              overlays={visibleOverlays} assets={project.assets} assetUrls={assetUrls} />
-            {project.overlays.length > 0 && <OverlayStageEditor overlays={visibleOverlays} composition={captionComposition} clock={clock}
-              selectedId={selection?.kind === 'overlay' ? selection.id : null}
-              onSelect={(overlayId) => setSelection({ kind: 'overlay', id: overlayId })}
-              onRectDraft={(rect) => draftOverlay({ rect })} onRectCommit={(rect) => commitOverlay({ rect })}
-              onCloneDraft={draftOverlayClone} onCloneCommit={commitOverlayClone} />}
+              tracks={visibleTracks} clips={visibleClips} assets={project.assets} blurRegions={project.blurRegions} urlOf={media.urlOf}
+              poolVersion={playback.poolVersion} elementFor={(trackId, assetId) => playback.transport.elementFor(trackId, assetId) as HTMLVideoElement | null} />
+            <ClipStageEditor tracks={visibleTracks} clips={visibleClips} composition={captionComposition} clock={clock}
+              selectedId={selection?.kind === 'clip' ? selection.id : null}
+              onSelect={(clipId) => setSelection({ kind: 'clip', id: clipId })}
+              onRectDraft={(rect) => draftClip({ rect })} onRectCommit={(rect) => commitClip({ rect })}
+              onCloneDraft={setCloneDraft} onCloneCommit={(clip) => { setCloneDraft(null); placeCopy(clip) }} />
             <div className="safe-area" />
-          </div> : <Empty title={primary ? 'Media is offline' : 'Your video appears here'} body={primary ? `Relink ${primary.name} to resume playback.` : 'Open a local video to start, or continue from subtitles or a saved project. Media stays on this device.'} action={primary ? <button className="accent" onClick={relinkMedia}>Relink media</button> : <div className="empty-actions">
+          </div> : <Empty title="Your video appears here" body="Open a local video to start, or continue from subtitles or a saved project. Media stays on this device." action={<div className="empty-actions">
             <button className="accent" onClick={() => void openVideo()}>Open video</button>
             <button onClick={() => void importSrt()}>Import SRT</button>
             <button onClick={() => void openProject()}>Open project</button>
           </div>} />}
-          {primary?.metadata && <MediaSummary metadata={primary.metadata} />}
-          {videoUrl && (codecDiagnostics.kind === 'likely-unsupported' || codecDiagnostics.kind === 'confirmed-unsupported') && <div className="codec-diagnostic" role="status">
-            <span>{codecDiagnostics.kind === 'confirmed-unsupported' ? codecDiagnostics.message : 'This media’s codec is likely unsupported by the embedded player.'}</span>
+          {summaryAsset?.metadata && <MediaSummary name={summaryAsset.name} metadata={summaryAsset.metadata} format={project.format ?? null} />}
+          {issueAsset && codecIssue && <div className="codec-diagnostic" role="status">
+            <span>{issueAsset.name}: {codecIssue.kind === 'confirmed-unsupported' ? codecIssue.message : 'This media’s codec is likely unsupported by the embedded player.'}</span>
             {proxyState.kind === 'ready' && <button onClick={createProxy}>Create local proxy</button>}
             {proxyState.kind === 'creating' && <><span>{`Converting${proxyState.percent === null ? '…' : ` ${proxyState.percent}%`}`}</span><button onClick={cancelProxyCreation}>Cancel</button></>}
             {proxyState.kind === 'unsupported' && <span>{proxyState.reason}</span>}
@@ -1252,31 +1244,33 @@ export default function App() {
             {proxyState.kind === 'done' && <span>Proxy saved to {proxyState.path}</span>}
           </div>}
         </div>
-        <div className="transport" role="group" aria-label="Playback transport"><span aria-label={`Current time ${formatClock(currentSequenceUs)}`}>{formatClock(currentSequenceUs)}</span><button onClick={togglePlayback} disabled={!videoUrl} aria-label="Play or pause video" title="Play or pause (Space)">Play/Pause</button><button onClick={() => seekBy(-US_PER_SECOND)} aria-label="Seek backward one second" title="Seek backward (Left Arrow)">−1 s</button><input aria-label="Playhead position" type="range" min="0" max={durationUs} value={Math.min(currentSequenceUs, durationUs)} onChange={(event) => seekToSequence(Number(event.target.value))} /><button onClick={() => seekBy(US_PER_SECOND)} aria-label="Seek forward one second" title="Seek forward (Right Arrow)">+1 s</button><span aria-label={`Duration ${formatClock(durationUs)}`}>{formatClock(durationUs)}</span></div>
+        {/* The transport is the only one: with stacked tracks no single <video> owns playback. */}
+        <div className="transport" role="group" aria-label="Playback transport"><span aria-label={`Current time ${formatClock(currentUs)}`}>{formatClock(currentUs)}</span><button onClick={togglePlayback} disabled={!project.clips.length && !project.cues.length} aria-label={playback.playing ? 'Pause' : 'Play'} title="Play or pause (Space)">{playback.playing ? 'Pause' : 'Play'}</button><button onClick={() => seekBy(-US_PER_SECOND)} aria-label="Seek backward one second" title="Seek backward (Left Arrow)">−1 s</button><input aria-label="Playhead position" type="range" min="0" max={durationUs} value={Math.min(currentUs, durationUs)} onChange={(event) => seekTo(Number(event.target.value))} /><button onClick={() => seekBy(US_PER_SECOND)} aria-label="Seek forward one second" title="Seek forward (Right Arrow)">+1 s</button><span aria-label={`Duration ${formatClock(durationUs)}`}>{formatClock(durationUs)}</span></div>
       </section>
 
       <aside className="panel inspector-panel" aria-labelledby="inspector-heading">
         <h2 id="inspector-heading" className="sr-only">Caption inspector</h2>
         <InspectorTabs active={inspectorTab} onChange={setInspectorTab}
           edit={<>
-            {selectedOverlay ? <OverlayInspector
-              overlay={selectedOverlay}
-              asset={project.assets.find((asset) => asset.id === selectedOverlay.assetId) ?? null}
-              assetIssue={assetIssues.get(selectedOverlay.assetId) ?? null}
+            {selectedClip ? <ClipInspector
+              clip={selectedClip}
+              asset={assetById.get(selectedClip.assetId) ?? null}
+              assetIssue={media.issues.get(selectedClip.assetId) ?? null}
+              track={project.tracks.find((track) => track.id === selectedClip.trackId) ?? null}
+              trackLabel={(() => { const track = project.tracks.find((entry) => entry.id === selectedClip.trackId); return track ? trackLabel(track, project.tracks) : 'a missing track' })()}
               composition={captionComposition}
-              layerIndex={project.overlays.findIndex((overlay) => overlay.id === selectedOverlay.id)}
-              overlayCount={project.overlays.length}
-              onUpdateTime={(startUs, endUs) => runCommand({ type: 'item-resize', kind: 'overlay', id: selectedOverlay.id, startUs, endUs })}
-              onRectDraft={(rect) => draftOverlay({ rect })}
-              onRectCommit={(rect) => commitOverlay({ rect })}
-              onFit={(fit) => commitOverlay({ fit })}
-              onOpacityDraft={(opacity) => draftOverlay({ opacity })}
-              onOpacityCommit={(opacity) => commitOverlay({ opacity })}
-              onReorder={reorderSelectedOverlay}
-              onDuplicate={duplicateSelectedOverlay}
-              onAddImage={() => void importImageOverlay()}
-              onRelink={() => void relinkAsset(selectedOverlay.assetId)}
-              onDelete={deleteSelectedOverlay}
+              onMove={(startUs) => moveClip(selectedClip.id, selectedClip.trackId, startUs)}
+              onLength={(lengthUs) => trimClip(selectedClip.id, 'end', lengthUs - clipLengthUs(selectedClip))}
+              onRectDraft={(rect) => draftClip({ rect })}
+              onRectCommit={(rect) => commitClip({ rect })}
+              onFit={(fit) => commitClip({ fit })}
+              onOpacityDraft={(opacity) => draftClip({ opacity })}
+              onOpacityCommit={(opacity) => commitClip({ opacity })}
+              onGainDraft={(gain) => draftClip({ gain })}
+              onGainCommit={(gain) => commitClip({ gain })}
+              onDuplicate={duplicateSelectedClip}
+              onDelete={deleteClip}
+              onRelink={() => void relinkAsset(selectedClip.assetId)}
               onInvalid={(text) => setNotice({ tone: 'error', text })}
             /> : selected ? <>
               <CueEditor
@@ -1294,12 +1288,12 @@ export default function App() {
                 {untimedTokenCount(selected) > 0 && <><p>Estimation replaces this cue’s word timing with review-required estimates. Text stays exact; grouping changes cue boundaries. Undo restores the original.</p><button onClick={() => runCommand({ type: 'regroup', cueId: selected.id, idPrefix: crypto.randomUUID(), estimateMissing: true })}>Estimate all words &amp; group</button></>}
               </div>
               <div className="edit-actions">
-                <button ref={addCueButtonRef} onClick={() => addCue()}>Add at playhead</button>
+                <button ref={addCueButtonRef} onClick={() => addCue()} disabled={!canAddCue}>Add at playhead</button>
                 <button onClick={splitSelectedCue} disabled={!canSplitSelected} title="Split at playhead (S)">Split at playhead</button>
                 <button onClick={mergeSelectedCue} disabled={!canMergeSelected}>Merge next</button>
                 <button className="danger" onClick={deleteSelectedCue} title="Delete selected cue (Delete or Backspace)">Delete</button>
               </div>
-            </> : <div className="no-selection"><Empty title="Nothing selected" body="Select a caption to edit it, or add one at the playhead." /><button ref={addCueButtonRef} onClick={() => addCue()}>Add at playhead</button><button onClick={() => void importImageOverlay()} disabled={!mediaReady} title={mediaReady ? 'Add an image overlay at the playhead' : 'Open or relink the video first'}>Add image overlay</button></div>}
+            </> : <div className="no-selection"><Empty title="Nothing selected" body="Select a caption or a clip to edit it, or add a caption at the playhead." /><button ref={addCueButtonRef} onClick={() => addCue()} disabled={!canAddCue}>Add at playhead</button><button onClick={() => void importImageOverlay()} title="Add an image over the video at the playhead">Add image</button></div>}
             {validation.warnings.length > 0 && <div className="validation-warnings" role="status"><strong>{validation.warnings.length} timing warning{validation.warnings.length === 1 ? '' : 's'}</strong>{validation.warnings.map((warning, index) => <p key={`${warning.cueIds.join('-')}-${index}`}>{warning.message}</p>)}</div>}
           </>}
           style={<StylePanel style={effectiveStyle} onDraft={draftStyle} onCommit={commitStyle} />}
@@ -1308,59 +1302,78 @@ export default function App() {
           {exportState.kind === 'running' ? <span className="export-progress" role="status">
             <span>{describeJob(exportState.job).label}{describeJob(exportState.job).percent === null ? '' : ` ${describeJob(exportState.job).percent}%`}</span>
             <button onClick={cancelExportVideo}>Cancel</button>
-          </span> : <button className="accent" disabled={!project.cues.length}
-            title={exportState.kind === 'ready' && videoUrl && primary?.fingerprint ? 'Render captions into a new MP4; source media is never modified' : 'Export an SRT subtitle file'}
-            onClick={exportState.kind === 'ready' && videoUrl && primary?.fingerprint ? startExportVideo : exportSrt}>Export</button>}
+          </span> : <button className="accent" disabled={!project.cues.length && exportVideoBlocker !== null}
+            title={exportVideoBlocker === null ? 'Render the timeline with captions into a new MP4; source media is never modified' : 'Export an SRT subtitle file'}
+            onClick={exportVideoBlocker === null ? startExportVideo : exportSrt}>Export</button>}
         </div>
       </aside>
     </section>
 
-    <Timeline cues={project.cues} currentUs={currentSequenceUs} durationUs={durationUs} mediaDurationUs={sourceDurationUs} segments={segments} fingerprint={primary?.fingerprint ?? null} selection={selection} warningCueIds={warningCueIds} mediaName={primary?.name ?? 'No media selected'} waveform={waveform.kind === 'ready' ? waveform.data : null} waveformStatus={waveform.kind === 'loading' ? `Extracting waveform${waveform.percent === null ? '…' : ` ${waveform.percent}%`}` : waveform.kind === 'error' ? 'Waveform unavailable' : null} onCancelWaveform={waveform.kind === 'loading' ? cancelWaveform : undefined} onSeek={seekToSequence} onDragPreview={previewCueDrag} onDragCommit={commitCueDrag}
-      overlays={project.overlays} assets={project.assets} onOverlayDragPreview={previewOverlayDrag} onOverlayDragCommit={commitOverlayDrag} onSelectOverlay={(overlayId) => setSelection({ kind: 'overlay', id: overlayId })}
+    <Timeline cues={project.cues} tracks={project.tracks} clips={project.clips} assets={project.assets} currentUs={currentUs} durationUs={Math.max(durationUs, 1)}
+      selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
+      warningCueIds={warningCueIds} waveforms={waveforms}
+      waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
+      onSeek={seekTo} onDragPreview={previewCueDrag} onDragCommit={commitCueDrag}
+      editMode={editMode} onEditMode={setEditMode}
+      onSelectClip={(clipId) => setSelection({ kind: 'clip', id: clipId })}
+      onClipMove={moveClip} onClipClone={(clip) => placeCopy(clip, clip.timelineStartUs, clip.trackId)} onClipTrim={trimClip}
+      onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
+      trackActions={trackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
       display={timelineDisplay} onDisplay={setTimelineDisplay} selectedWordId={selectedWord?.id ?? null} onSelectWord={onSelectWord}
       actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1), delete: () => selectedWord ? deleteSelectedWord() : deleteSelectedCue(), split: splitSelectedCue, trim: trimSelectedCue }}
+      clipTools={{ split: splitClips, canSplit: canSplitClips, remove: deleteClip, hasClip: clipBase !== null }}
       canAdd={canAddCue} canSplit={canSplitSelected} canMerge={canMergeSelected} hasSelectedWord={selectedWord !== null}
-      onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} />
-    {pendingAssetRelink && <RelinkReview title={pendingAssetRelink.asset.kind === 'video' ? 'Replacement video does not match' : 'Asset replacement does not match'} candidate={pendingAssetRelink.candidate}
+      onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} thumbnailQueue={thumbnailQueue} />
+    {pendingAssetRelink && <RelinkReview title={pendingAssetRelink.asset.kind === 'video' ? 'Replacement video does not match' : 'Replacement file does not match'} candidate={pendingAssetRelink.candidate}
       onUse={() => { useAssetCandidate(pendingAssetRelink.asset, pendingAssetRelink.candidate); setPendingAssetRelink(null); setNotice({ tone: 'warning', text: `Using ${pendingAssetRelink.candidate.media.name} by your choice; stored identity was replaced with the selected media.` }) }}
       onChooseAgain={() => { const assetId = pendingAssetRelink.asset.id; setPendingAssetRelink(null); void relinkAsset(assetId) }}
       onCancel={() => setPendingAssetRelink(null)} />}
     {pendingSrt && <ReplaceCaptionsReview name={pendingSrt.name} existingCount={project.cues.length} importedCount={pendingSrt.parsed.cues.length}
       onCancel={() => setPendingSrt(null)} onReplace={() => { applyParsedSrt(pendingSrt.parsed); setPendingSrt(null) }} />}
-    {pendingReplaceSource && <ReplaceVideoReview name={pendingReplaceSource.media.name} currentName={primary?.name ?? null}
-      onCancel={() => setPendingReplaceSource(null)}
-      onReplace={() => { openVideoMedia(pendingReplaceSource.media, pendingReplaceSource.url); setPendingReplaceSource(null) }} />}
     {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
   </main>
 }
 
+/** A transient top track for a stage Alt+drag clone, so the ghost paints above everything until it commits. */
+const CLONE_TRACK: Track = { id: '__clone-preview__', kind: 'video', name: '', muted: true, hidden: false, locked: true }
+
 /** Subscribes to the per-frame playback clock on its own, so a 60fps tick re-renders only this
- * small subtree — the transcript list, timeline body and waveform/thumbnails never re-render
- * per frame — while still finding the active cue at true frame-accurate source time. */
-function CaptionStage({ clock, cues, dragPreview, composition, inputs, style, display, overlays, assets, assetUrls }: {
+ * small subtree — the transcript list, timeline body and waveform/thumbnails never re-render per
+ * frame. It composites every visual clip under the playhead, back to front, then blur, then the
+ * caption the one shared rule (`activeCueAt`) picks, evaluated at its own source time. */
+function CaptionStage({ clock, cues, dragPreview, composition, inputs, style, display, tracks, clips, assets, blurRegions, urlOf, elementFor }: {
+  /** Bumped when the transport creates a pooled element, so a new video layer finds it. */
+  poolVersion: number
   clock: PlaybackClock; cues: readonly Cue[]; dragPreview: Cue | null
   composition: Size; inputs: LayoutInputs; style: CaptionStyle; display: CaptionDisplay
-  overlays: readonly ImageOverlay[]; assets: readonly ProjectAsset[]; assetUrls: Map<string, string>
+  tracks: readonly Track[]; clips: readonly Clip[]; assets: readonly ProjectAsset[]; blurRegions: CaptionProject['blurRegions']
+  urlOf: (asset: ProjectAsset | null | undefined) => string | null
+  elementFor: (trackId: string, assetId: string) => HTMLVideoElement | null
 }) {
   const frameUs = useSyncExternalStore(clock.subscribe, clock.getUs)
-  const lineCue = dragPreview ?? cues.find((cue) => frameUs >= cue.startUs && frameUs < cue.endUs) ?? null
-  const wordIndex = display === 'word' && lineCue ? activeWordIndex(lineCue, frameUs) : null
+  const active = activeCueAt(frameUs, tracks, clips, cues)
+  const lineCue = dragPreview ?? active?.cue ?? null
+  const sourceUs = active && lineCue?.id === active.cue.id ? active.sourceUs : lineCue?.startUs ?? frameUs
+  const wordIndex = display === 'word' && lineCue ? activeWordIndex(lineCue, sourceUs) : null
   // Memoized on (lineCue, wordIndex) so the shown cue keeps one stable reference for the whole
-  // window a word is held — CaptionPreview's own layout/emphasis memo is keyed on cue identity, and
-  // rebuilding a fresh object every frame tick would defeat it.
+  // window a word is held — CaptionPreview's own layout/emphasis memo is keyed on cue identity.
   const shownCue = useMemo(() => wordIndex === null || !lineCue ? lineCue : wordDisplayCue(lineCue, wordIndex), [lineCue, wordIndex])
-  const fallback = display === 'word' && lineCue && wordIndex === null && frameUs >= lineCue.startUs && frameUs < lineCue.endUs
+  const fallback = display === 'word' && lineCue && wordIndex === null && sourceUs >= lineCue.startUs && sourceUs < lineCue.endUs
     ? wordMotionAvailability(lineCue).explanation : null
   const resolved = resolveCaptionMotion(style, lineCue?.motionOverride)
-  const overlayImages: CompositionLayerImage[] = useMemo(() => overlays
-    .filter((overlay) => frameUs >= overlay.startUs && frameUs < overlay.endUs)
-    .map((overlay) => ({ id: overlay.id, url: assetUrls.get(overlay.assetId) ?? null,
-      label: assets.find((asset) => asset.id === overlay.assetId)?.name ?? 'Missing asset',
-      rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit })),
-    [overlays, frameUs, assets, assetUrls])
+  const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
+  const layers: CompositionLayer[] = [
+    ...activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio'), { skipHidden: true }).map(({ clip, track }): CompositionLayer => {
+      const asset = assetById.get(clip.assetId)
+      const label = asset?.name ?? 'Missing file'
+      if (clip.kind === 'video') return { kind: 'video', id: `${track.id}/${clip.assetId}`, element: elementFor(track.id, clip.assetId), label, rect: clip.rect ?? null, opacity: clip.opacity, fit: clip.fit }
+      return { kind: 'image', id: clip.id, url: urlOf(asset), label, rect: clip.kind === 'image' ? clip.rect ?? null : null, opacity: clip.kind === 'image' ? clip.opacity : 1, fit: clip.kind === 'image' ? clip.fit : 'contain' }
+    }),
+    ...blurRegions.filter((region) => frameUs >= region.startUs && frameUs < region.endUs).map((region): CompositionLayer => ({ kind: 'blur', id: region.id, rect: region.rect, radius: region.radius })),
+  ]
   return <>
-    <CaptionPreview cue={shownCue} timestampUs={frameUs} composition={composition} inputs={inputs} motion={resolved.motion} motionSpeed={resolved.motionSpeed} fontSample={lineCue?.text}
-      layers={<CompositionLayers images={overlayImages} composition={composition} />} />
+    <CaptionPreview cue={shownCue} timestampUs={sourceUs} composition={composition} inputs={inputs} motion={resolved.motion} motionSpeed={resolved.motionSpeed} fontSample={lineCue?.text}
+      layers={<CompositionLayers layers={layers} composition={composition} />} />
     {fallback && <span role="status" data-word-display-notice style={{ position: 'absolute', bottom: 8, right: 8, maxWidth: '40%',
       fontSize: 12, color: '#ffda8b', background: '#101010cc', padding: 4, zIndex: 2 }}>Showing the full caption: {fallback}</span>}
   </>
@@ -1370,13 +1383,14 @@ function rateText(rate: MediaMetadata['frameRate']): string {
   return rate ? `${rate.numerator}/${rate.denominator} fps` : 'frame rate unknown'
 }
 
-function MediaSummary({ metadata }: { metadata: MediaMetadata }) {
+function MediaSummary({ name, metadata, format }: { name: string; metadata: MediaMetadata; format: CaptionProject['format'] | null }) {
   const codecs = metadata.streams.map((stream) => `${stream.kind}: ${stream.codec.name}`).join(' · ')
   return <div className="media-summary" aria-label="Probed media metadata">
-    <span>{metadata.width ?? '?'}×{metadata.height ?? '?'}</span>
+    <span title={name}>{metadata.width ?? '?'}×{metadata.height ?? '?'}</span>
     <span>{rateText(metadata.frameRate)}</span>
     <span>{metadata.rotationDegrees == null ? 'rotation unknown' : `${metadata.rotationDegrees}° rotation`}</span>
     <span>{codecs || 'no streams reported'}</span>
+    {format && <span title="The output frame every clip is fitted into">Sequence {format.width}×{format.height} · {rateText(format.frameRate)}</span>}
   </div>
 }
 
@@ -1399,17 +1413,6 @@ function ReplaceCaptionsReview({ name, existingCount, importedCount, onCancel, o
   </section></div>
 }
 
-/** A video picked or dropped into the media bin/stage/timeline while a different video is already
- * open. Phase 1 has one project source, so this always fully replaces it rather than inserting a
- * clip (docs/EDITING.md; Phase 2 changes this to a real multi-clip insert). */
-function ReplaceVideoReview({ name, currentName, onCancel, onReplace }: { name: string; currentName: string | null; onCancel: () => void; onReplace: () => void }) {
-  return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="replace-video-title">
-    <small>REPLACE VIDEO</small><h2 id="replace-video-title">Replace the open video?</h2>
-    <p>Opening <strong>{name}</strong> will replace {currentName ? <strong>{currentName}</strong> : 'the current video'} as this project’s source. Captions and other items keep their timing; undo restores the previous video.</p>
-    <div><button onClick={onCancel}>Cancel</button><button className="accent" onClick={onReplace}>Replace video</button></div>
-  </section></div>
-}
-
 function CueEditor({ cue, onUpdateText, onUpdateTime, onInvalid }: { cue: Cue; onUpdateText: (text: string) => boolean; onUpdateTime: (startUs: number, endUs: number) => boolean; onInvalid: (message: string) => void }) {
   const [text, setText] = useState(cue.text)
   const [start, setStart] = useState(formatTimestamp(cue.startUs, ':'))
@@ -1427,7 +1430,7 @@ function CueEditor({ cue, onUpdateText, onUpdateTime, onInvalid }: { cue: Cue; o
   }
   return <div className="editor-form">
     <label htmlFor="cue-text">Text<textarea id="cue-text" aria-describedby="cue-provenance" value={text} lang="ml" onChange={(event) => setText(event.target.value)} onBlur={() => { if (text !== cue.text && !onUpdateText(text)) setText(cue.text) }} /></label>
-    <div className="time-fields"><label htmlFor="cue-start">Start<input id="cue-start" aria-label="Cue start timestamp, HH hours MM minutes SS seconds milliseconds" value={start} onChange={(event) => setStart(event.target.value)} onBlur={changeTime} /></label><label htmlFor="cue-end">End<input id="cue-end" aria-label="Cue end timestamp, HH hours MM minutes SS seconds milliseconds" value={end} onChange={(event) => setEnd(event.target.value)} onBlur={changeTime} /></label></div>
+    <div className="time-fields"><label htmlFor="cue-start">Start<input id="cue-start" aria-label="Cue start timestamp in its video, HH hours MM minutes SS seconds milliseconds" value={start} onChange={(event) => setStart(event.target.value)} onBlur={changeTime} /></label><label htmlFor="cue-end">End<input id="cue-end" aria-label="Cue end timestamp in its video, HH hours MM minutes SS seconds milliseconds" value={end} onChange={(event) => setEnd(event.target.value)} onBlur={changeTime} /></label></div>
     <TimingProvenance cue={cue} />
   </div>
 }
