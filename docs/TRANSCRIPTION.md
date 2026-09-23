@@ -234,7 +234,23 @@ disclosure text: the Gemini text states that speech audio is uploaded to Google.
    point, which can fall inside a word.
 3. **Recognition** (`electron/geminiRecognition.ts`, shared with alignment): each chunk is uploaded to the Files
    API and sent to `gemini-3.5-transcribe` in verbatim mode with word timestamps and `store: false`. The upload is
-   deleted best-effort. Locale hints are `ml-IN` + `en-IN` for `auto` (mixed), `ml-IN` or `en-IN` otherwise.
+   deleted best-effort. **No prompt or system instruction is sent**: `gemini-3.5-transcribe` is a dedicated speech
+   model, and its only language control is `generation_config.transcription_config.language_codes`. `auto` (mixed)
+   sends **no `language_codes` at all**; `ml` and `en` send `ml-IN` or `en-IN`. The transcription docs
+   (`https://ai.google.dev/gemini-api/docs/transcribe`) state that "if omitted or empty (`[]`), the model
+   automatically detects the language and handles code-switching" and that it "handles intra-sentence and
+   inter-sentential code-switching **without manual configuration**"; Google's own word-timestamp sample sends no
+   `language_codes`. Pinning `ml-IN` + `en-IN` for `auto` *was* that manual configuration, and because recognition
+   is one request per speech chunk, the model committed to a single language per chunk and wrote spoken English
+   phonetically in Malayalam script (reported: "അപ്പോ See you in next video" came back as
+   "അപ്പോ സീ യു ഇൻ നെക്സ്റ്റ് വീഡിയോ"). `scripts/gemini-recognition-probe.ts` still compares the former default
+   against detection, a system instruction and custom vocabulary on a real clip (see docs/decisions/evidence/ once
+   run; **still not run** — the change above rests on the published docs, not a measurement). Note the docs also say
+   `custom_vocabulary` cannot be combined with word-level timestamps, so that probe variant cannot be a candidate
+   default while word timing is required. `geminiRecognizer` accepts an optional `systemInstruction`
+   and `customVocabulary`, wired only for that probe today. Any annotation that cannot become a timed word
+   (wrong type, empty text, or an invalid/non-positive offset) is now counted as `droppedAnnotations` instead of
+   silently vanishing.
 4. **Segments** (`segmentsFromWords` in `electron/geminiTranscription.ts`): timed words become segments at pauses of
    ≥ 800 ms, at sentence-ending punctuation, or at 30 s. Segment text is the exact word texts joined by single spaces.
    Punctuation-only tokens join the previous word. A word overlapping its predecessor starts at the predecessor's end
@@ -245,8 +261,16 @@ disclosure text: the Gemini text states that speech audio is uploaded to Google.
    as whisper.cpp. Gemini reports no language; `auto` is recorded as `ml`, matching the alignment path.
 6. **Provenance**: `transcriptionRuns[]` is now a union. Existing whisper.cpp records are unchanged. Gemini records carry
    `provider: 'gemini'`, engine/model ids, requested/recorded language, extraction and gating versions,
-   chunk/silence/segment/adjusted/word/dropped-word counts, optional token usage and the original recognition. No key and
+   chunk/silence/segment/adjusted/word/dropped-word counts, an optional `droppedAnnotationCount` (schema-2-compatible;
+   older runs never recorded it), optional token usage and the original recognition. No key and
    no raw provider response are stored. Captions get real `model` word timing, so grouping uses real pauses.
+
+The Transcribe dialog's **Spoken language** select now shows a hint under it for whichever option is chosen.
+"Automatic — mixed languages (recommended)" states that Gemini detects the language and switches mid-sentence;
+"Malayalam only"/"English only" remain explicit that they force that script for the whole clip and transliterate
+the other language rather than keeping it in its own script. The stored value for automatic is still `auto`, so no
+migration was needed. The choice persists across sessions (`localStorage`,
+`caption-studio.transcription-gemini-language`) like the engine and translation-target choices already did.
 
 Limitations: no live request has been run from this code (see STATUS.md). Provider availability, charges, annotation
 compatibility and Malayalam accuracy are unverified. Cancellation aborts the in-flight request; deletion of an upload

@@ -34,8 +34,13 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
     const right = Math.max(region.x + region.width, emphLeft + emphWidth) + appearance.outlineWidth
     return { left, width: right - left }
   }
-  return <div data-caption-renderer="1" data-caption-motion={frame.motion ?? 'static-clean'} lang="ml" aria-label={layout.lines.map((line) => line.text + line.separator).join('')}
-    data-warnings={layout.warnings.join(';')} style={{ position: 'absolute', left: layout.bounds.x, top: layout.bounds.y,
+  const rotation = appearance.rotation
+  // Rotation is applied here, after layout, around the block's own center — never fed into
+  // `layoutCaption`'s wrap/fit math (`renderer.ts`), which stays axis-aligned so line breaking and
+  // export parity are unaffected by it. Skipping the wrapper at 0deg keeps unrotated output exactly
+  // what it was before this existed (the export parity fixture's byte-pinned case included).
+  const renderer = <div data-caption-renderer="1" data-caption-motion={frame.motion ?? 'static-clean'} lang="ml" aria-label={layout.lines.map((line) => line.text + line.separator).join('')}
+    data-warnings={layout.warnings.join(';')} style={{ position: 'absolute', left: rotation ? 0 : layout.bounds.x, top: rotation ? 0 : layout.bounds.y,
       width: layout.bounds.width / layout.fitScale, height: layout.bounds.height / layout.fitScale,
       transform: `scale(${layout.fitScale})`, transformOrigin: 'top left', opacity: frame.opacity,
       background: appearance.background, color: appearance.color, textShadow: appearance.shadow,
@@ -93,6 +98,11 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
         })}
       </div>
     })}
+  </div>
+  if (!rotation) return renderer
+  return <div style={{ position: 'absolute', left: layout.bounds.x, top: layout.bounds.y,
+    width: layout.bounds.width, height: layout.bounds.height, transform: `rotate(${rotation}deg)`, transformOrigin: 'center' }}>
+    {renderer}
   </div>
 }
 
@@ -203,7 +213,7 @@ export function useCompositionProjection(ref: RefObject<HTMLElement | null>, com
   return preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
 }
 
-export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers }: {
+export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers, overCaption }: {
   cue: MotionCue | null
   timestampUs: number; composition: Size; inputs?: LayoutInputs; motion?: CaptionMotion; motionSpeed?: number
   /** Observe the actual preview evaluation; export excludes editor notices from caption pixels. */
@@ -212,8 +222,12 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
    * display so switching between a line's own words never re-triggers the font-loading effect
    * (which would otherwise show nothing for a frame at every word boundary). */
   fontSample?: string
-  /** Video, image and blur layers, painted inside the same scaled composition wrapper, below captions. */
+  /** Video, image, blur and pinned frame-paint (vignette/letterbox) layers, painted inside the same
+   * scaled composition wrapper, below captions. */
   layers?: ReactNode
+  /** Fade/flash: the one frame-paint effect that must cover the captions too (docs/EDITING.md
+   * "Frame-paint effects"), painted inside the same scaled wrapper but after `CaptionView`. */
+  overCaption?: ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const projection = useCompositionProjection(ref, composition)
@@ -272,6 +286,7 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
       height: composition.height, transform: `scale(${projection.scale})`, transformOrigin: 'top left' }}>
       {layers}
       {frame && <CaptionView key={`${motion}:${timestampUs}`} frame={frame} />}
+      {overCaption}
     </div>}
   </div>
 }

@@ -11,11 +11,14 @@ const asset = (id: string, kind: ProjectAsset['kind'], durationUs: number | null
 const video = (id: string, assetId: string, timelineStartUs: number, sourceStartUs = 0, sourceEndUs = 10 * US): Clip =>
   ({ kind: 'video', id, trackId: 'V1', assetId, timelineStartUs, sourceStartUs, sourceEndUs, opacity: 1, fit: 'contain', gain: 1 })
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 5, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video'), asset('img', 'image')],
-  tracks: [{ id: 'V1', kind: 'video', name: '', muted: false, hidden: false, locked: false }], clips: [], blurRegions: [], markers: [],
+  schemaVersion: 10, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video'), asset('img', 'image')],
+  tracks: [{ id: 'V1', kind: 'video', name: '', muted: false, hidden: false, locked: false }], clips: [],
+  captionTracks: [{ id: 'C1', name: '', locked: false }], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
 })
-const cue = (id: string, mediaAssetId?: string) => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'imported' as const, needsReview: false, textSource: 'imported' as const, words: [] })
+// Bound to `C1` by default so tests about `mediaAssetId` binding don't also see a caption-track stamp.
+const cue = (id: string, mediaAssetId?: string, captionTrackId: string | undefined = 'C1') =>
+  ({ id, mediaAssetId, captionTrackId, startUs: 0, endUs: US, text: id, timingSource: 'imported' as const, needsReview: false, textSource: 'imported' as const, words: [] })
 
 describe('project clip helpers', () => {
   it('lists the videos in order of first appearance on the timeline, and picks the first as primary', () => {
@@ -38,6 +41,15 @@ describe('project clip helpers', () => {
     expect(bindUnboundItems(withVideo, 'x').cues.map((entry) => entry.mediaAssetId)).toEqual(['x', 'y'])
     const bound = project({ cues: [cue('d', 'y')], clips: [video('a', 'x', 0)] })
     expect(bindUnboundItems(bound, 'x')).toBe(bound)
+  })
+
+  it('binds unbound captions to the project’s first caption track, independently of any video binding', () => {
+    const value = project({ cues: [cue('c', 'x', undefined), cue('d', 'y')] })
+    expect(bindUnboundItems(value, null).cues.map((entry) => entry.captionTrackId)).toEqual(['C1', 'C1'])
+    const alreadyBound = project({ cues: [cue('c', 'x')] })
+    expect(bindUnboundItems(alreadyBound, null)).toBe(alreadyBound)
+    const noCaptionTracks = project({ cues: [cue('c', 'x', undefined)], captionTracks: [] })
+    expect(bindUnboundItems(noCaptionTracks, null)).toBe(noCaptionTracks)
   })
 
   it('binds new captions to the explicit video, else the sequence’s only one, else nothing', () => {

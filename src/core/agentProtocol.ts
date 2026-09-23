@@ -36,7 +36,7 @@ export const agentRequestSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ ...base, kind: z.literal('run-commands'), commands: z.array(editCommandSchema).min(1).max(200) }),
   z.strictObject({ ...base, kind: z.literal('seek'), sequenceUs: z.number().int().nonnegative() }),
-  z.strictObject({ ...base, kind: z.literal('select'), selection: z.strictObject({ kind: z.enum(['cue', 'clip', 'blur', 'marker']), id: z.string().min(1) }).nullable() }),
+  z.strictObject({ ...base, kind: z.literal('select'), selection: z.strictObject({ kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'marker']), id: z.string().min(1) }).nullable() }),
   z.strictObject({ ...base, kind: z.literal('undo') }),
   z.strictObject({ ...base, kind: z.literal('redo') }),
   z.strictObject({ ...base, kind: z.literal('prepare-snapshot'), sequenceUs: z.number().int().nonnegative() }),
@@ -94,6 +94,8 @@ export type ProjectSummary = {
   tracks: { id: string; kind: string; name: string; muted: boolean; hidden: boolean; locked: boolean }[]
   clips: { id: string; kind: string; trackId: string; assetId: string; timelineStartUs: number; sourceStartUs: number; sourceEndUs: number }[]
   blurRegions: { id: string; startUs: number; endUs: number }[]
+  effects: { id: string; kind: string; startUs: number; endUs: number; enabled: boolean }[]
+  textOverlays: { id: string; text: string; startUs: number; endUs: number; layerOrder: number }[]
   captionStyle: CaptionProject['captionStyle']
   cueCount: number
   warnings: ValidationIssue[]
@@ -111,6 +113,8 @@ export function summarizeProject(
     tracks: project.tracks.map((track) => ({ id: track.id, kind: track.kind, name: track.name, muted: track.muted, hidden: track.hidden, locked: track.locked })),
     clips: project.clips.map((clip) => ({ id: clip.id, kind: clip.kind, trackId: clip.trackId, assetId: clip.assetId, timelineStartUs: clip.timelineStartUs, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs })),
     blurRegions: project.blurRegions.map((region) => ({ id: region.id, startUs: region.startUs, endUs: region.endUs })),
+    effects: project.effects.map((effect) => ({ id: effect.id, kind: effect.kind, startUs: effect.startUs, endUs: effect.endUs, enabled: effect.enabled })),
+    textOverlays: project.textOverlays.map(({ id, text, startUs, endUs, layerOrder }) => ({ id, text, startUs, endUs, layerOrder })),
     captionStyle: project.captionStyle, cueCount: project.cues.length, warnings,
   }
 }

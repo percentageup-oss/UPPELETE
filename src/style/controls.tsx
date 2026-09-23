@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react'
 import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, ResetIcon } from './icons'
 
 /** A collapsible labelled group of style rows, built on native `<details>` for free keyboard
@@ -10,8 +10,10 @@ export function Section({ id, title, defaultOpen = true, children }: { id: strin
   </details>
 }
 
-/** One labelled control row with an optional reset-to-default button. The reset column is always
- * reserved (even without a reset) so every row's control lines up in the same place. */
+/** One labelled control row: label · control · a trailing column, always reserved (even with
+ * nothing in it) so every row's control lines up in the same place across every inspector. Today
+ * the trailing column holds only the reset-to-default button; it is reserved so a future per-
+ * property keyframe toggle can drop in without reflowing every row. */
 export function Row({ label, htmlFor, onReset, isDefault = true, hint, children }: {
   label: string; htmlFor?: string; onReset?: () => void; isDefault?: boolean; hint?: string; children: ReactNode
 }) {
@@ -48,53 +50,110 @@ export function Stepper<T extends string>({ id, value, options, onChange }: {
   </div>
 }
 
-/** A range slider paired with a numeric readout/input, matching the app's existing
- * draft-on-change / commit-on-release control contract. The unit renders inside the number box. */
-export function SliderWithNumber({ id, min, max, step = 1, value, unit, onDraft, onCommit }: {
-  id: string; min: number; max: number; step?: number; value: number; unit?: string
+/** A typed number, or `null` while the text is not a number yet (empty, "-", "."), so a
+ * half-typed value never reaches the project. */
+export function parseNumber(text: string): number | null {
+  if (!text.trim()) return null
+  const n = Number(text)
+  return Number.isFinite(n) ? n : null
+}
+
+/** A typed percentage as a 0–1 fraction clamped to the range, or `null` while the text is not a
+ * number yet. */
+export function parsePercent(text: string): number | null {
+  const percent = parseNumber(text)
+  return percent === null ? null : Math.max(0, Math.min(100, percent)) / 100
+}
+
+function decimalsOf(step: number): number {
+  const text = String(step)
+  const point = text.indexOf('.')
+  return point === -1 ? 0 : text.length - point - 1
+}
+
+function roundToStep(value: number, step: number): number {
+  const factor = 10 ** decimalsOf(step)
+  return Math.round(value * factor) / factor
+}
+
+/** A bordered numeric value box: a real `<input>` (not `type="number"`, whose browser-drawn
+ * spinner arrows eat most of the box's width and were clipping values like "0.76" down to "0.7").
+ * The typed text is held locally, like a normal text field, so a half-typed value ("0.", on the
+ * way to "0.76") is never reformatted out from under the caret — each valid keystroke drafts to
+ * the preview, and the value commits, clamped, once on blur or Enter. Arrow keys step by `step`
+ * (×10 with Shift) and commit immediately, matching the paired slider's own step. */
+export function NumberField({ id, value, min, max, step = 1, unit, disabled = false, ariaLabel, onDraft, onCommit }: {
+  id: string; value: number; min?: number; max?: number; step?: number; unit?: string; disabled?: boolean; ariaLabel?: string
   onDraft: (value: number) => void; onCommit: (value: number) => void
 }) {
+  const [text, setText] = useState<string | null>(null)
+  const shown = text ?? String(value)
+  const clamp = (n: number) => Math.max(min ?? -Infinity, Math.min(max ?? Infinity, n))
+  const step10 = (delta: 1 | -1, multiplier = 1) => {
+    const next = clamp(roundToStep(value + delta * step * multiplier, step))
+    setText(null)
+    onDraft(next)
+    onCommit(next)
+  }
+  return <span className="number-field">
+    <input id={id} type="text" inputMode="decimal" value={shown} disabled={disabled} aria-label={ariaLabel}
+      onChange={(event) => {
+        setText(event.target.value)
+        const parsed = parseNumber(event.target.value)
+        if (parsed !== null) onDraft(parsed)
+      }}
+      onBlur={() => {
+        const parsed = text === null ? null : parseNumber(text)
+        setText(null)
+        onCommit(clamp(parsed ?? value))
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') { event.currentTarget.blur(); return }
+        if (event.key === 'Escape') { setText(null); event.currentTarget.blur(); return }
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+        event.preventDefault()
+        step10(event.key === 'ArrowUp' ? 1 : -1, event.shiftKey ? 10 : 1)
+      }} />
+    {unit && <span className="number-field-unit" aria-hidden="true">{unit}</span>}
+  </span>
+}
+
+/** A range slider paired with a `NumberField` readout, matching the app's existing draft-on-change
+ * / commit-on-release control contract. The filled portion of the track (`--fill`) tracks the
+ * value live, like the reference control system's sliders. */
+export function SliderWithNumber({ id, min, max, step = 1, value, unit, disabled = false, onDraft, onCommit }: {
+  id: string; min: number; max: number; step?: number; value: number; unit?: string; disabled?: boolean
+  onDraft: (value: number) => void; onCommit: (value: number) => void
+}) {
+  const fill = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) * 100 : 0
   return <div className="slider-number">
-    <input id={id} type="range" min={min} max={max} step={step} value={value}
+    <input id={id} type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+      style={{ '--fill': `${fill}%` } as CSSProperties}
       onChange={(event) => onDraft(Number(event.target.value))} onPointerUp={() => onCommit(value)} onKeyUp={() => onCommit(value)} />
-    <span className="slider-value">
-      <input id={`${id}-value`} type="number" min={min} max={max} step={step} value={value}
-        onChange={(event) => onDraft(Number(event.target.value))} onBlur={() => onCommit(Math.max(min, Math.min(max, value)))} />
-      {unit && <span aria-hidden="true">{unit}</span>}
-    </span>
+    <NumberField id={`${id}-value`} value={value} min={min} max={max} step={step} unit={unit} disabled={disabled} onDraft={onDraft} onCommit={onCommit} />
   </div>
 }
 
-/** A typed percentage as a 0–1 fraction clamped to the range, or null while the text is not a
- * number yet (empty, "-", "."), so a half-typed value never reaches the project. */
-export function parsePercent(text: string): number | null {
-  if (!text.trim()) return null
-  const percent = Number(text)
-  return Number.isFinite(percent) ? Math.max(0, Math.min(100, percent)) / 100 : null
+/** A 0–1 fraction edited as a percentage, built on `NumberField`. */
+export function PercentField({ id, value, disabled, onDraft, onCommit }: {
+  id: string; value: number; disabled?: boolean; onDraft: (fraction: number) => void; onCommit: (fraction: number) => void
+}) {
+  return <NumberField id={id} value={Math.round(value * 1000) / 10} min={0} max={100} step={.1} unit="%" disabled={disabled}
+    onDraft={(percent) => onDraft(Math.max(0, Math.min(100, percent)) / 100)}
+    onCommit={(percent) => onCommit(Math.max(0, Math.min(100, percent)) / 100)} />
 }
 
-/** A 0–1 fraction edited as a percentage. The typed text is held locally so intermediate input
- * ("7" on the way to "70") is never reformatted under the caret; each valid keystroke drafts to
- * the preview and the value commits once on blur or Enter. */
-export function PercentField({ id, value, onDraft, onCommit }: {
-  id: string; value: number; onDraft: (fraction: number) => void; onCommit: (fraction: number) => void
+/** A row of timecode fields (Start/Length, Start/End, …), each `HH:MM:SS:mmm` text parsed and
+ * validated by the caller (`core/time.ts`'s `parseEditedTimestamp`). Shared by every inspector's
+ * timing row so they all read and lay out identically. */
+export function TimeFields({ fields }: {
+  fields: readonly { id: string; label: string; value: string; ariaLabel?: string; onChange: (text: string) => void; onBlur: () => void }[]
 }) {
-  const [text, setText] = useState<string | null>(null)
-  const shown = text ?? String(Math.round(value * 1000) / 10)
-  return <div className="unit-field">
-    <input id={id} type="number" min={0} max={100} step={.1} value={shown}
-      onChange={(event) => {
-        setText(event.target.value)
-        const fraction = parsePercent(event.target.value)
-        if (fraction !== null) onDraft(fraction)
-      }}
-      onBlur={() => {
-        const fraction = text === null ? null : parsePercent(text)
-        setText(null)
-        onCommit(fraction ?? value)
-      }}
-      onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} />
-    <span aria-hidden="true">%</span>
+  return <div className="time-fields">
+    {fields.map((field) => <label key={field.id} htmlFor={field.id}>{field.label}
+      <input id={field.id} aria-label={field.ariaLabel} value={field.value}
+        onChange={(event) => field.onChange(event.target.value)} onBlur={field.onBlur} />
+    </label>)}
   </div>
 }
 

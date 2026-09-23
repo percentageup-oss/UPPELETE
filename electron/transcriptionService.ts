@@ -259,6 +259,7 @@ export class TranscriptionService {
           adjustedSegmentCount: transcript.segments.filter((segment) => segment.timingAdjustment !== null).length,
           wordCount: transcript.segments.reduce((sum, segment) => sum + segment.words.length, 0),
           droppedWordCount: report.droppedWords,
+          droppedAnnotationCount: report.droppedAnnotations,
           ...(report.inputTokens ? { inputTokens: report.inputTokens } : {}),
           ...(report.outputTokens ? { outputTokens: report.outputTokens } : {}),
           ...(translated ? { translation: this.translationProvenance(translated) } : {}),

@@ -1,25 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type { CaptionWord, Cue } from './core/model'
-import type { Clip, Marker, ProjectAsset, Track } from './core/edit'
+import type { BlurRegion, CaptionTrack, Clip, EffectRegion, Marker, ProjectAsset, TextOverlay, Track, ZoomRegion } from './core/edit'
 import { anchoredScrollLeft, dragCueBy, pixelToTime, snapDelta, timeToPixel, type CueDragMode } from './core/timeline'
 import { captionClips, clipEndUs, clipLengthUs, spansInSequence } from './core/timelineModel'
 import { gapsOnTrack, snapTargets, type ClipEdge, type EditMode } from './core/clipEdits'
 import { previewClipDrag, type ClipDragMode } from './core/clipDrag'
+import { DEFAULT_ZOOM_REGION_US, previewZoomDrag, type ZoomDragMode } from './core/zoomRegion'
+import { DEFAULT_BLUR_REGION_US, previewBlurDrag, type BlurDragMode } from './core/blurRegion'
+import { previewEffectDrag, type EffectDragMode } from './core/effectCommands'
 import { timelineRows, trackAtY, trackRows, videoStackHeightPx, RULER_HEIGHT_PX } from './core/timelineLayout'
 import type { Selection } from './core/timelineItems'
 import { formatClock } from './core/time'
 import type { WaveformData } from './core/waveform'
 import { TimelineToolbar, type ClipTools, type TimelineActions } from './TimelineToolbar'
 import type { CaptionDisplay } from './captions/wordDisplay'
-import { dropContent, type AssetDragPayload } from './core/dragPayload'
+import { dropContent, type AssetDragPayload, type PresetDragPayload } from './core/dragPayload'
 import { DEFAULT_IMAGE_CLIP_US, dropTimeAt } from './core/timelineDrop'
 import { CaptionsTrack, type CaptionSpan } from './timeline/CaptionsTrack'
+import { ZoomLane } from './timeline/ZoomLane'
+import { BlurLane } from './timeline/BlurLane'
+import { EffectLane } from './timeline/EffectLane'
+import { TextLane } from './timeline/TextLane'
+import { packTextOverlays } from './core/textLayout'
 import { ClipBlock } from './timeline/ClipBlock'
 import { VideoClipContent } from './timeline/VideoClipContent'
 import { AudioClipContent } from './timeline/AudioClipContent'
 import { TimelineRuler, useRulerTicks } from './timeline/TimelineRuler'
-import { TimelineTrackHeaders, type TrackHeaderActions } from './timeline/TimelineTrackHeaders'
+import { TimelineTrackHeaders, type CaptionTrackHeaderActions, type TrackHeaderActions } from './timeline/TimelineTrackHeaders'
 import type { ThumbnailQueue } from './timeline/thumbnailQueue'
 
 type CueDrag = {
@@ -46,13 +54,52 @@ type ClipDrag = {
   contentWidthPx: number
   originPlayheadUs: number
 }
+/** Sequence-timed, one lane, no source clamping — the simplest of the three drag kinds. */
+type ZoomDrag = {
+  kind: 'zoom'
+  region: ZoomRegion
+  mode: ZoomDragMode
+  originClientX: number
+  pointerId: number
+  contentWidthPx: number
+  originPlayheadUs: number
+}
+/** Sequence-timed like zoom, but no lane to fit into — blur regions may overlap. */
+type BlurDrag = {
+  kind: 'blur'
+  region: BlurRegion
+  mode: BlurDragMode
+  originClientX: number
+  pointerId: number
+  contentWidthPx: number
+  originPlayheadUs: number
+}
+/** Sequence-timed like zoom, one lane **per kind** — a vignette only fits the gap around other
+ * vignettes, never a letterbox (docs/EDITING.md "Frame-paint effects"). */
+type EffectDrag = {
+  kind: 'effect'
+  region: EffectRegion
+  mode: EffectDragMode
+  originClientX: number
+  pointerId: number
+  contentWidthPx: number
+  originPlayheadUs: number
+}
 type DividerDrag = { pointerId: number; originClientY: number; originSplit: number; mediaHeightPx: number }
 
 type TimelineProps = {
   /** Every caption, in the source time of the video it names. */
   cues: Cue[]
   tracks: Track[]
+  captionTracks: CaptionTrack[]
   clips: Clip[]
+  /** The one zoom lane over the whole program (schema 7); sequence-timed, never per-track. */
+  zoomRegions?: ZoomRegion[]
+  /** The blur lane, shown only when non-empty (`timelineLayout.ts`); regions may overlap. */
+  blurRegions?: BlurRegion[]
+  /** Frame-paint effects (schema 9): one lane per kind present, shown only when used, like blur. */
+  effects?: EffectRegion[]
+  textOverlays?: TextOverlay[]
   assets: ProjectAsset[]
   /** Sequence time. */
   currentUs: number
@@ -80,7 +127,21 @@ type TimelineProps = {
   onClipClone: (clip: Clip) => void
   onClipTrim: (clipId: string, edge: ClipEdge, deltaUs: number) => void
   onCloseGap: (trackId: string, atUs: number) => void
+  onSelectZoom?: (zoomId: string) => void
+  onZoomMove?: (zoomId: string, startUs: number) => void
+  onZoomTrim?: (zoomId: string, edge: 'start' | 'end', deltaUs: number) => void
+  onSelectBlur?: (blurId: string) => void
+  onBlurMove?: (blurId: string, startUs: number) => void
+  onBlurTrim?: (blurId: string, edge: 'start' | 'end', deltaUs: number) => void
+  onSelectEffect?: (effectId: string) => void
+  onEffectMove?: (effectId: string, startUs: number) => void
+  onEffectTrim?: (effectId: string, edge: 'start' | 'end', deltaUs: number) => void
+  onSelectText?: (textId: string) => void
+  onAddText?: () => void
+  onTextMove?: (textId: string, startUs: number) => void
+  onTextTrim?: (textId: string, edge: 'start' | 'end', deltaUs: number) => void
   trackActions: TrackHeaderActions
+  captionTrackActions: CaptionTrackHeaderActions
   /** A file's measured duration where its probe reported none, for clamping trims. */
   assetDurationUs: (assetId: string) => number | null
   display: CaptionDisplay
@@ -97,6 +158,9 @@ type TimelineProps = {
   onDropAsset?: (payload: AssetDragPayload, sequenceUs: number, trackId: string | null) => void
   /** Files dragged in from Finder/Explorer. */
   onDropFiles?: (files: File[], sequenceUs: number, trackId: string | null) => void
+  /** A panel preset dropped anywhere on the timeline (the Effects panel's zoom/blur tiles); it
+   * creates its own item rather than an asset clip, so it carries no track. */
+  onDropPreset?: (payload: PresetDragPayload, sequenceUs: number) => void
   thumbnailQueue?: ThumbnailQueue | null
 }
 
@@ -106,14 +170,17 @@ const SNAP_THRESHOLD_PX = 8
 const FOLLOW_MARGIN = 0.1
 
 export function Timeline(props: TimelineProps) {
-  const { cues, tracks, clips, assets, currentUs, durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
+  const { cues, tracks, captionTracks, clips, zoomRegions = [], blurRegions = [], effects = [], textOverlays = [], assets, currentUs, durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
   const [zoom, setZoom] = useState(1)
   const [snap, setSnap] = useState(true)
   const [expanded, setExpanded] = useState(false)
   const [mediaSplit, setMediaSplit] = useState(.5)
-  const [drag, setDrag] = useState<CueDrag | ClipDrag | null>(null)
+  const [drag, setDrag] = useState<CueDrag | ClipDrag | ZoomDrag | BlurDrag | EffectDrag | null>(null)
   const [draggedCue, setDraggedCue] = useState<Cue | null>(null)
   const [clipPreview, setClipPreview] = useState<Clip | null>(null)
+  const [zoomPreview, setZoomPreview] = useState<ZoomRegion | null>(null)
+  const [blurPreview, setBlurPreview] = useState<BlurRegion | null>(null)
+  const [effectPreview, setEffectPreview] = useState<EffectRegion | null>(null)
   const [snapGuideUs, setSnapGuideUs] = useState<number | null>(null)
   const [dividerDrag, setDividerDrag] = useState<DividerDrag | null>(null)
   const [scrubPointer, setScrubPointer] = useState<number | null>(null)
@@ -126,6 +193,10 @@ export function Timeline(props: TimelineProps) {
   callbacks.current = props
   const selectedCueId = selection?.kind === 'cue' ? selection.id : null
   const selectedClipId = selection?.kind === 'clip' ? selection.id : null
+  const selectedZoomId = selection?.kind === 'zoomRegion' ? selection.id : null
+  const selectedBlurId = selection?.kind === 'blur' ? selection.id : null
+  const selectedEffectId = selection?.kind === 'effect' ? selection.id : null
+  const selectedTextId = selection?.kind === 'text' ? selection.id : null
 
   useEffect(() => {
     const body = bodyRef.current
@@ -141,16 +212,25 @@ export function Timeline(props: TimelineProps) {
     return () => observer.disconnect()
   }, [])
 
-  const rows = useMemo(() => timelineRows(tracks, viewport.heightPx, mediaSplit), [tracks, viewport.heightPx, mediaSplit])
+  const effectKinds = useMemo(() => [...new Set(effects.map((effect) => effect.kind))], [effects])
+  const textRows = useMemo(() => Math.max(1, packTextOverlays(textOverlays).rows.length), [textOverlays])
+  const rows = useMemo(() => timelineRows(tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length > 0, effectKinds, textRows),
+    [tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length, effectKinds, textRows])
   const gridStyle = { gridTemplateRows: trackRows(rows) } as CSSProperties
   const mediaHeightPx = rows.filter((row) => row.kind === 'track').reduce((sum, row) => sum + row.heightPx, 0)
   const trackById = useMemo(() => new Map(tracks.map((track) => [track.id, track])), [tracks])
+  const captionTrackById = useMemo(() => new Map(captionTracks.map((track) => [track.id, track])), [captionTracks])
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
   const clipCounts = useMemo(() => {
     const counts = new Map<string, number>()
     for (const clip of clips) counts.set(clip.trackId, (counts.get(clip.trackId) ?? 0) + 1)
     return counts
   }, [clips])
+  const captionCueCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const cue of cues) if (cue.captionTrackId) counts.set(cue.captionTrackId, (counts.get(cue.captionTrackId) ?? 0) + 1)
+    return counts
+  }, [cues])
 
   // Captions are seen through the visible video clips of their own file.
   const visibleVideo = useMemo(() => captionClips(tracks, clips), [tracks, clips])
@@ -163,6 +243,9 @@ export function Timeline(props: TimelineProps) {
   const displayClips = clipPreview && drag?.kind === 'clip'
     ? drag.clone ? [...clips, clipPreview] : clips.map((clip) => clip.id === clipPreview.id ? clipPreview : clip)
     : clips
+  const displayZoomRegions = zoomPreview ? zoomRegions.map((region) => region.id === zoomPreview.id ? zoomPreview : region) : zoomRegions
+  const displayBlurRegions = blurPreview ? blurRegions.map((region) => region.id === blurPreview.id ? blurPreview : region) : blurRegions
+  const displayEffects = effectPreview ? effects.map((effect) => effect.id === effectPreview.id ? effectPreview : effect) : effects
   const ticks = useRulerTicks(durationUs, zoom)
 
   const updateZoom = (nextZoom: number, anchorUs = currentUs) => {
@@ -219,6 +302,7 @@ export function Timeline(props: TimelineProps) {
 
   const beginCueDrag = (event: ReactPointerEvent<HTMLElement>, cue: Cue, mode: CueDragMode, span: CaptionSpan) => {
     if (event.button !== 0) return
+    if (captionTrackById.get(cue.captionTrackId ?? '')?.locked) return
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -243,6 +327,36 @@ export function Timeline(props: TimelineProps) {
     const subject = clone ? { ...clip, id: crypto.randomUUID() } : clip
     setDrag({ kind: 'clip', clip: subject, mode, clone, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
     setClipPreview(subject)
+  }
+
+  const beginZoomDrag = (event: ReactPointerEvent<HTMLElement>, region: ZoomRegion, mode: ZoomDragMode) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    props.onSelectZoom?.(region.id)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDrag({ kind: 'zoom', region, mode, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setZoomPreview(region)
+  }
+
+  const beginBlurDrag = (event: ReactPointerEvent<HTMLElement>, region: BlurRegion, mode: BlurDragMode) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    props.onSelectBlur?.(region.id)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDrag({ kind: 'blur', region, mode, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setBlurPreview(region)
+  }
+
+  const beginEffectDrag = (event: ReactPointerEvent<HTMLElement>, region: EffectRegion, mode: EffectDragMode) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    props.onSelectEffect?.(region.id)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    setDrag({ kind: 'effect', region, mode, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setEffectPreview(region)
   }
 
   useEffect(() => {
@@ -288,7 +402,7 @@ export function Timeline(props: TimelineProps) {
         callbacks.current.onDragPreview(null)
         if (commit) callbacks.current.onDragCommit(dragged, preview, mode)
       }
-    } else {
+    } else if (drag.kind === 'clip') {
       const live = drag.clone ? drag.clip : clips.find((clip) => clip.id === drag.clip.id)
       if (!live) { setDrag(null); setClipPreview(null); return }
       const targets = snap ? snapTargetsFor(drag.clone ? [] : [live.id], null, drag.originPlayheadUs) : []
@@ -318,12 +432,116 @@ export function Timeline(props: TimelineProps) {
           if (preview.clip.timelineStartUs !== live.timelineStartUs || preview.clip.trackId !== live.trackId) callbacks.current.onClipMove(live.id, preview.clip.trackId, preview.clip.timelineStartUs)
         } else if (preview.appliedDeltaUs) callbacks.current.onClipTrim(live.id, drag.mode, preview.appliedDeltaUs)
       }
+    } else if (drag.kind === 'zoom') {
+      // Zoom regions are sequence-timed with no clip/media clamping — the simplest of the three: a
+      // free translation/resize (`previewZoomDrag`) clamped into the gap around every other region.
+      const dragged = zoomRegions.find((region) => region.id === drag.region.id)
+      if (!dragged) { setDrag(null); setZoomPreview(null); return }
+      const { mode } = drag
+      const others = zoomRegions.filter((region) => region.id !== dragged.id)
+      const targets = snap ? snapTargetsFor([], null, drag.originPlayheadUs) : []
+      const previewAt = (clientX: number) => {
+        const delta = sequenceDelta(clientX)
+        const free = previewZoomDrag(dragged, mode, delta, others)
+        const extra = snapDelta(free, mode, targets, thresholdUs)
+        const preview = extra ? previewZoomDrag(dragged, mode, delta + extra, others) : free
+        const edgeUs = mode === 'end' ? preview.endUs : preview.startUs
+        const guideUs = extra ? (mode === 'move' ? [preview.startUs, preview.endUs].find((edge) => targets.includes(edge)) ?? null : edgeUs) : null
+        return { preview, guideUs }
+      }
+      move = (event) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview, guideUs } = previewAt(event.clientX)
+        setZoomPreview(preview)
+        setSnapGuideUs(guideUs)
+      }
+      finish = (event, commit) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview } = previewAt(event.clientX)
+        setDrag(null); setZoomPreview(null); setSnapGuideUs(null)
+        if (!commit) return
+        if (mode === 'move') {
+          if (preview.startUs !== dragged.startUs) callbacks.current.onZoomMove?.(dragged.id, preview.startUs)
+        } else {
+          const deltaUs = mode === 'start' ? preview.startUs - dragged.startUs : preview.endUs - dragged.endUs
+          if (deltaUs) callbacks.current.onZoomTrim?.(dragged.id, mode, deltaUs)
+        }
+      }
+    } else if (drag.kind === 'blur') {
+      // Blur regions are sequence-timed with no lane to fit into — several may overlap
+      // (`blurRegion.ts`), so `previewBlurDrag` clamps only against zero and its own minimum length.
+      const dragged = blurRegions.find((region) => region.id === drag.region.id)
+      if (!dragged) { setDrag(null); setBlurPreview(null); return }
+      const { mode } = drag
+      const targets = snap ? snapTargetsFor([], null, drag.originPlayheadUs) : []
+      const previewAt = (clientX: number) => {
+        const delta = sequenceDelta(clientX)
+        const free = previewBlurDrag(dragged, mode, delta)
+        const extra = snapDelta(free, mode, targets, thresholdUs)
+        const preview = extra ? previewBlurDrag(dragged, mode, delta + extra) : free
+        const edgeUs = mode === 'end' ? preview.endUs : preview.startUs
+        const guideUs = extra ? (mode === 'move' ? [preview.startUs, preview.endUs].find((edge) => targets.includes(edge)) ?? null : edgeUs) : null
+        return { preview, guideUs }
+      }
+      move = (event) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview, guideUs } = previewAt(event.clientX)
+        setBlurPreview(preview)
+        setSnapGuideUs(guideUs)
+      }
+      finish = (event, commit) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview } = previewAt(event.clientX)
+        setDrag(null); setBlurPreview(null); setSnapGuideUs(null)
+        if (!commit) return
+        if (mode === 'move') {
+          if (preview.startUs !== dragged.startUs) callbacks.current.onBlurMove?.(dragged.id, preview.startUs)
+        } else {
+          const deltaUs = mode === 'start' ? preview.startUs - dragged.startUs : preview.endUs - dragged.endUs
+          if (deltaUs) callbacks.current.onBlurTrim?.(dragged.id, mode, deltaUs)
+        }
+      }
+    } else {
+      // Effects are sequence-timed like zoom, but one lane **per kind** — only other effects of the
+      // same kind constrain the gap (`previewEffectDrag`).
+      const dragged = effects.find((effect) => effect.id === drag.region.id)
+      if (!dragged) { setDrag(null); setEffectPreview(null); return }
+      const { mode } = drag
+      const others = effects.filter((effect) => effect.id !== dragged.id && effect.kind === dragged.kind)
+      const targets = snap ? snapTargetsFor([], null, drag.originPlayheadUs) : []
+      const previewAt = (clientX: number) => {
+        const delta = sequenceDelta(clientX)
+        const free = previewEffectDrag(dragged, mode, delta, others)
+        const extra = snapDelta(free, mode, targets, thresholdUs)
+        const preview = extra ? previewEffectDrag(dragged, mode, delta + extra, others) : free
+        const edgeUs = mode === 'end' ? preview.endUs : preview.startUs
+        const guideUs = extra ? (mode === 'move' ? [preview.startUs, preview.endUs].find((edge) => targets.includes(edge)) ?? null : edgeUs) : null
+        return { preview, guideUs }
+      }
+      move = (event) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview, guideUs } = previewAt(event.clientX)
+        setEffectPreview(preview)
+        setSnapGuideUs(guideUs)
+      }
+      finish = (event, commit) => {
+        if (event.pointerId !== drag.pointerId) return
+        const { preview } = previewAt(event.clientX)
+        setDrag(null); setEffectPreview(null); setSnapGuideUs(null)
+        if (!commit) return
+        if (mode === 'move') {
+          if (preview.startUs !== dragged.startUs) callbacks.current.onEffectMove?.(dragged.id, preview.startUs)
+        } else {
+          const deltaUs = mode === 'start' ? preview.startUs - dragged.startUs : preview.endUs - dragged.endUs
+          if (deltaUs) callbacks.current.onEffectTrim?.(dragged.id, mode, deltaUs)
+        }
+      }
     }
     const up = (event: PointerEvent) => finish(event, true)
     const cancel = (event: PointerEvent) => finish(event, false)
     const escape = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return
-      setDrag(null); setDraggedCue(null); setClipPreview(null); setSnapGuideUs(null)
+      setDrag(null); setDraggedCue(null); setClipPreview(null); setZoomPreview(null); setBlurPreview(null); setEffectPreview(null); setSnapGuideUs(null)
       if (drag.kind === 'cue') callbacks.current.onDragPreview(null)
     }
     window.addEventListener('pointermove', move)
@@ -336,7 +554,7 @@ export function Timeline(props: TimelineProps) {
       window.removeEventListener('pointercancel', cancel)
       window.removeEventListener('keydown', escape)
     }
-  }, [drag, durationUs, cues, clips, tracks, rows, snap, props.editMode])
+  }, [drag, durationUs, cues, clips, zoomRegions, blurRegions, effects, tracks, rows, snap, props.editMode])
 
   const seekAtClientX = (clientX: number) => {
     const content = contentRef.current
@@ -376,14 +594,16 @@ export function Timeline(props: TimelineProps) {
     setMediaSplit((split) => Math.max(0, Math.min(1, split + (event.key === 'ArrowUp' ? -8 : 8) / Math.max(1, mediaHeightPx))))
   }
 
+  // Enter selects; Space is deliberately left alone so it reaches the global play/pause shortcut
+  // even while a cue or clip is focused/selected.
   const selectCueFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, cue: Cue, span: CaptionSpan) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
+    if (event.key !== 'Enter') return
     event.preventDefault()
     event.stopPropagation()
     onSeek(span.startUs + Math.max(0, cue.startUs - span.sourceStartUs), cue.id)
   }
   const selectClipFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, clip: Clip) => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
+    if (event.key !== 'Enter') return
     event.preventDefault()
     event.stopPropagation()
     props.onSelectClip(clip.id)
@@ -407,7 +627,8 @@ export function Timeline(props: TimelineProps) {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
     const { timeUs } = dropTarget(event)
-    const widthUs = content.kind === 'asset' ? (content.payload.kind === 'image' ? DEFAULT_IMAGE_CLIP_US : content.payload.durationUs ?? 0) : 0
+    const widthUs = content.kind === 'asset' ? (content.payload.kind === 'image' ? DEFAULT_IMAGE_CLIP_US : content.payload.durationUs ?? 0)
+      : content.kind === 'preset' ? DEFAULT_ZOOM_REGION_US : 0
     setDropIndicator({ leftUs: timeUs, widthUs })
   }
   const onContentDrop = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -417,6 +638,7 @@ export function Timeline(props: TimelineProps) {
     event.preventDefault()
     const { timeUs, trackId } = dropTarget(event)
     if (content.kind === 'asset') props.onDropAsset?.(content.payload, timeUs, trackId)
+    else if (content.kind === 'preset') props.onDropPreset?.(content.payload, timeUs)
     else if (content.files.length) props.onDropFiles?.(content.files, timeUs, trackId)
   }
 
@@ -438,7 +660,9 @@ export function Timeline(props: TimelineProps) {
     />
     {/* --ruler-h is inherited by .gridlines and .snap-guide, which hang from below the ruler row. */}
     <div className="timeline-body" ref={bodyRef} style={{ '--ruler-h': `${RULER_HEIGHT_PX}px` } as CSSProperties}>
-      <TimelineTrackHeaders rows={rows} style={gridStyle} currentUs={currentUs} durationUs={durationUs} clipCounts={clipCounts} actions={props.trackActions}
+      <TimelineTrackHeaders rows={rows} style={gridStyle} currentUs={currentUs} durationUs={durationUs} clipCounts={clipCounts} captionCueCounts={captionCueCounts}
+        actions={props.trackActions} captionTrackActions={props.captionTrackActions}
+        onAddText={props.onAddText}
         dividerActive={dividerDrag !== null} dividerValue={mediaHeightPx ? Math.round(videoStackPx / mediaHeightPx * 100) : 50}
         onDividerPointerDown={beginDividerDrag} onDividerPointerMove={moveDivider} onDividerPointerUp={endDividerDrag} onDividerKeyDown={nudgeDivider} />
       <div className="timeline-viewport" ref={viewportRef} onScroll={(event) => { const left = event.currentTarget.scrollLeft; setViewport((state) => state.scrollLeft === left ? state : { ...state, scrollLeft: left }) }}>
@@ -448,11 +672,36 @@ export function Timeline(props: TimelineProps) {
             if (row.kind === 'ruler') return <TimelineRuler key="ruler" ticks={ticks} durationUs={durationUs} onPointerDown={beginScrub} onPointerMove={scrub} onPointerUp={endScrub}
               markers={markers} selectedMarkerId={selection?.kind === 'marker' ? selection.id : null}
               onSelectMarker={(markerId, atUs) => { onSeek(atUs); props.onSelectMarker?.(markerId) }} />
-            if (row.kind === 'captions') return <CaptionsTrack key="captions" cues={displayCues} spansOf={spansOf} durationUs={durationUs} mode={display}
-              selectedCueId={selectedCueId} warningCueIds={warningCueIds} draggingId={drag?.kind === 'cue' ? drag.cue.id : null} selectedWordId={props.selectedWordId}
-              onBeginDrag={beginCueDrag} onKeyboardSelect={selectCueFromKeyboard}
-              onSeekSource={(cue, sourceUs, span) => onSeek(span.startUs + Math.max(0, sourceUs - span.sourceStartUs), cue.id)}
-              onSelectWord={props.onSelectWord} onSeekTrack={seekTrack} />
+            if (row.kind === 'captionTrack') {
+              const onTrack = displayCues.filter((cue) => cue.captionTrackId === row.track.id)
+              return <CaptionsTrack key={row.id} cues={onTrack} spansOf={spansOf} durationUs={durationUs} mode={display} locked={row.track.locked}
+                selectedCueId={selectedCueId} warningCueIds={warningCueIds} draggingId={drag?.kind === 'cue' ? drag.cue.id : null} selectedWordId={props.selectedWordId}
+                onBeginDrag={beginCueDrag} onKeyboardSelect={selectCueFromKeyboard}
+                onSeekSource={(cue, sourceUs, span) => onSeek(span.startUs + Math.max(0, sourceUs - span.sourceStartUs), cue.id)}
+                onSelectWord={props.onSelectWord} onSeekTrack={seekTrack} />
+            }
+            if (row.kind === 'zoomLane') return <ZoomLane key="zoomLane" regions={displayZoomRegions} durationUs={durationUs}
+              selectedZoomId={selectedZoomId} draggingId={drag?.kind === 'zoom' ? drag.region.id : null}
+              onBeginDrag={beginZoomDrag} onKeyboardSelect={(event, region) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault(); event.stopPropagation(); props.onSelectZoom?.(region.id); onSeek(region.startUs)
+              }} onSeekTrack={seekTrack} />
+            if (row.kind === 'blurLane') return <BlurLane key="blurLane" regions={displayBlurRegions} durationUs={durationUs}
+              selectedBlurId={selectedBlurId} draggingId={drag?.kind === 'blur' ? drag.region.id : null}
+              onBeginDrag={beginBlurDrag} onKeyboardSelect={(event, region) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault(); event.stopPropagation(); props.onSelectBlur?.(region.id); onSeek(region.startUs)
+              }} onSeekTrack={seekTrack} />
+            if (row.kind === 'effectLane') return <EffectLane key={row.id} effectKind={row.effectKind}
+              regions={displayEffects.filter((effect) => effect.kind === row.effectKind)} durationUs={durationUs}
+              selectedId={selectedEffectId} draggingId={drag?.kind === 'effect' ? drag.region.id : null}
+              onBeginDrag={beginEffectDrag} onKeyboardSelect={(event, region) => {
+                if (event.key !== 'Enter') return
+                event.preventDefault(); event.stopPropagation(); props.onSelectEffect?.(region.id); onSeek(region.startUs)
+              }} onSeekTrack={seekTrack} />
+            if (row.kind === 'textLane') return <TextLane key="textLane" items={textOverlays} durationUs={durationUs} selectedId={selectedTextId}
+              onSelect={(id) => { props.onSelectText?.(id); const item = textOverlays.find((entry) => entry.id === id); if (item) onSeek(item.startUs) }}
+              onMove={(id, startUs) => props.onTextMove?.(id, startUs)} onTrim={(id, edge, deltaUs) => props.onTextTrim?.(id, edge, deltaUs)} onSeekTrack={seekTrack} />
             if (row.kind === 'divider') return <div key="divider" className="track-divider-line" aria-hidden="true" />
             const { track } = row
             const onTrack = displayClips.filter((clip) => clip.trackId === track.id)

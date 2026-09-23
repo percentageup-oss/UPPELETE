@@ -10,11 +10,11 @@ const directories: string[] = []
 afterEach(async () => { await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true }))) })
 
 const project = (absolutePath: string): CaptionProject => ({
-  schemaVersion: 5,
+  schemaVersion: 10,
   tracks: [],
   clips: [],
   assets: [{ id: 'video', kind: 'video', name: path.basename(absolutePath), reference: { relativePath: null, absolutePath }, fingerprint: null, metadata: null }],
-  blurRegions: [], markers: [],
+  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
   id: 'project',
   title: 'Paths',
   cues: [],

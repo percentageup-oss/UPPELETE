@@ -13,7 +13,18 @@ export type CompositionLayerImage = { kind?: 'image'; id: string; url: string | 
 export type CompositionLayerVideo = { kind: 'video'; id: string; element: HTMLVideoElement | null; label: string; rect: CompositionRect | null; opacity: number; fit: Fit }
 /** An effect over everything painted below it (`backdrop-filter` blurs what is under the div). */
 export type CompositionLayerBlur = { kind: 'blur'; id: string; rect: CompositionRect; radius: number }
+/**
+ * Frame-paint effects (docs/EDITING.md "Frame-paint effects"): pinned to the output frame, painted
+ * by this same component in preview and export — no FFmpeg filter on either side, so parity is
+ * exact rather than measured. Vignette and letterbox are meant for the `layers` slot (under
+ * captions, like a host-painted overlay); fade is meant for `CaptionPreview`'s `overCaption` slot,
+ * since a fade must cover the captions too.
+ */
+export type CompositionLayerVignette = { kind: 'vignette'; id: string; amount: number; softness: number }
+export type CompositionLayerLetterbox = { kind: 'letterbox'; id: string; orientation: 'horizontal' | 'vertical'; barPx: number; color: string }
+export type CompositionLayerFade = { kind: 'fade'; id: string; color: string; opacity: number }
 export type CompositionLayer = CompositionLayerImage | CompositionLayerVideo | CompositionLayerBlur
+  | CompositionLayerVignette | CompositionLayerLetterbox | CompositionLayerFade
 
 /**
  * Mounts a pooled `<video>` into the composition. Letting React create and destroy `<video>` as the
@@ -52,6 +63,24 @@ export function CompositionLayers({ layers, composition }: { layers: readonly Co
       const blur = `blur(${layer.radius * scale}px)`
       return <div key={layer.id} data-blur-id={layer.id} style={{ ...box(layer.rect), backdropFilter: blur, WebkitBackdropFilter: blur }} />
     }
+    if (layer.kind === 'vignette') {
+      // Softer (higher `softness`) starts darkening closer to the center; harder stays transparent
+      // until near the rim. Painted the same way in preview and export — no FFmpeg equivalent needed.
+      const innerStopPercent = 85 - layer.softness * 50
+      return <div key={layer.id} data-vignette-id={layer.id} style={{ ...box(null),
+        background: `radial-gradient(ellipse at center, transparent ${innerStopPercent}%, rgba(0,0,0,${layer.amount}) 100%)` }} />
+    }
+    if (layer.kind === 'letterbox') {
+      const barPx = layer.barPx * scale
+      if (barPx <= 0.5) return null
+      const bars = layer.orientation === 'horizontal'
+        ? [{ top: 0, left: 0, right: 0, height: barPx }, { bottom: 0, left: 0, right: 0, height: barPx }]
+        : [{ top: 0, bottom: 0, left: 0, width: barPx }, { top: 0, bottom: 0, right: 0, width: barPx }]
+      return <div key={layer.id} data-letterbox-id={layer.id} style={box(null)}>
+        {bars.map((bar, index) => <div key={index} style={{ position: 'absolute', background: layer.color, ...bar }} />)}
+      </div>
+    }
+    if (layer.kind === 'fade') return <div key={layer.id} data-fade-id={layer.id} style={{ ...box(null), background: layer.color, opacity: layer.opacity }} />
     if (layer.kind === 'video') return <VideoSlot key={layer.id} element={layer.element} fit={layer.fit} style={{ ...box(layer.rect), opacity: layer.opacity }} />
     const style: CSSProperties = { ...box(layer.rect), opacity: layer.opacity, objectFit: layer.fit === 'stretch' ? 'fill' : layer.fit }
     if (!layer.url) return <div key={layer.id} data-overlay-missing={layer.id} style={{ ...style, boxSizing: 'border-box',

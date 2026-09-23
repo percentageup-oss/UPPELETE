@@ -257,7 +257,7 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
   }
   const { width, height, frameRate } = manifest.format
   const layer = createLayerPlan({
-    cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays,
+    cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays, effects: manifest.effects,
     timeline: manifestTimeline(manifest), output: { width, height },
   })
   return {

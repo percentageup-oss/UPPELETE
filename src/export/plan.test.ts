@@ -12,6 +12,7 @@ import { DEFAULT_CAPTION_STYLE } from '../captions/style'
 import { activeWordIndex, wordDisplayCue } from '../captions/wordDisplay'
 import type { CaptionProject, CaptionWord, Cue } from '../core/model'
 import type { Clip, Track } from '../core/edit'
+import { defaultTextOverlay } from '../core/textCommands'
 
 const fixture = (name: string) => readFile(path.join(__dirname, '../../tests/fixtures', name), 'utf8')
 
@@ -164,6 +165,23 @@ describe('frameRequestAt word display', () => {
     expect(manifest.style.motion).toBe('static-clean')
   })
 
+  it('resolves a caption placement override into the export request without changing the project style', () => {
+    const manifest: ExportManifestV1 = { version: 1, cues: [{ ...cue, placementOverride: { horizontal: .1, rotation: 20 } }], style: DEFAULT_CAPTION_STYLE }
+    const { request } = frameRequestAt(manifest, plan, 50)
+    expect(request.style.appearance.horizontal).toBe(.1)
+    expect(request.style.appearance.rotation).toBe(20)
+    // Fields the override left alone still inherit the project style.
+    expect(request.style.appearance.vertical).toBe(DEFAULT_CAPTION_STYLE.appearance.vertical)
+    expect(request.style.appearance.fontSize).toBe(DEFAULT_CAPTION_STYLE.appearance.fontSize)
+    expect(manifest.style.appearance.horizontal).toBe(DEFAULT_CAPTION_STYLE.appearance.horizontal)
+  })
+
+  it('uses the project style unchanged when a cue has no placement override', () => {
+    const manifest: ExportManifestV1 = { version: 1, cues: [cue], style: DEFAULT_CAPTION_STYLE }
+    const { request } = frameRequestAt(manifest, plan, 50)
+    expect(request.style.appearance).toEqual(DEFAULT_CAPTION_STYLE.appearance)
+  })
+
   it('parses a manifest with estimated word timing in word display without an offset/schema error', () => {
     const estimated = words.map((word) => ({ ...word, timingSource: 'estimated' as const }))
     const manifest: ExportManifestV1 = { version: 1, cues: [{ ...cue, words: estimated }], style: DEFAULT_CAPTION_STYLE, display: 'word' }
@@ -195,8 +213,8 @@ describe('buildExportManifest', () => {
     ({ kind: 'audio', id, trackId, assetId: 'snd', timelineStartUs, sourceStartUs, sourceEndUs, gain: 0.8 })
   const cue = (id: string, mediaAssetId: string): Cue => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'manual', needsReview: false, textSource: 'user', words: [] })
   const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-    schemaVersion: 5, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
-    tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], blurRegions: [], markers: [], format,
+    schemaVersion: 10, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
+    tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
   })
   const resolver: ExportResolver = { assetUrl: (a) => `media://local${a.reference.absolutePath}`, assetPath: (a) => a.reference.absolutePath! }
@@ -215,9 +233,11 @@ describe('buildExportManifest', () => {
       assets: [asset('x', 'video')], cues: [{ ...cue('k', 'x'), startUs: 4 * US, endUs: 6 * US }], overlays: [], blurRegions: [], audioClips: [],
       clips: [{ id: 'a', assetId: 'x', startUs: 0, endUs: 3 * US }, { id: 'b', assetId: 'x', startUs: 5 * US, endUs: 9 * US }],
     })
-    const built = buildExportManifest(loadProject(v4).project, resolver)
-    // Exactly what schema 4's builder produced for this project: kept source segments, one input.
-    const expected = { version: 2 as const, cues: v4.cues, style: DEFAULT_CAPTION_STYLE, display: 'line' as const,
+    const loaded = loadProject(v4)
+    const built = buildExportManifest(loaded.project, resolver)
+    // Exactly what schema 4's builder produced for this project: kept source segments, one input —
+    // plus the caption track schema 6's 5 → 6 migration stamps every cue with (there being only one).
+    const expected = { version: 2 as const, cues: v4.cues.map((entry) => ({ ...entry, captionTrackId: loaded.project.captionTracks[0].id })), style: DEFAULT_CAPTION_STYLE, display: 'line' as const,
       segments: [{ startUs: 0, endUs: 3 * US }, { startUs: 5 * US, endUs: 9 * US }], overlays: [], blurRegions: [], audioClips: [] }
     expect(built.manifest).toEqual(expected)
     expect(built.plan).toEqual(planFromMedia(meta(10 * US)))
@@ -250,6 +270,80 @@ describe('buildExportManifest', () => {
     expect(frameRequestAtSequence(manifest, Math.round(10.5 * 30)).request.cue.text).toBe('ky')
   })
 
+  it('forces a zoom project onto v3 and resolves its target into output pixels', () => {
+    const zoomRegions = [{ id: 'z1', startUs: US, endUs: 3 * US, rect: { x: 270, y: 151.875, width: 540, height: 303.75 }, easeInUs: 500_000, easeOutUs: 500_000, enabled: true }]
+    const built = buildExportManifest(project({ zoomRegions }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version === 3) expect(built.manifest.zoomRegions).toEqual([{
+      id: 'z1', sequence: { startUs: US, endUs: 3 * US }, rect: { x: 480, y: 270, width: 960, height: 540 }, easeInUs: 500_000, easeOutUs: 500_000,
+    }])
+  })
+
+  it('forces authored text onto v3 and emits only active text actors in deterministic layer order', () => {
+    const textOverlays = [
+      { ...defaultTextOverlay('above', 0, 3 * US, 'ആപ്പിൾ iPhone'), layerOrder: 2 },
+      { ...defaultTextOverlay('below', 0, 3 * US, 'below'), layerOrder: -1 },
+      defaultTextOverlay('later', 5 * US, 7 * US, 'not active yet'),
+    ]
+    const built = buildExportManifest(project({ textOverlays }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version !== 3) return
+    expect(built.manifest.textOverlays.map((item) => item.id)).toEqual(['above', 'below', 'later'])
+    const { request } = frameRequestAtSequence(built.manifest, 30)
+    expect(request.version).toBe(4)
+    if (request.version === 4) {
+      expect(request.textActors.map((actor) => actor.item.id)).toEqual(['below', 'above'])
+      expect(request.textActors[1].cue.words.every((word) => word.timingSource === 'decorative')).toBe(true)
+    }
+  })
+
+  it('falls back to v2 when the only zoom region is bypassed', () => {
+    const zoomRegions = [{ id: 'z1', startUs: US, endUs: 3 * US, rect: { x: 270, y: 151.875, width: 540, height: 303.75 }, easeInUs: 500_000, easeOutUs: 500_000, enabled: false }]
+    const built = buildExportManifest(project({ zoomRegions }), resolver)
+    expect(built.manifest.version).toBe(2)
+  })
+
+  it('excludes a bypassed blur region from the manifest but keeps an enabled one', () => {
+    const kept = { id: 'b1', startUs: 0, endUs: 5 * US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 10, enabled: true }
+    const bypassed = { id: 'b2', startUs: 5 * US, endUs: 10 * US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 10, enabled: false }
+    const built = buildExportManifest(project({ blurRegions: [kept, bypassed] }), resolver)
+    expect(built.manifest.version).toBe(2)
+    expect(built.manifest.blurRegions.map((region) => region.id)).toEqual(['b1'])
+  })
+
+  it('forces a frame-paint effect project onto v3, carried in composition units and sequence time — never resolved to output pixels', () => {
+    const effects = [{ id: 'e1', kind: 'vignette' as const, startUs: US, endUs: 3 * US, enabled: true, amount: .6, softness: .4 }]
+    const built = buildExportManifest(project({ effects }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version === 3) expect(built.manifest.effects).toEqual(effects)
+  })
+
+  it('falls back to v2 when the only frame-paint effect is bypassed', () => {
+    const effects = [{ id: 'e1', kind: 'vignette' as const, startUs: US, endUs: 3 * US, enabled: false, amount: .6, softness: .4 }]
+    const built = buildExportManifest(project({ effects }), resolver)
+    expect(built.manifest.version).toBe(2)
+  })
+
+  it('evaluates frame-paint effects into a v3 frame request at the right sequence timestamp', () => {
+    const effects = [{ id: 'e1', kind: 'vignette' as const, startUs: 0, endUs: 20 * US, enabled: true, amount: .6, softness: .4 }]
+    const built = buildExportManifest(project({ effects }), resolver)
+    const manifest = built.manifest as ExportManifestV3
+    const { request } = frameRequestAtSequence(manifest, Math.round(2 * 30))
+    expect(request.version).toBe(3)
+    if (request.version === 3) expect(request.frameEffects.vignette).toEqual({ amount: .6, softness: .4 })
+  })
+
+  it('resolves a v3 caption placement override into the export request without changing the project style', () => {
+    const built = buildExportManifest(project({ clips: [video('c1', 0, 0, 10 * US), video('c2', 10 * US, 0, 6 * US, { assetId: 'y' } as Partial<Clip>)],
+      cues: [cue('kx', 'x'), { ...cue('ky', 'y'), placementOverride: { fontSize: 90 } }] }), resolver)
+    const manifest = built.manifest as ExportManifestV3
+    const { request } = frameRequestAtSequence(manifest, Math.round(10.5 * 30))
+    expect(request.cue.text).toBe('ky')
+    expect(request.style.appearance.fontSize).toBe(90)
+    expect(request.style.appearance.horizontal).toBe(DEFAULT_CAPTION_STYLE.appearance.horizontal)
+    expect(manifest.style.appearance.fontSize).toBe(DEFAULT_CAPTION_STYLE.appearance.fontSize)
+  })
+
   it('stacks: picture-in-picture rects become output pixels, hidden tracks vanish, muted video keeps its picture', () => {
     const base = project({
       tracks: [track('V1', 'video', { muted: true }), track('V2', 'video'), track('V3', 'video', { hidden: true }), track('A1', 'audio')],
@@ -280,6 +374,8 @@ describe('buildExportManifest', () => {
     expect(flatSequence(project())).not.toBeNull()
     expect(flatSequence(project({ clips: [video('c1', US, 0, 9 * US)] }))).toBeNull() // starts with a gap
     expect(flatSequence(project({ clips: [video('c1', 0, 0, 5 * US), audio('s', 4 * US, 0, 2 * US)] }))).toBeNull() // sound runs past the picture
+    expect(flatSequence(project({ zoomRegions: [{ id: 'z1', startUs: 0, endUs: US, rect: { x: 0, y: 0, width: 540, height: 303.75 }, easeInUs: 0, easeOutUs: 0, enabled: true }] }))).toBeNull()
+    expect(flatSequence(project({ effects: [{ id: 'e1', kind: 'vignette', startUs: 0, endUs: US, enabled: true, amount: .5, softness: .5 }] }))).toBeNull()
   })
 
   it('round-trips v3 through the wire schema, so what main writes is what the worker accepts', () => {

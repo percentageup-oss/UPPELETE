@@ -93,7 +93,10 @@ describe('migrateV4', () => {
   it('does not move a single frame: captions render identically and every kept source time maps to the same sequence time', () => {
     const v4 = fixture()
     const { project } = loadProject(v4, ids())
-    expect(cuesInSequence(project.cues, project.clips)).toEqual(v4CuesInSequence(v4.cues, v4.clips))
+    // `captionTrackId` (schema 6) is stamped by the 5 → 6 migration on top of this — irrelevant to
+    // the timing fidelity this test checks, and the schema-4 oracle above knows nothing about it.
+    const withoutCaptionTrack = (cues: readonly Cue[]) => cues.map(({ captionTrackId: _captionTrackId, ...rest }) => rest)
+    expect(withoutCaptionTrack(cuesInSequence(project.cues, project.clips))).toEqual(v4CuesInSequence(v4.cues, v4.clips))
     for (const assetId of ['x', 'y']) {
       for (let sourceUs = 0; sourceUs < 12 * US; sourceUs += 250_000) {
         const before = v4SourceToSequence(assetId, sourceUs, v4.clips)

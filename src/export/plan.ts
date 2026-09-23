@@ -2,14 +2,17 @@ import { z } from 'zod'
 import { rationalSchema, type MediaMetadata, type Rational } from '../core/media'
 import { projectSchema, type CaptionProject, type Cue } from '../core/model'
 import {
-  COMPOSITION_WIDTH, compositionRectSchema, sequenceFormatSchema, type Clip, type CompositionRect, type ProjectAsset, type SequenceFormat, type Track,
+  COMPOSITION_WIDTH, compositionRectSchema, effectRegionSchema, sequenceFormatSchema, type Clip, type CompositionRect, type ProjectAsset, type SequenceFormat, type Track,
 } from '../core/edit'
-import { compositionScalarToPixels, compositionToPixels } from '../core/composition'
+import { compositionFor, compositionScalarToPixels, compositionToPixels } from '../core/composition'
 import { fittedFrameRate, formatAspect, formatFromMedia } from '../core/format'
 import { activeCueAt, clipEndUs, type ActiveCue } from '../core/timelineModel'
 import { frameRequestSchema, frameRequestV1Schema, type FrameRequest } from './frameRequest'
-import { DEFAULT_CAPTION_STYLE, resolveCaptionMotion } from '../captions/style'
+import { DEFAULT_CAPTION_STYLE, resolveCaptionStyle } from '../captions/style'
+import { decorativeTextCue, textMotionAt } from '../captions/textMotion'
+import { textOverlaySchema, type TextOverlay } from '../core/edit'
 import { captionDisplaySchema, displayCue } from '../captions/wordDisplay'
+import { frameEffectsAt } from '../core/frameEffects'
 
 /**
  * What main tells the media worker to render. Arbitrary FFmpeg flags never cross the worker
@@ -46,6 +49,15 @@ export const manifestBlurRegionSchema = z.strictObject({
   /** Output pixels, already scaled and clamped by `compositionToPixels`. */
   rect: z.strictObject({ x: pixel, y: pixel, width: pixel.min(1), height: pixel.min(1) }),
   sigmaPx: z.number().finite().positive().max(1024),
+})
+/** Pixel-space camera target over the sequence picture. Captions and host-painted overlays are
+ * deliberately not part of this data: FFmpeg applies it before the transparent host layer. */
+export const manifestZoomRegionSchema = z.strictObject({
+  id: z.string().min(1).max(128),
+  sequence: z.strictObject({ startUs: manifestUs, endUs: manifestUs }).refine((range) => range.endUs > range.startUs, 'Zoom window end must follow its start'),
+  rect: z.strictObject({ x: pixel, y: pixel, width: pixel.min(1), height: pixel.min(1) }),
+  easeInUs: z.number().int().nonnegative().max(5_000_000),
+  easeOutUs: z.number().int().nonnegative().max(5_000_000),
 })
 // Mirrors `workers/media/protocol.ts`'s `filePath` (not imported from here — that module imports
 // this one, and a cross-import would cycle). An asset path never comes from the project JSON at
@@ -104,6 +116,12 @@ export const exportManifestV3Schema = z.strictObject({
   /** Image clips painted by the export host into the caption layer, in **sequence** time (v2's are source time). */
   overlays: z.array(manifestOverlaySchema).max(4000).default([]),
   blurRegions: z.array(manifestBlurRegionSchema).max(1000).default([]),
+  zoomRegions: z.array(manifestZoomRegionSchema).max(200).default([]),
+  /** Frame-paint effects (vignette/letterbox/fade), host-painted like `overlays` — composition
+   * units and sequence time verbatim, never resolved to output pixels the way blur/zoom are, since
+   * `CompositionLayers` (docs/EDITING.md "Frame-paint effects") does that scaling itself. */
+  effects: z.array(effectRegionSchema).max(500).default([]),
+  textOverlays: z.array(textOverlaySchema).max(1000).default([]),
 }).superRefine((manifest, context) => {
   const used = new Set<number>()
   for (const [index, clip] of manifest.clips.entries()) {
@@ -120,6 +138,8 @@ export type ExportManifestV1 = z.infer<typeof exportManifestV1Schema>
 export type ExportManifestV2 = z.infer<typeof exportManifestV2Schema>
 export type ExportManifestV3 = z.infer<typeof exportManifestV3Schema>
 export type ManifestClip = z.infer<typeof manifestClipSchema>
+/** Same shape in v2 and v3 — output pixels, sequence time (docs/EDITING.md "Edit manifest v2"). */
+export type ManifestBlurRegion = z.infer<typeof manifestBlurRegionSchema>
 export type ExportManifest = z.infer<typeof exportManifestSchema>
 
 /** One shape for every v1/v2 consumer: a v1 manifest is a v2 manifest with no edits. */
@@ -197,7 +217,7 @@ export function frameRequestAt(manifest: ExportManifestV1 | ExportManifestV2, pl
   // Same WORD/LINE display choice as the preview's CaptionStage, made once here so the exported
   // frame request already carries the shown (line or single-word) cue.
   const shown = active ? displayCue(active, manifest.display ?? 'line', timestampUs) : null
-  const resolved = resolveCaptionMotion(manifest.style ?? DEFAULT_CAPTION_STYLE, active?.motionOverride)
+  const style = resolveCaptionStyle(manifest.style ?? DEFAULT_CAPTION_STYLE, active)
   const cue = shown ? { text: shown.text || ' ', startUs: shown.startUs, endUs: shown.endUs, words: shown.words, emphasized: shown.emphasized }
     : { text: ' ', startUs: 0, endUs: 1 }
   // Visible overlays join the frame request as v1's strict superset, so a manifest with none — every
@@ -205,7 +225,7 @@ export function frameRequestAt(manifest: ExportManifestV1 | ExportManifestV2, pl
   const overlays = normalizeManifest(manifest).overlays.filter((overlay) => timestampUs >= overlay.startUs && timestampUs < overlay.endUs)
   const request = frameRequestSchema.parse({
     version: overlays.length ? 2 : 1, composition: { width: plan.width, height: plan.height }, cue,
-    style: { ...(manifest.style ?? DEFAULT_CAPTION_STYLE), ...resolved }, timestampUs,
+    style, timestampUs,
     ...(overlays.length ? { overlays: overlays.map((overlay) => ({ id: overlay.id, assetUrl: overlay.assetUrl, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit })) } : {}),
   })
   return { request, active: Boolean(active) }
@@ -250,14 +270,29 @@ export function frameRequestAtSequence(manifest: ExportManifestV3, index: number
   const found = active === undefined ? manifestActiveCue(manifest, sequenceUs) : active
   const timestampUs = found ? found.sourceUs : sequenceUs
   const shown = found ? displayCue(found.cue, manifest.display ?? 'line', timestampUs) : null
-  const resolved = resolveCaptionMotion(manifest.style ?? DEFAULT_CAPTION_STYLE, found?.cue.motionOverride)
+  const style = resolveCaptionStyle(manifest.style ?? DEFAULT_CAPTION_STYLE, found?.cue)
   const cue = shown ? { text: shown.text || ' ', startUs: shown.startUs, endUs: shown.endUs, words: shown.words, emphasized: shown.emphasized }
     : { text: ' ', startUs: 0, endUs: 1 }
   const overlays = manifest.overlays.filter((overlay) => sequenceUs >= overlay.startUs && sequenceUs < overlay.endUs)
+  // Evaluated in composition units, the same space `CaptionStage`'s live preview uses — never the
+  // manifest's own output-pixel `format` — so `CompositionLayers`' own scale factor is the only
+  // pixel conversion either side ever does (docs/EDITING.md "Frame-paint effects").
+  const frameEffects = manifest.effects.length ? frameEffectsAt(manifest.effects, sequenceUs, compositionFor(formatAspect(manifest.format))) : {}
+  const textActors = manifest.textOverlays.filter((item) => item.startUs <= sequenceUs && sequenceUs < item.endUs)
+    .sort((a, b) => a.layerOrder - b.layerOrder || a.startUs - b.startUs || a.id.localeCompare(b.id))
+    .map((item) => {
+      const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs)
+      return { item, cue: decorativeTextCue(item), timestampUs: sequenceUs, ...motion }
+    })
+  const hasFrameEffects = Boolean(frameEffects.vignette || frameEffects.letterbox || frameEffects.fade)
+  const hasText = textActors.length > 0
   const request = frameRequestSchema.parse({
-    version: overlays.length ? 2 : 1, composition: { width: manifest.format.width, height: manifest.format.height }, cue,
-    style: { ...(manifest.style ?? DEFAULT_CAPTION_STYLE), ...resolved }, timestampUs,
-    ...(overlays.length ? { overlays: overlays.map((overlay) => ({ id: overlay.id, assetUrl: overlay.assetUrl, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit })) } : {}),
+    version: hasText ? 4 : hasFrameEffects ? 3 : overlays.length ? 2 : 1, composition: { width: manifest.format.width, height: manifest.format.height }, cue,
+    style, timestampUs,
+    ...(overlays.length || hasFrameEffects || hasText ? { overlays: overlays.map((overlay) => ({ id: overlay.id, assetUrl: overlay.assetUrl, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit })) } : {}),
+    ...(hasFrameEffects ? { frameEffects } : {}),
+    ...(hasText ? { frameEffects } : {}),
+    ...(hasText ? { textActors } : {}),
   })
   return { request, active: Boolean(found) }
 }
@@ -299,6 +334,14 @@ export function fullFrameRect(format: SequenceFormat): CompositionRect {
  * existed before schema 5 with a single video is one of these.
  */
 export function flatSequence(project: CaptionProject): { asset: ProjectAsset; videos: Clip[]; images: Clip[]; identity: boolean } | null {
+  // v2 has no camera-transform field. Route zoom projects through v3 rather than silently emit
+  // the old manifest and lose the effect. A project whose zoom regions are all bypassed has nothing
+  // left to lose, so it still takes the plain v2 path.
+  if (project.zoomRegions.some((region) => region.enabled)) return null
+  // v2's frame request builder (`frameRequestAt`) never evaluates frame-paint effects — the same
+  // reason zoom forces v3, above.
+  if (project.effects.some((effect) => effect.enabled)) return null
+  if (project.textOverlays.length) return null
   const { visual, audio, muted, order } = contributing(project)
   const videos = visual.filter((clip) => clip.kind === 'video').sort((a, b) => a.timelineStartUs - b.timelineStartUs)
   if (!videos.length) return null
@@ -333,7 +376,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     if (!asset) throw new Error('A clip on the timeline refers to a file that is no longer in the project.')
     return asset
   }
-  const blurFor = (endUs: number) => project.blurRegions.filter((region) => region.startUs < endUs).map((region) => ({
+  const blurFor = (endUs: number) => project.blurRegions.filter((region) => region.enabled && region.startUs < endUs).map((region) => ({
     id: region.id,
     // Blur is applied by FFmpeg, so its geometry is resolved to output pixels here — the worker never
     // converts composition units itself. Its window is already sequence time.
@@ -341,6 +384,17 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     rect: compositionToPixels(region.rect, output),
     sigmaPx: compositionScalarToPixels(region.radius, output),
   }))
+  const zoomFor = (endUs: number) => project.zoomRegions.filter((region) => region.enabled && region.startUs < endUs).map((region) => ({
+    id: region.id,
+    sequence: { startUs: region.startUs, endUs: Math.min(region.endUs, endUs) },
+    rect: compositionToPixels(region.rect, output),
+    easeInUs: region.easeInUs,
+    easeOutUs: region.easeOutUs,
+  })).filter((region) => region.sequence.endUs > region.sequence.startUs)
+  // Composition units and sequence time verbatim — no pixel conversion, unlike blur/zoom above,
+  // since the export host paints these with the same `CompositionLayers` scaling preview uses.
+  const effectsFor = (endUs: number) => project.effects.filter((effect) => effect.enabled && effect.startUs < endUs)
+    .map((effect) => ({ ...effect, endUs: Math.min(effect.endUs, endUs) }))
   const audioPath = (clip: Clip) => resolver.assetPath(assetOf(clip))
 
   const flat = flatSequence(project)
@@ -400,6 +454,9 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     cues: project.cues.filter((cue) => cue.mediaAssetId ? captionAssets.has(cue.mediaAssetId) : !captionAssets.size),
     style, display, format, sequenceDurationUs, inputs, clips, overlays,
     blurRegions: blurFor(sequenceDurationUs),
+    zoomRegions: zoomFor(sequenceDurationUs),
+    effects: effectsFor(sequenceDurationUs),
+    textOverlays: project.textOverlays.filter((item) => item.startUs < sequenceDurationUs).map((item) => ({ ...item, endUs: Math.min(item.endUs, sequenceDurationUs) })),
   })
   return { manifest, plan: planForFormat(format, sequenceDurationUs), inputPaths: inputs.map((input) => input.path) }
 }

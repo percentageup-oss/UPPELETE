@@ -19,6 +19,7 @@
     "smoke:captions": "electron scripts/caption-renderer-smoke.mjs",
     "tools:whisper": "bash scripts/build-whisper.sh",
     "bench:transcription": "npm run build:worker && node dist-worker/transcription-bench.cjs",
+    "probe:gemini": "npm run build:worker && node dist-worker/gemini-recognition-probe.cjs",
     "convert:hf-whisper": "bash scripts/convert-hf-whisper.sh",
     "prototype:export": "electron scripts/export-renderer-prototype.mjs",
     "parity:export": "npm run build:electron && electron scripts/export-parity.mjs"

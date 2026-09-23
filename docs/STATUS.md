@@ -1,5 +1,439 @@
 # Status
 
+## 2026-09-23 — Direct text-layer creation and clearer animation controls
+
+Preview double-click now creates a selected three-second text item at the clicked composition position and enters direct preview editing; double-clicking an existing title enters edit mode instead. Caption/effect controls and handles are excluded from the add gesture. Titles and the Text lane both expose playhead-add actions. Title style/preset application keeps the item's placement and word animation; the Titles panel labels decorative word motion separately from the inspector's whole-layer In/Out transitions. The preview editor uses the existing text item and undoable update command, so the schema and export protocol are unchanged.
+
+Verification: `npm run typecheck`, `npm test` (1130 tests across 118 files), and `npm run build` pass. Focused cases cover click-to-composition mapping/clamping, template placement/motion preservation, title-mode wording, whole-layer transition labels, and the timeline add affordance. The build reports the existing >500 kB renderer chunk advisory. A manual Electron interaction and visual pass is still needed for double-click hit testing, focus/caret behavior, and editor alignment at different preview sizes; Windows remains unvalidated.
+
+## 2026-09-23 — Preserve authored text placement when applying title styles
+
+Applying a built-in title template or saved caption-style preset to a selected authored text item now preserves its stage position and rotation. Typography, colors, background, and template motion still come from the selected template. Direct Style-panel edits remain able to change placement intentionally. Verification: `npm run typecheck` and `npm test -- --run src/captions/style.test.ts` (23 tests) pass.
+
+## 2026-09-23 — Authored animated text layers (schema 10)
+
+Implemented a distinct, editable `textOverlays[]` project collection with lossless schema 9→10 migration and project-wide text-ID uniqueness. Added undoable add/update/move/trim/duplicate/delete/reorder commands; a permanent, overlap-packed Text timeline lane; Titles-panel add-at-playhead; selected-item styling/preset targeting; the text inspector; and stage placement editing. Text uses a full caption-style snapshot (including the built-in White Card style), while enter/exit motion is per item and can cross the caption layer plane. Text never enters transcript, alignment or SRT data.
+
+Template word motion receives deterministic runtime-only decorative word timing from whole tokens. `textMotionAt` evaluates fade/pop/slide transitions at absolute sequence timestamps and clamps requested ramps for short items. Preview and export reuse `TextOverlayActor`; enabled text forces export manifest v3 and frame request v4 sends ordered, active actors, with host font/layout readiness gating. Local-agent project summaries and validated commands expose text selection and edits.
+
+Verification: `npm test` (1123 tests across 116 files), `npm run typecheck`, and `npm run build` all pass. The build reports existing chunk-size warnings. Automated command, decorative-motion, migration and frame-request cases pass, but no manual Electron GUI pass or real export parity smoke was run for this feature; Windows is unvalidated. Stage selection of unselected/overlapping text by hit-testing is not yet implemented (timeline selection works), and double-click inline editing remains inspector-only. Build artifacts are ignored outputs.
+
+## 2026-09-23 — Frame-paint effects: vignette, letterbox and fade/flash (schema 9)
+
+Implemented slice 3 of the effects plan (`~/.claude-work/plans/i-need-more-effects-functional-
+cascade.md`) at the user's request ("implement Frame-paint effects"), plus the minimum of slice 2's
+generic effect infrastructure needed to carry it — schema 9 and `effectCommands.ts`, scoped to only
+the three kinds this slice actually renders (vignette, letterbox, fade), not the color/pan/VHS
+placeholder kinds the plan's slice 2 also described; those each get their own schema bump when their
+own slice is built, matching the project's stated preference for small vertical slices over
+speculative schema. This decision was confirmed with the user before writing any code.
+
+**What makes this family different from zoom/blur.** Vignette, letterbox and fade never reach
+FFmpeg: they are painted by the *same* React layer the caption/host-overlay pipeline already uses in
+both live preview and the export host (`CompositionLayers.tsx`), so preview/export parity is exact
+by construction rather than a measured pixel tolerance. See [ARCHITECTURE.md](ARCHITECTURE.md)'s new
+render-order note and [EDITING.md](EDITING.md)'s new "Frame-paint effects (schema 9)" section for
+the full contract — this entry summarizes what changed and how it was verified.
+
+**Schema/model.** `src/core/edit.ts` gained `effectRegionSchema` (`vignette | letterbox | fade`,
+discriminated on `kind`, each sharing `{id, startUs, endUs, enabled}`). `model.ts`'s schema 9 adds
+`project.effects`, with a per-*kind* non-overlap rule (two vignettes must be ascending/non-
+overlapping; a vignette and a letterbox may freely overlap — different lanes) instead of zoom's one
+shared lane. `src/core/migrateV8.ts` only bumps the version, the same lossless shape as `migrateV7`.
+
+**Evaluator.** `src/core/frameEffects.ts`'s `frameEffectsAt(effects, sequenceUs, composition)` is the
+one closed-form-in-absolute-time function both sides call, mirroring `zoomRectAt`'s contract exactly
+(`smoothstep`/`lerp` are now exported from `zoomRegion.ts` so every effect ramps on the identical
+curve). Letterbox bars land top/bottom when the target aspect is wider than the composition's own,
+left/right when narrower — a real geometry bug (inverted comparison) was caught by writing the test
+for the 9:16-vertical case before trusting the 16:9 case alone, and fixed before this shipped.
+
+**Commands.** `src/core/effectCommands.ts` mirrors `zoomRegionCommands.ts`'s add/move/trim/update/
+delete shape, reusing its generic `clampZoomRegion`/`MIN_ZOOM_REGION_US`, but clamps each command
+against only the *same-kind* others. `TimelineItemKind`/`Selection` gained `'effect'`; the MCP
+`select` tool and `agentProtocol.ts`'s request schema and `ProjectSummary` follow.
+
+**UI.** `EffectsPanel.tsx` gained "Look" (Vignette, Letterbox 2.39, Letterbox 1.85) and "Transitions"
+(Fade in, Fade out, Dip to black, Flash) sections, same tile/preset-drag pattern as Zoom/Blur.
+`EffectLane.tsx` (new) is one component parameterized by kind rather than three near-duplicate files
+— unlike blur's one-off copy of `ZoomLane.tsx`, three new lanes arriving together justified sharing
+one. `timelineRows` (`timelineLayout.ts`) takes the kinds actually present and emits one lane per
+kind, shown only when used. `EffectInspector.tsx` (new) is one shared shell (enabled/bypass, start/
+length, Delete) with a per-kind section below it, the settings-view shape `ZoomInspector`/
+`BlurInspector` established. `App.tsx` gained `effectDraft`/`visibleEffects` (mirroring
+`zoomRegionDraft`) and extended `addEffectPreset` to route all eleven presets (four existing plus
+seven new) to their own default-builder.
+
+**Preview.** Vignette/letterbox join the same `pinnedLayers` host-painted images already use in
+`CaptionStage` (pinned to the output frame, never zoomed with the picture). Fade needed a new
+`overCaption` slot on `CaptionPreview.tsx`, rendered after `CaptionView` — the one frame-paint kind
+that must cover captions too.
+
+**Export.** `flatSequence` forces v3 whenever any effect is enabled (same reason zoom does — v2's
+frame request path never evaluates frame-paint effects). `exportManifestV3Schema` gained `effects`,
+reusing `effectRegionSchema` directly rather than a parallel pixel-resolved schema, since — unlike
+blur/zoom — this data needs no FFmpeg coordinate conversion. `frameRequestAtSequence` evaluates
+`frameEffectsAt` at each frame (in composition units via `compositionFor(formatAspect(...))`, never
+the manifest's raw output-pixel format) and only escalates to a new `frameRequestV3` (adds
+`frameEffects` to v2's shape) when something is actually visible, so an effect-free v3 project's
+frame requests are still v1/v2, byte-unaffected. `frameHarness.tsx` paints with the exact same
+`CompositionLayers`/`overCaption` split preview uses. `layerPlan.ts`'s frame signature now folds in
+`frameEffectsAt`'s result so the export's frame-dedup never reuses a ramp frame for its neighbor.
+
+**Verification.** `npx tsc --noEmit`: clean across the whole project. `npx vitest run`: **1112 tests
+across 115 files, all passing** — new `frameEffects.test.ts` (14 cases: ramp shapes, both letterbox
+orientations including the bug caught above, disabled-effect skip, closed-form seek-direction
+independence), new effect-command cases in `itemCommands.test.ts` (lifecycle, same-kind clamping,
+cross-kind free overlap), new schema-9 migration/validation cases in `model.test.ts` (including the
+full "schema 8 tracks and clips" describe block's fixtures bumped to schema 9 — every other test in
+that block was failing on the version bump alone, not on new-feature logic), new v3-forcing/frame-
+request cases in `plan.test.ts`, and new signature/ramp-dedup cases in `layerPlan.test.ts`.
+`npm run build` (Vite renderer, Electron main/preload bundle via esbuild, worker build) succeeds
+with only the pre-existing >500 kB renderer-chunk advisory.
+
+**Not verified.** No FFmpeg work was needed or run — there is nothing to check against a real binary
+for this family, unlike blur's V4 slice. `scripts/export-parity.mjs`'s full Electron smoke encode was
+not run, so there is no real rendered frame confirming a vignette, a sliding letterbox or a fade
+actually paints correctly pixel-for-pixel between preview and export — only that both sides call the
+identical pure evaluator and the identical paint component, which is the parity argument this
+architecture is supposed to make true by construction. The app was not launched interactively
+(`/run`): add each preset by click and drag, confirm the new lanes appear only when used, drag/trim/
+select on each lane, the inspector sliders move the live preview, Undo/redo, Bypass, and a saved
+schema-8 project opening and re-saving as schema 9 are all unexercised in a live window. Only macOS
+(this machine) was touched; Windows is unvalidated.
+
+**Next.** Run `scripts/export-parity.mjs` (or a manual export) for a real measured confirmation that
+preview and exported frames agree for each kind; manually verify in the app per the plan's checklist
+above. Separately: slice 4 (color adjust) or slice 5 (pan/Ken Burns) are the natural next slices from
+the same effects plan, per the user's priority; the plan's slice 6 (VHS/film-grain stylize) still has
+no schema reservation, by this session's own scoping decision, so it will need its own migration when
+built.
+
+## 2026-09-23 — Blur regions get a UI and reach FFmpeg (V4)
+
+Scoped the "more effects" shortlist from the rail-rename entry below into a plan
+(`~/.claude-work/plans/i-need-more-effects-functional-cascade.md`: blur, fade/flash, color adjust,
+vignette/letterbox/pan, then a VHS/film-grain stylize pass) and implemented its first slice: blur
+regions, which already had a schema, commands and MCP access but no UI and no FFmpeg branch
+(`assertExportableManifest` refused any manifest carrying one). This slice adds the UI and the
+export branch — no schema change.
+
+**Export (`workers/media/exportArguments.ts`).** New `blurPictureChain`: per enabled region, chains
+`split=2` / `crop=…:exact=1` (on a `format=rgba` input, so arbitrary pixel offsets stay exact) /
+`gblur=sigma=…:steps=2` / `overlay=…:enable='between(t,start,end)'`, applied before the zoom crop
+(matching preview's paint order) and before the transparent caption/host-overlay layer. Wired into
+both `exportFilterGraph` (v1/v2) and `exportFilterGraphV3`; each only changes the normalize/concat
+step's label and gains `,format=rgba` when a manifest actually carries a blur region, so a blur-free
+export's filtergraph string is provably byte-identical to before (asserted in both test files).
+`assertExportableManifest` — the guard that refused blur — is deleted along with both call sites;
+nothing else in the manifest needed it. `flatSequence`/`buildExportManifest` needed no change:
+`blurFor` already resolved blur regions into both v2 and v3 manifests before this slice.
+
+**UI.** `src/core/blurRegion.ts` (new): default rects (`defaultBlurAreaRect` — a third of the frame,
+centered; `defaultBlurFrameRect` — the whole output, reusing `zoomRegion.ts`'s `fullFrameRect`) and
+`previewBlurDrag` (free move/trim clamped only to zero and `MIN_BLUR_REGION_US` — **blur regions may
+overlap**, so unlike `previewZoomDrag` there is no other-region gap to fit into; `blur-update` never
+checked for overlap either). `EffectsPanel.tsx` gained a "Blur" section (Blur area / Blur frame
+tiles, generalized from one section to a `SECTIONS` list) using the same `PresetDragPayload` the
+Zoom tiles use, widened to `'blur-area' | 'blur-frame'`. `BlurLane.tsx` (new, mirrors `ZoomLane.tsx`)
+is a timeline row shown **only when the project has a blur region** (`timelineLayout.ts`'s
+`timelineRows` gained a `hasBlur` parameter) — unlike the always-shown Zoom lane, this is the pattern
+every later effect kind will follow; overlapping regions currently stack in DOM order rather than
+packing into sub-rows (a stated limitation). `ZoomStageEditor.tsx` was generalized into
+`RectStageEditor.tsx` (a generic `{id, rect}` region, `keepAspect` and `label`/`hitClassName` props)
+so blur's stage gizmo (free aspect, cyan `.blur-hit`) and zoom's (aspect-locked, lime `.zoom-hit`)
+share one gesture implementation instead of duplicating ~70 lines. `BlurInspector.tsx` (new) mirrors
+`ZoomInspector.tsx` minus ease/zoom-amount (blur has neither ramps nor an aspect-locked target) plus
+a radius slider. `App.tsx` gained `blurRegionDraft` (mirroring `zoomRegionDraft`), `addBlurRegion`/
+`moveBlurRegion`/`trimBlurRegion`/`draftBlurRegion`/`commitBlurRegion`, and an `addEffectPreset`
+dispatcher so the Effects panel and timeline-drop paths route a preset to whichever effect it names.
+The zoom lane's header and `EffectsPanel`'s Zoom-tile-only history meant the timeline lane and rail
+tab were both generically labeled "Effects"; now that blur has its own lane, `TimelineTrackHeaders.tsx`
+renames the zoom lane's header back to "Zoom" (the rail tab, which holds both sections, keeps
+"Effects") and adds a "Blur" header for the new lane — the same "each lane names its own kind"
+convention the plan sets for every later effect.
+
+**Docs.** [EDITING.md](EDITING.md) gained a "Blur regions (V4)" section; its ticket map, refusal
+table and three stale "blur is still refused" sentences (schema 4→5 migration, V1 landed-summary,
+manifest v2 skeleton intro) are corrected — `src/core/migrateV4.ts` had the same stale claim in a
+comment and was missing `enabled: true` on both `BlurRegion` literals it constructs (a real `tsc`
+error, not just stale prose — caught by the full-project typecheck this slice ran, see below).
+[ARCHITECTURE.md](ARCHITECTURE.md) and [PRODUCT.md](PRODUCT.md) updated to match.
+
+**Verification.** `npx tsc --noEmit`: clean across the whole project (this is the first time this
+branch's accumulated uncommitted work — this slice plus the schema-8 rename entry below — has been
+typechecked end to end; it was not clean before the `migrateV4.ts` fix above). `npx vitest run`:
+**1085 tests / 114 files, all passing**, including new/updated `blurRegion.test.ts`,
+`BlurInspector.test.tsx`, `EffectsPanel.test.tsx`, `Timeline.test.tsx` (blur lane present only when
+used, labeled "Blur", bypassed-region class/aria-label), `timelineLayout.test.ts` (unaffected by the
+new `hasBlur` parameter's default), `exportArguments.test.ts` and `exportArgumentsV3.test.ts` (the
+filter-graph fragments above, plus the byte-identical-when-blur-free assertions). Additionally ran
+the exact `blurPictureChain`-generated filter fragments — one region, and two chained/time-
+overlapping regions — directly against this project's own pinned FFmpeg 9.0.1 build
+(`.tools/ffmpeg-9.0.1/ffmpeg`, `--disable-gpl` profile) with a synthetic `lavfi` color source: both
+produced valid RGBA frames with no filter errors. Confirmed `split`/`crop`/`gblur`/`overlay`/`format`
+(and, for later slices, `colorchannelmixer`/`lutrgb`/`rgbashift`) are present in that build, and that
+`eq`/`boxblur` are absent — the GPL split the doc's `gblur`-over-`boxblur` choice already assumed.
+
+**Not run**: `scripts/export-parity.mjs`'s full Electron smoke encode, so there is no measured
+pixel-tolerance number for blur yet, only the syntax/runtime check above. Not tested in the running
+app (`/run`) — no manual click-through of Add → drag/select → inspector sliders → export → undo.
+Only macOS (this machine) was touched; Windows is unvalidated.
+
+**Concurrency note**: while this slice was in progress, `docs/STATUS.md`'s top entry changed
+underneath it (a "Malayalam Gold built-in caption template" entry appeared, itself reporting
+`tsc` errors — "missing `ZoomStageEditor`", "blur preset typing" — that were this slice's own
+edits mid-flight, not pre-existing bugs). That points to another session editing this same working
+tree concurrently; the `tsc`/`vitest` results reported just above were captured after this slice's
+edits were complete and are current as of this entry.
+
+**Next**: run `scripts/export-parity.mjs` for a measured blur tolerance, manually verify in the app,
+then move to slice 2 of the effects plan (schema 9: `project.effects`, generic
+add/move/trim/update/delete commands, and blur lane overlap packing) or straight to slice 3
+(fade/flash/vignette/letterbox), per the user's priority.
+
+## 2026-09-23 — Malayalam Gold built-in caption template
+
+Added **Malayalam Gold** to **Titles → Built-in Templates**. It is a structured shared-renderer
+style, not a raster asset or a separate title implementation: Anek Malayalam at 900 weight and
+92 composition-width units, a `#FFE83B` → `#FF9800` vertical fill, `#D93A00` 5.5-unit outline,
+four dark-red depth layers, a compact near-black drop shadow, 1.05 line height, two-line limit,
+no background box, and `phrase-fade` motion. Its gallery card uses a Malayalam-only explicit
+two-line demo (`മലയാളം ടൈറ്റിൽ` / `ടെംപ്ലേറ്റ്`); that cue is preview-only and is never copied into
+project captions. `templateDemoFor` makes the gallery's optional localized demo choice pure and
+testable while every existing template still uses the shared English sample.
+
+**Persistence/export:** applying this template remains the existing single undoable
+`apply-template` edit. It needs no schema or IPC change; the stored `CaptionStyle` continues to
+flow through the same Malayalam-safe layout/painter used by live preview and export. The font is
+still a local Anek Malayalam reference with the established fallback stack — no font binary was
+bundled, so exact glyph appearance can vary where Anek is unavailable.
+
+**Verification:** focused template, application/persistence, and export-plan coverage passes;
+the complete suite passes (**1,070 tests across 112 files**).
+`npm run build` completes the Vite production renderer, Electron bundles, and worker build. The
+full typecheck remains blocked by seven unrelated existing Errors/Blur worktree errors in
+`App.tsx` and `src/core/migrateV4.ts` (blur preset typing, missing `ZoomStageEditor`, and missing
+`enabled` properties); the template files introduce no TypeScript diagnostics. The build reports
+only its existing >500 kB renderer-chunk advisory. The full export-parity harness was attempted,
+but its first run inherited `ELECTRON_RUN_AS_NODE` and its corrected run did not complete in this
+tooling session while a desktop app instance was active, so export-frame parity remains unverified.
+No interactive app visual smoke test was run here.
+
+**Next:** launch the app on macOS and apply Malayalam Gold to a real two-line Malayalam/mixed
+caption, then compare preview and exported-frame appearance on an Anek-installed machine and a
+fallback-font machine.
+
+## 2026-09-23 — Effects/Titles rail rename, zoom settings view, effect bypass (schema 8)
+
+Renamed two left-rail tabs and gave the zoom effect a settings view and an on/off toggle, per the
+user's request to generalize the Zoom tab ahead of adding more effects (blur, pan, fade, vignette,
+letterbox, region blur — the shortlist is in this session's transcript, not yet written up as a
+ticket).
+
+**Rename (UI only).** `Zoom` → **Effects** (`src/LeftRail.tsx`, `src/EffectsPanel.tsx` — renamed
+from `ZoomPanel.tsx`; its zoom tiles now sit under a "Zoom" section heading, so later effects each
+get their own section in the same panel); `Transitions` → **Titles** (`src/TitlesPanel.tsx`, renamed
+from `TransitionsPanel.tsx` — it only ever held the caption/title motion picker). New rail icons in
+`RailIcons.tsx` (`TitlesIcon`, `EffectsIcon`). `project.zoomRegions` and every command/schema name
+keep "zoom" — only the rail label, icons and the two panel/test files changed. **The timeline's zoom
+lane was missed in the first pass** (its track header and block both still read "Zoom") and fixed on
+follow-up: `TimelineTrackHeaders.tsx`'s `zoomLane` row and `ZoomLane.tsx`'s block label/aria-labels
+now say "Effects"/"Effect region" — the component, props and CSS classes (`ZoomLane`, `zoom-lane`,
+`zoom-block`) stay zoom-specific internally, and `EffectsPanel.tsx`'s "Zoom" section heading and
+`ZoomInspector.tsx`'s "Zoom effect" meta line are deliberately left naming the specific effect type,
+same as a clip inspector names its own asset under a generic Overlays tab. Full contract in
+[EDITING.md](EDITING.md)'s "Left rail" and "Zoom regions" sections; tab list in
+[PRODUCT.md](PRODUCT.md).
+
+**Zoom settings view.** Selecting a zoom region now shows `ZoomInspector.tsx` (new) in the right
+inspector's Edit tab, the same slot `ClipInspector` fills for a selected clip — start/length, ease
+in/out (showing the effective, half-length-clamped value when the raw one is too long for the
+region), a "Zoom amount" slider (`rectAtZoomFactor`/`zoomFactorOf`, new pure helpers in
+`core/zoomRegion.ts`, keep the rect centered and at the composition's aspect ratio), Reset framing
+and Delete. `App.tsx`'s old rect-only `zoomRectDraft` is now the general `zoomRegionDraft: { id,
+changes: ZoomRegionChanges }`, so rect drags (stage) and ease/zoom-amount drags (inspector) share one
+draft/commit path.
+
+**Effect bypass (schema 8).** `zoomRegionSchema` and `blurRegionSchema` both gained `enabled`
+(default `true`); a disabled region is skipped in preview (`CaptionStage` filters before
+`zoomRectAt`/the blur layer) and left out of the export manifest (`blurFor`/`zoomFor` in
+`export/plan.ts`), but keeps its lane position and still counts toward the non-overlap check. A
+project whose zoom regions are all disabled exports via the plain v2 path, same as a project with
+none. `src/core/migrateV7.ts` (new) only bumps the version — `enabled` defaults to `true` on the
+shared region schemas, so parsing a schema-7 file through the frozen `projectSchemaV7` already
+back-fills it. `ZoomLane.tsx` dims and dashes a disabled block (`.zoom-block.disabled`) and appends
+", bypassed" to its accessible name.
+
+**Verification**: not run in this session — the user asked to do their own verification pass rather
+than have it run here. New/updated tests written for the user to run: `model.test.ts` (schema 7→8
+migration backfilling `enabled`, a broken-schema-8-file report, the "current schema" and "schema 8
+tracks and clips" describe blocks bumped from 7); every other test file with a literal
+`schemaVersion: 7` `CaptionProject`/typed fixture bumped to 8 (`history.test.ts`,
+`timeline.test.ts`, `itemCommands.test.ts`, `agentProtocol.test.ts`, `projectClips.test.ts`,
+`electron/projectMedia.test.ts`, `export/plan.test.ts`), plus every zoom/blur region object literal
+typed as `ZoomRegion`/`BlurRegion` given `enabled: true`; `export/plan.test.ts` (bypassed zoom falls
+back to v2, bypassed blur excluded from the manifest); `zoomRegion.test.ts`
+(`rectAtZoomFactor`/`zoomFactorOf`: round-trip, aspect/center preserved, clamped to
+`[1, MAX_ZOOM_FACTOR]`, clamped back inside the frame); `Timeline.test.tsx` (disabled zoom block's
+class and aria-label); new `ZoomInspector.test.tsx`, `EffectsPanel.test.tsx`, `TitlesPanel.test.tsx`;
+`LeftRail.test.tsx` updated to the new tab ids. `createProject()` was still hardcoding
+`schemaVersion: 7` — caught and fixed as part of this pass.
+
+**Limitations**: not run through `tsc`, `vitest` or the app — the exhaustive `enabled: true` sweep
+across test fixtures was done by grep-driven inspection, not a compiler pass, so a missed literal is
+possible. The Effects rail tab's "more effects" shortlist (blur UI, pan/Ken Burns, fade, color,
+vignette, letterbox, full-frame/region blur, flash) was discussed but not scoped into a plan.
+
+**Next**: run `npx tsc --noEmit` and `npx vitest run`, fix whatever the sweep missed, then smoke-test
+in the app per the plan's manual-verification checklist (Titles still animates captions; Effects →
+Zoom in adds a region; ZoomInspector renders and its controls affect the live preview; Bypass stops
+the preview zoom and export; undo works for each; a saved v7 project opens and re-saves as v8).
+Separately: turn the effects shortlist into a scoped plan for the next effect (blur's own inspector,
+reusing the `enabled` flag this slice already gave it, is the smallest next step).
+
+## 2026-09-22 — Gemini code-switching: the fix, not just the hypothesis
+
+The earlier entry below recorded pinned `language_codes` as a *plausible* cause of spoken English
+coming back transliterated into Malayalam script, and shipped only a probe. The user then reported a
+concrete instance — "അപ്പോ See you in next video" transcribed as
+"അപ്പോ സീ യു ഇൻ നെക്സ്റ്റ് വീഡിയോ." with **"Malayalam + English (mixed)" selected** — and the
+published transcription docs (`https://ai.google.dev/gemini-api/docs/transcribe`) confirm the
+hypothesis outright: `language_codes` "omitted or empty (`[]`)" is what makes the model "automatically
+detect the language and handle code-switching", it "handles intra-sentence and inter-sentential
+code-switching **without manual configuration**", and Google's own word-timestamp sample sends no
+`language_codes` at all. So the fix ships ahead of the probe, on the API's documented contract rather
+than on a reading of an SDK doc comment.
+
+`geminiLocales('auto')` now returns `[]` instead of `['ml-IN', 'en-IN']`, so `language_codes` is
+omitted for mixed speech and the dead `options.locales.length ?` guard in `geminiRecognition.ts`
+finally does something. `ml`/`en` still pin one locale — those options exist to force one script and
+the dialog says so. There is no prompt to tune on this path: `gemini-3.5-transcribe` is a dedicated
+speech model and `transcription_config` is its only language control; the app sends no prompt or
+system instruction for transcription at all.
+
+**Why this line in particular**: recognition is one request per gated speech chunk, so the language
+commitment was made per chunk. A short trailing sign-off chunk opening with a Malayalam word, pinned
+to `ml-IN` first, got written entirely in Malayalam script.
+
+**Why nothing caught it**: `checkTranscriptScript` passes whenever the expected script dominates the
+non-Latin letters, so English transliterated *into* Malayalam reads as flawless Malayalam to it. It
+catches wrong-*script* output (Tamil for Malayalam), never wrong-*language* output. Nothing in the
+pipeline transliterates — `segmentsFromWords` only collapses whitespace.
+
+**Alignment had the same bug, with a sharper consequence.** `alignWithGemini` hardcoded both locales
+with no language parameter. Since `alignmentKey` only NFC-normalizes, lowercases and strips
+punctuation, a recognized `"സീ"` can never match an imported SRT's `"See"` — so every English token in
+an imported SRT was unmatchable and silently fell back to `estimated` timing. It now sends no locale
+either.
+
+The Transcribe dialog's mixed option is relabelled "Automatic — mixed languages (recommended)" with a
+hint that describes detection rather than the old two-language bias (the previous hint warned the user
+that code-switched speech "may still come back partly transliterated" — it was documenting the bug).
+The stored `localStorage` value is still `auto`, so nothing migrates. `scripts/gemini-recognition-probe.ts`
+keeps the former default as a comparison variant, and two of its variants are now annotated as
+non-candidates: the docs state `custom_vocabulary` cannot be combined with word-level timestamps, and
+`system_instruction` is not documented as supported for this model.
+
+Verification: `npm test` — **1004 tests pass, 108/109 files**; the one uncollected file is
+`src/Timeline.test.tsx`, which still carries the same pre-existing syntax error from this branch's
+uncommitted work noted in the entry below (untouched by this slice; `git diff` shows it modified by
+earlier work, not here). `npx vite build`, `npm run build:electron` and the worker build all succeed.
+`npm run typecheck` reports only that same `Timeline.test.tsx` syntax error. Three existing assertions
+that encoded the old behavior were updated, not added: two locale expectations in
+`geminiTranscription.test.ts` and the dialog label in `TranscriptionPanel.test.tsx`.
+
+**Not verified, and this matters**: still *no live Gemini request has ever been made from this code*.
+The fix rests on the published API contract, not on a measured transcript, and the app was not launched
+in this environment. The user's manual pass is the real verification — re-transcribe the same clip on
+"Automatic", confirm the sign-off line keeps English in Latin script, confirm word-level timing and
+Malayalam shaping survive, confirm "Malayalam only" still forces one script, and check whether Align
+audio now matches more English tokens as `model` rather than `estimated`. macOS only; Windows
+untested. If the line still comes back transliterated, `npm run probe:gemini` with a real key is the
+next step and would produce actual evidence.
+
+## 2026-09-22 — Two user-reported bugs: caption motion "resets" on edit, and Gemini code-switching
+
+Two reports on `feature/caption-stage-transforms`: editing a caption's text seemed to reset its
+animation/transition preset, and Gemini transcription returned only Malayalam for spoken English
+mixed into Malayalam speech.
+
+**Motion "reset" — actually a word-timing loss, not a lost preset.** `cue.motionOverride` was never
+dropped by any edit path (`update-text` already spread `...cue`). What broke: `retainSafeWordTimings`
+(deliberately conservative) drops the timing of every edited/inserted token, and the renderer's
+`wordMotionAvailability` gate then silently falls back to `static-clean` for that cue whenever any
+token in its text lacks timing — with the stored `motionOverride` unchanged and invisible. `static-
+clean`/`phrase-fade` short-circuit before that gate, which is exactly why only the three word-driven
+presets (active-word highlight, word pop, progressive reveal) appeared to "reset".
+
+Fix: `update-text` (`src/core/captionCommands.ts`) now restores only the gap the edit just opened —
+via the existing `estimateMissingWordTimings`, previously wired to a dead `estimateIfUntimed` field no
+caller passed — but only on a cue that **already had complete timing before the edit**; a cue that
+never had word timing (imported SRT) never gains invented timing from a text edit. A gap too short to
+estimate is now a reported `estimate-skipped` warning instead of a silent revert. Both real call sites
+(`src/App.tsx`, the Captions panel and the inspector's `CueEditor`) now pass the id prefix.
+`CaptionsPanel.tsx`'s transcript list shows an "Animation paused" / "Estimated timing" badge per cue
+(scoped to that cue's *effective* motion, project style or its own override) so the state is visible
+without opening Caption Tools.
+
+Also found and **deliberately left unfixed**: applying any built-in template
+(`captionCommands.ts`'s `apply-template`) wipes every per-cue `motionOverride` project-wide with no
+mention in the toast — a second, different way to lose a per-caption preset from the one reported.
+
+Verification: `npm run typecheck` and `npm test` both clean except one pre-existing, unrelated failure
+— `src/Timeline.test.tsx` already had a syntax error in this branch's own uncommitted work before this
+slice touched anything (confirmed by stashing just that file and re-running); every other file compiles
+and all 1004 other tests pass (108/109 files). Two new regression tests in `captionCommands.test.ts`
+were confirmed to fail against the pre-fix code (`git stash` on just `captionCommands.ts`) before being
+kept. `npx vite build` and `npm run build:electron` both succeed. Not run: the app was not launched
+interactively in this sandboxed environment, so the fix has not been clicked through in a live window;
+only macOS arm64 tooling was used, nothing was exercised on Windows.
+
+**Gemini code-switching — measurement, not a shipped fix.** The user confirmed "Malayalam + English
+(mixed)" was selected, so the simple single-language-hint explanation doesn't apply here. The
+transcribe call (`electron/geminiRecognition.ts`) has no prompt or system instruction at all; the only
+language control is `generation_config.transcription_config.language_codes`, and `auto` sends
+`['ml-IN', 'en-IN']`. `@google/genai` documents that field as defaulting to real automatic detection
+only when **omitted or empty** — so today's `auto` is an explicit two-locale bias, not detection, and a
+plausible cause of English spans coming back in Malayalam script. Per `docs/TRANSCRIPTION.md`, **no
+live Gemini request had ever been made from this code**, so this is a documented hypothesis, not a
+confirmed root cause.
+
+`geminiRecognizer`'s signature now takes an options object (`{ locales, systemInstruction?,
+customVocabulary? }`) instead of a bare locale array — `language_codes` is omitted (not sent as `[]`)
+when `locales` is empty, and `system_instruction`/`custom_vocabulary` are sent only when supplied.
+**Production behavior is unchanged**: `geminiLocales('auto')` still returns `['ml-IN', 'en-IN']`; the
+new knobs are wired only for `scripts/gemini-recognition-probe.ts` (new, `npm run probe:gemini`), which
+runs the same `speechChunks` gating as production, then recognizes every resulting chunk under four
+variants (today's hint, omitted/auto-detect, omitted+system-instruction, omitted+custom-vocabulary),
+classifies each returned word's script, and writes the comparison to
+`docs/decisions/evidence/gemini-codeswitch-<date>.json`. **This has not been run** — it needs a real
+`GEMINI_API_KEY` and a real code-switched clip, neither available in this sandboxed environment. The
+`geminiLocales('auto')` mapping and any `system_instruction`/`custom_vocabulary` default are an open
+decision pending that run; do not read the signature change as the fix.
+
+Independent of that decision, two blind spots are closed now: `geminiRecognizer` counts annotations
+that could not become a timed word (wrong type, empty text, or an invalid/non-positive offset) as
+`droppedAnnotations` instead of silently discarding them, threaded through to an optional
+`droppedAnnotationCount` on the Gemini transcription run record (schema-2-compatible; older runs never
+recorded it). The Transcribe dialog's **Spoken language** select now shows an explicit hint that
+"Malayalam only"/"English only" force that script and transliterate the other language, and the choice
+now persists across sessions (`localStorage`) like the engine and translation-target choices already
+did — previously it silently reset to "mixed" every session, which may explain why the user's earlier
+session behaved differently than expected.
+
+Verification: `npm run typecheck` and the full suite are clean (same pre-existing, unrelated
+`Timeline.test.tsx` failure as above); `electron/geminiTranscription.test.ts` was updated for the new
+call shape and passes. `npm run build:worker` builds the new probe script with esbuild and its
+usage-error path was smoke-tested with no arguments. **No live Gemini call has been made** — the probe
+must be run by a developer with a real key and clip before any locale-mapping change ships.
+
+Next: run `npm run probe:gemini` against a real Malayalam/English code-switched clip and API key,
+record the result, and apply whichever variant actually keeps English in Latin script (updating
+`geminiLocales`/adding a default `system_instruction` accordingly, with the matching alignment-path and
+unit-test updates). Separately, decide whether the `apply-template` per-cue override wipe found above
+needs its own fix.
+
 ## 2026-09-21 — MCP1: local agent control core (Claude Code can inspect and edit the project)
 
 Completed the first slice of local agent control ([MCP.md](MCP.md), `tickets.md` MCP1): an opt-in, loopback-only MCP server a Claude client can drive, forwarding every read/edit through the app's own command/undo path rather than a second editing model.
@@ -2173,3 +2607,19 @@ Completed: `./dev.sh` (dev mode) could start Electron against a dead Vite server
 Verification: `tsc --noEmit` passes and `vite build` succeeds; the production renderer was loaded in a real Electron window (preload, context isolation, sandbox as in `createWindow`) and rendered the full UI with no renderer console errors, confirming the black screen was environmental, not a regression from the clip/timeline refactor. `wait-on -t 8000 http-get://localhost:5173/` returns against a healthy server, and `vite --strictPort` exits 1 with "Port 5173 is already in use" when the port is held. The hung process tree was cleared (SIGTERM was ignored; SIGKILL was required) and a clean `./dev.sh` session now serves `/`, `/src/main.tsx` and `/src/ClipStageEditor.tsx` as 200 on 5173.
 
 Limitations/next: `npm test` and the full `npm run check` were not re-run for this change, which touches only npm scripts. The hard-coded 5173 in `dev:electron` remains — the dev server port is not yet derived from Vite's actual bound port. Separately, the stale main process ignored SIGTERM; `app.on('before-quit')` calls `event.preventDefault()` and runs an async shutdown, so a shutdown step that never settles leaves a process that only SIGKILL clears. That path is untested and worth a look. Window behaviour after the fix was confirmed by the user's own launch, not by an automated GUI check.
+
+## 2026-09-22 — Caption stage transforms, Space play/pause, and File ▸ New Project
+
+Completed three independent slices from direct user feedback.
+
+**Caption move/resize/rotate on the stage.** `CaptionStageEditor.tsx` is a new sibling of `ClipStageEditor` inside `.video-frame`, built the same way: `useCompositionProjection` for pointer↔composition mapping, window-level pointer listeners with refs so a mid-drag re-render never tears down the gesture, Escape to cancel, and a draft-on-move/commit-on-release contract so one gesture is one undo step. A plain drag moves the caption (writes the project style's `horizontal`/`vertical`), a corner handle resizes it (writes `fontSize`, since the block has no independent width/height — its size is measured from text), and a new handle above it rotates (a new `appearance.rotation` field, applied in `CaptionView` as one wrapper `transform: rotate()` around the block's own center, entirely after `layoutCaption`'s wrap/fit math so line breaking and export parity are unaffected — confirmed byte-identical at 0° by both a new renderer test and a full parity run). Holding Alt during any of the three gestures scopes it to the cue currently showing instead of the whole project, via a new per-cue `placementOverride` on `Cue` (mirrors the existing `motionOverride` field-for-field: optional, schema-bounded, no migration needed). Arrow keys nudge the selected caption (Shift = ×10 step); Alt+arrow nudges the cue override instead. The new pure math (`src/core/captionPlacement.ts`, 17 unit tests) inverts `layoutCaption`'s placement formula from a dragged pixel position back to the `{horizontal, vertical}` fraction the style actually stores, and handles resize-by-distance-from-center and rotate-by-angle-from-center — both invariant to the projection's scale, so those two gestures need no composition-unit conversion at all. `resolveCaptionStyle` (`captions/style.ts`) is the new single place that merges a cue's motion *and* placement overrides into one resolved `CaptionStyle`; both export frame-request builders (`plan.ts`) and the live preview (`CaptionStage` in `App.tsx`) now call it, so a moved/resized/rotated caption exports exactly as previewed with no separate export-side plumbing beyond that one substitution. A "Reset placement" control sits next to the existing motion-override reset in Caption Tools.
+
+**Space bar toggles playback.** The shortcut mapping (`core/shortcuts.ts`) and the global keydown handler in `App.tsx` were already correct; the bug was a guard that skipped `toggle-playback` whenever the event's target was inside `[role="button"]` — which is every cue card, timeline clip block and transcript word in the app, so Space re-selected instead of playing as soon as anything was clicked. Those widgets now activate on Enter only (Space is left alone); the guard was narrowed to `button, summary, a`, so a real native button/link keeps its own Space activation and every other stage/timeline element now lets Space reach playback.
+
+**File ▸ New Project.** Added the `new-project` menu command end to end (native template, preload/IPC allow-list, in-app File menu, ⌘/Ctrl+N) and a `newProject()` action built on a new `resetForProject()` helper factored out of the existing `openProject()` (which now uses it too) — one place that resets history, path, save status, selection, playback position, waveforms, codec issues and every in-flight draft/dialog when switching projects. Both New Project and Open Project now go through a guard (`hasUnsavedWork`, the same project-vs-`lastSavedProject` reference check the autosave effect already used) that shows a discard-confirmation dialog — reusing the existing `ReplaceCaptionsReview`/`RelinkReview` modal markup — with Cancel / Save first… / Discard, where Save first… only proceeds if the save actually landed (both `saveProject`/`saveProjectAs` now return whether it did, rather than only updating state).
+
+**Follow-up: on-stage shortcut hint.** The new drag/resize/rotate/nudge gestures above have no other UI naming them, so a small `CaptionShortcutHint` panel now appears whenever a caption is selected (`selection.kind === 'cue'`), listing Drag/Corner handle/Top handle/Arrow keys/Alt+drag/Esc. It is anchored to `.video-stage` (the stage's own box), not `.video-frame` (the aspect-ratio-sized video itself), so it sits in the empty margin beside a portrait video and simply floats over a corner for a widescreen one that fills the panel — either way it stays inside `.video-stage`'s bounds and is never clipped by its `overflow: hidden`. `pointer-events: none`, so it never blocks a drag underneath it.
+
+Verification: `tsc --noEmit`, `npm test` (1002 tests across 109 files, up from 979), `npm run build` (Vite + Electron + worker bundles) and `npm run parity:export` (`ELECTRON_RUN_AS_NODE` unset first; 200 caption-layer cases, 0 mismatches, no stray `export-parity-error.log`) all pass. New/changed tests: `core/captionPlacement.test.ts` (round-trip position↔bounds, clamping, the block-fills-safe-area divide-by-zero guard, font-size clamping, rotation wrap/snap), a `renderer.test.tsx` case proving 0° rotation renders no wrapper/transform at all (still one whole-line text node) and a rotated case does, `export/plan.test.ts` cases for both v1 (`frameRequestAt`) and v3 (`frameRequestAtSequence`) resolving a per-cue placement override into the exported style without touching the project style, `editCommandSchema.test.ts` for the two new commands, and `appMenu.test.ts` for `new-project`/⌘N.
+
+Limitations/next: all verification above is automated; nothing was run inside the actual Electron window in this slice, so the drag/resize/rotate feel, Space-bar behavior at the OS level, and the new discard dialog have not been GUI-tested — that's a manual pass for you to run (open a video, drag/resize/rotate a caption and confirm one Undo reverts the whole gesture; Alt-drag one caption and confirm only it moves; click a clip/cue/word then press Space; try New Project/Open Project with unsaved work). Only macOS was exercised here (this environment); Windows remains untested. Rotation's word-pop/emphasis max-scale clamp in `CaptionPreview.tsx` is still computed in unrotated space, so a heavily rotated caption with word-pop may clip slightly outside the safe area at the animation's peak scale — acceptable for now but worth revisiting if someone combines rotation with word-pop heavily. The placement-override "Reset" control only clears an existing override; there's no per-field (position-only vs. size-only) reset yet.

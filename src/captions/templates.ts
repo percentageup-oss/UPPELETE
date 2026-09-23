@@ -2,7 +2,11 @@ import { captionTokens } from '../core/captionText'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from './style'
 import type { MotionCue } from './renderer'
 
-export type CaptionTemplate = { id: string; name: string; description: string; tags: string[]; style: CaptionStyle }
+export type CaptionTemplate = {
+  id: string; name: string; description: string; tags: string[]; style: CaptionStyle
+  /** An optional localized sample for the template gallery only; never copied into project cues. */
+  demo?: MotionCue
+}
 const make = (motion: CaptionStyle['motion'], appearance: Partial<CaptionStyle['appearance']>): CaptionStyle => ({
   motion, motionSpeed: 1, appearance: { ...DEFAULT_CAPTION_STYLE.appearance, fontFamily: 'Arial', fontSize: 92,
     fontWeight: 900, emphasisWeight: 900, secondaryColor: '#edff39', lineHeight: 1.15, outlineWidth: 0,
@@ -21,6 +25,22 @@ export const CAPTION_TEMPLATES: CaptionTemplate[] = [
     style: make('phrase-fade', { secondaryColor: '#ff89bb', emphasisFontFamily: 'Georgia', emphasisItalic: true }) },
   { id: 'anek-bold', name: 'Anek bold', description: 'Set in Anek Malayalam for proper Malayalam shaping, with the spoken word highlighted and an amber italic emphasis.', tags: ['Malayalam', 'Bold', 'Word highlight'],
     style: make('active-word-highlight', { fontFamily: 'Anek Malayalam', secondaryColor: '#f5b83d', emphasisItalic: true }) },
+  { id: 'malayalam-gold', name: 'Malayalam Gold', description: 'Bold Malayalam title lettering with a gold gradient, warm outline and dimensional shadow.', tags: ['Malayalam', 'Gold', 'Outlined', 'Title'],
+    style: make('phrase-fade', {
+      fontFamily: 'Anek Malayalam', fontSize: 92, fontWeight: 900, lineHeight: 1.05, letterSpacing: -2, maxLines: 2,
+      primaryColor: '#FFF12A', secondaryColor: '#FFF12A', gradientEnabled: true, gradientFrom: '#FFF12A', gradientTo: '#FFD228', gradientAngle: 180,
+      emphasisGradientEnabled: true, emphasisGradientFrom: '#FFF12A', emphasisGradientTo: '#FFD228', emphasisMotion: 'none',
+      strokeEnabled: true, outlineColor: '#E93C13', outlineWidth: 8,
+      depthEnabled: true, depthColor: '#C52408', depthAmount: 8,
+      shadowEnabled: true, shadowColor: '#380900', shadowBlur: 0, shadowOffset: 9,
+      backgroundEnabled: false, padding: 18,
+    }),
+    demo: { text: 'മലയാളം ടൈറ്റിൽ\nടെംപ്ലേറ്റ്', startUs: 0, endUs: 3_000_000 },
+  },
+  { id: 'white-card', name: 'White Card', description: 'A clean dark title on a padded white card, suited to product callouts.', tags: ['Card', 'White', 'Callout', 'Title'],
+    style: { ...make('phrase-fade', { fontFamily: 'Arial', fontSize: 72, fontWeight: 700, primaryColor: '#171717', secondaryColor: '#171717',
+      backgroundEnabled: true, backgroundColor: '#ffffff', backgroundOpacity: 1, padding: 20, outlineWidth: 0, strokeEnabled: false,
+      shadowEnabled: false, vertical: .5, alignment: 'center', maxLines: 3 }), motionSpeed: 1 } },
 ]
 
 const text = 'the quick brown fox jumps'

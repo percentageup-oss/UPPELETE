@@ -18,7 +18,8 @@ export type DropPlan = { kind: 'clip'; placement: DropPlacement } | { kind: 'ref
 
 /**
  * What dropping a bin asset at `sequenceUs` does. Every kind becomes a clip:
- * - **video** lands on the video track under the pointer, else V1, overwriting what it lands on;
+ * - **video** lands on the video track under the pointer when free there, else the first free video
+ *   track, else a new track on top — never overwriting a clip it lands on;
  * - **image** lands on the track under the pointer when it is free there, else the lowest free
  *   track above every track holding video, else a new track on top;
  * - **audio** lands on the audio track under the pointer when free, else the first free audio track,
@@ -31,10 +32,6 @@ export function dropPlanForAsset(asset: { kind: ProjectAsset['kind']; durationUs
   if (asset.kind !== 'image' && asset.durationUs === null) return { kind: 'refused', reason: 'This file’s duration could not be read, so it cannot be placed on the timeline. Relink it first.' }
   const lengthUs = asset.kind === 'image' ? DEFAULT_IMAGE_CLIP_US : asset.durationUs!
   const target = targetTrackId ? tracks.find((track) => track.id === targetTrackId) : undefined
-  if (asset.kind === 'video') {
-    const trackId = target?.kind === 'video' && !target.locked ? target.id : tracks.find((track) => track.kind === 'video' && !track.locked)?.id ?? null
-    return { kind: 'clip', placement: { trackId, startUs, lengthUs } }
-  }
   const trackId = freeTrackFor(tracks, clips, asset.kind, { startUs, endUs: startUs + lengthUs }, target?.id)
   return { kind: 'clip', placement: { trackId, startUs, lengthUs } }
 }

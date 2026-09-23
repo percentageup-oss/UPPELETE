@@ -1,7 +1,8 @@
 import {
   exportBitrate, exportFrameCountFor, exportOutputDurationUs, normalizeManifest, usDecimal,
-  type ExportManifestV1, type ExportManifestV2, type ExportManifestV3, type ExportPlan, type ManifestClip,
+  type ExportManifestV1, type ExportManifestV2, type ExportManifestV3, type ExportPlan, type ManifestBlurRegion, type ManifestClip,
 } from '../../src/export/plan'
+import { zoomScaleCropExpressions } from '../../src/core/zoomRegion'
 
 /**
  * Builds the encoder invocation deterministically from the export plan and the versioned manifest.
@@ -10,9 +11,10 @@ import {
  *
  * **Parity rule for V1:** an identity edit with no effects must produce byte-for-byte the argument
  * array X2 ships today, so an unedited project re-encodes exactly as before. Cuts (`segments`) are
- * V6's trim/concat branch below; sound effects are V3's `amix` branch below; blur remains V4's
- * work, so a manifest carrying blur regions is still refused rather than silently exporting without
- * the effect.
+ * V6's trim/concat branch below; sound effects are V3's `amix` branch below; blur is V4's
+ * `blurPictureChain`, below — both graphs only touch the normalize step's output format/label when
+ * a manifest actually carries an enabled blur region, so a blur-free export's filtergraph string is
+ * unchanged.
  */
 
 /** Regions and clips are sorted by `(startUs, id)` before labels are assigned, so the encoder
@@ -36,17 +38,46 @@ export function isIdentityEdit(manifest: ExportManifestV2, plan: ExportPlan): bo
 }
 
 /**
- * Refuses a manifest this ticket cannot honestly encode. Image overlays reach the export host from
- * V2 (`frameRequestAt` emits them per-frame; the host paints them into the same transparent layer as
- * captions — FFmpeg never sees them); sound effects reach FFmpeg's own `amix` graph from V3 below.
- * Nothing in V1's UI can produce blur regions yet — that command has no entry point until V4 — so
- * it remains a guard against a future caller silently getting a video without the effect, not a
- * reachable user-facing error today.
+ * Chains FFmpeg's `split/crop/gblur/overlay` per enabled blur region (docs/EDITING.md "Edit
+ * manifest v2 and filtergraph"), each `enable`d over its own sequence-time window so a region only
+ * blurs its own span of the output. Regions are sorted by `(sequence.startUs, id)` so the graph
+ * string is independent of project/array order, matching every other builder in this file. `input`
+ * must already be `format=rgba`: blur rects are arbitrary pixel positions that a
+ * chroma-subsampled format would round to even boundaries, and rgba's unsubsampled chroma keeps
+ * `crop=…:exact=1` pixel-accurate instead. Returns `input` unchanged when there are no regions, so
+ * a blur-free export never gains this chain at all.
  */
-export function assertExportableManifest(manifest: Pick<ExportManifestV2, 'blurRegions'>): void {
-  if (manifest.blurRegions.length) {
-    throw new Error('Blur regions are not part of the exported video yet; they reach FFmpeg in ticket V4.')
-  }
+function blurPictureChain(input: string, blurRegions: readonly ManifestBlurRegion[], chains: string[]): string {
+  if (!blurRegions.length) return input
+  const sorted = [...blurRegions].sort((a, b) => a.sequence.startUs - b.sequence.startUs || a.id.localeCompare(b.id))
+  let previous = input
+  sorted.forEach((region, index) => {
+    const { x, y, width, height } = region.rect
+    const start = usDecimal(region.sequence.startUs)
+    const end = usDecimal(region.sequence.endUs)
+    chains.push(`${previous}split=2[bl${index}src][bl${index}copy]`)
+    chains.push(`[bl${index}copy]crop=w=${width}:h=${height}:x=${x}:y=${y}:exact=1,gblur=sigma=${region.sigmaPx.toFixed(6)}:steps=2[bl${index}blur]`)
+    chains.push(`[bl${index}src][bl${index}blur]overlay=x=${x}:y=${y}:format=auto:enable='between(t,${start},${end})'[blout${index}]`)
+    previous = `[blout${index}]`
+  })
+  return previous
+}
+
+/** Applies a v3 sequence-timed zoom after the picture is fully composed and before the transparent
+ * caption/host-overlay pipe. `scale` is the one FFmpeg 9.0.1 filter that can reconfigure per frame;
+ * crop remains output-sized, so downstream overlay and encoder dimensions never change. */
+function zoomPictureChain(input: string, manifest: ExportManifestV3, output: string, chains: string[]): string {
+  const expressions = zoomScaleCropExpressions(manifest.zoomRegions.map((region) => ({
+    startUs: region.sequence.startUs, endUs: region.sequence.endUs, rect: region.rect,
+    easeInUs: region.easeInUs, easeOutUs: region.easeOutUs,
+  })), manifest.format)
+  if (!expressions) return input
+  const { width, height } = manifest.format
+  const evenWidth = `trunc(${width}*(${expressions.scale})/2)*2`
+  const evenHeight = `trunc(${height}*(${expressions.scale})/2)*2`
+  chains.push(`${input}scale=w='${evenWidth}':h='${evenHeight}':eval=frame:flags=lanczos,`
+    + `crop=${width}:${height}:x='${expressions.x}':y='${expressions.y}',setsar=1[${output}]`)
+  return `[${output}]`
 }
 
 /**
@@ -63,7 +94,6 @@ export function assertExportableManifest(manifest: Pick<ExportManifestV2, 'blurR
 export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2): ExportFilterGraph {
   // No manifest means the caller has nothing to encode beyond captions — the identity edit.
   const edits = manifest ? normalizeManifest(manifest) : undefined
-  if (edits) assertExportableManifest(edits)
   const cuts = edits && !isIdentityEdit(edits, plan) ? edits.segments! : null
   const rate = `${plan.frameRate.numerator}/${plan.frameRate.denominator}`
   const duration = usDecimal(exportOutputDurationUs(plan, edits))
@@ -81,9 +111,14 @@ export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?
     }
   }
   // Normalise the decoded source to the output's CFR rate and exact frame size, letterboxing
-  // rather than cropping, then flatten the caption/overlay layer over it.
-  chains.push(`${videoInput}fps=fps=${rate}:start_time=0,scale=${plan.width}:${plan.height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,pad=${plan.width}:${plan.height}:(ow-iw)/2:(oh-ih)/2,setsar=1[v]`)
-  chains.push(`[v][1:v:0]overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+  // rather than cropping, then blur (if any), then flatten the caption/overlay layer over it. Blur
+  // only changes this step's own label/format when there is a region to draw — an edit with no
+  // blur keeps the exact `[v]`/`scale,pad,setsar` string the parity snapshot pins.
+  const blurRegions = edits?.blurRegions ?? []
+  const normalizeLabel = blurRegions.length ? 'vbase' : 'v'
+  chains.push(`${videoInput}fps=fps=${rate}:start_time=0,scale=${plan.width}:${plan.height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,pad=${plan.width}:${plan.height}:(ow-iw)/2:(oh-ih)/2,setsar=1${blurRegions.length ? ',format=rgba' : ''}[${normalizeLabel}]`)
+  const picture = blurPictureChain(`[${normalizeLabel}]`, blurRegions, chains)
+  chains.push(`${picture}[1:v:0]overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   const maps = ['-map', '[outv]']
   const clips = edits ? sortedAudioClips(edits) : []
   const hasAudioOut = hasAudio || clips.length > 0
@@ -179,21 +214,27 @@ function fitChain(fit: ManifestClip['fit'], width: number, height: number, trans
  * decoded frames. `hasAudioByInput[i]` is whether input `i` has an audio stream (probed by the worker).
  */
 export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput: readonly boolean[]): ExportFilterGraph {
-  assertExportableManifest(manifest)
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
   const duration = usDecimal(manifest.sequenceDurationUs)
   const layer = `[${manifest.inputs.length}:v:0]`
   const chains: string[] = []
   const visual = manifest.clips.filter((clip) => clip.kind !== 'audio')
+  const hasBlur = manifest.blurRegions.length > 0
   if (v3Route(manifest) === 'flat') {
     // Each clip is normalised to the output size before `concat` (inputs may differ in size); the
     // CFR conversion runs once after it, exactly as manifest v2's cuts do, so rounding never accumulates.
     const ordered = [...visual].sort((a, b) => a.timelineStartUs - b.timelineStartUs)
     ordered.forEach((clip, index) => chains.push(`[${clip.inputIndex}:v:0]trim=duration=${usDecimal(clipLength(clip))},setpts=PTS-STARTPTS,`
       + `${fitChain(clip.fit, width, height, false)},setsar=1,format=yuv420p[v${index}]`))
-    chains.push(`${ordered.map((_, index) => `[v${index}]`).join('')}concat=n=${ordered.length}:v=1:a=0,fps=fps=${rate}:start_time=0[v]`)
-    chains.push(`[v]${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    // Blur needs rgba (see `blurPictureChain`); the concat/fps step only gains the extra
+    // `,format=rgba` and relabel when a blur region is actually present, so a blur-free export's
+    // string here is unchanged.
+    const vLabel = hasBlur ? 'vraw' : 'v'
+    chains.push(`${ordered.map((_, index) => `[v${index}]`).join('')}concat=n=${ordered.length}:v=1:a=0,fps=fps=${rate}:start_time=0${hasBlur ? ',format=rgba' : ''}[${vLabel}]`)
+    const blurred = blurPictureChain(`[${vLabel}]`, manifest.blurRegions, chains)
+    const picture = zoomPictureChain(blurred, manifest, 'vz', chains)
+    chains.push(`${picture}${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   } else {
     // A black RGBA canvas as long as the sequence; each visual clip, back to front, is padded at its
     // start with transparent frames (`tpad`) so the overlay never stalls waiting for it, and ends
@@ -212,7 +253,11 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
       chains.push(`${previous}[c${index}]overlay=${box.x}:${box.y}:format=auto:eof_action=pass:repeatlast=0${next}`)
       previous = next
     })
-    chains.push(`${previous}${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    // The stacked canvas is already rgba (`format=rgba[base]` above, and every overlaid clip is
+    // rgba too), so blur needs no extra format conversion here.
+    const blurred = blurPictureChain(previous, manifest.blurRegions, chains)
+    const picture = zoomPictureChain(blurred, manifest, 'vz', chains)
+    chains.push(`${picture}${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   }
   const maps = ['-map', '[outv]']
   // Sound: every video clip's own audio (on an unmuted track, with an audio stream) and every audio

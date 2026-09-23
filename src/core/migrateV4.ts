@@ -198,12 +198,14 @@ export function migrateV4(project: CaptionProjectV4, newId: () => string): { pro
   for (const entry of audioPlaced) clips.push({ ...entry.clip, trackId: (entry.parked ? parkedAudioTracks : audioTracks)[entry.lane].id })
 
   // 5. Blur regions: the same span rule, `mediaAssetId` dropped — a blur is an effect over the
-  // composited program. In practice this never fires: export still refuses blur and there is no UI
-  // entry point, so `blurRegions` is empty in every real file.
+  // composited program. In practice this rarely fires against a real file: schema 4 predates the
+  // blur UI (V4, docs/EDITING.md), so `blurRegions` is empty in every file that was never edited
+  // through it. `enabled: true` matches the schema's own default for a region with no bypass state
+  // to carry over.
   const blurRegions: BlurRegion[] = []
   for (const region of oldBlur) {
     const runs = runsOf(region, region.mediaAssetId)
-    const shape = { rect: region.rect, radius: region.radius }
+    const shape = { rect: region.rect, radius: region.radius, enabled: true }
     if (!runs.length) {
       const startUs = pointOf(region.startUs, region.mediaAssetId).sequenceUs
       blurRegions.push({ id: region.id, startUs, endUs: startUs + lengthOf(region), ...shape })

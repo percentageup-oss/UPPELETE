@@ -58,7 +58,7 @@ function styledMotionInputs(composition: { width: number; height: number }): Lay
   const inputs = defaultCaptionInputs(composition)
   return { ...inputs, maxLines: 2, position: { horizontal: 0, vertical: 0 },
     appearance: { color: '#ffe9a8', secondaryColor: '#ff3d6c', outlineColor: '#220000', outlineWidth: 2,
-      shadow: '0 4px 6px #000c', background: '#10131aE6', padding: 14 } }
+      shadow: '0 4px 6px #000c', background: '#10131aE6', padding: 14, rotation: 0 } }
 }
 
 function MotionGrid() {

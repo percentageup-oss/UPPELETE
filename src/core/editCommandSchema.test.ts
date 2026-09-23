@@ -12,7 +12,7 @@ const asset = (id: string, kind: ProjectAsset['kind'] = 'video'): ProjectAsset =
   ({ id, kind, name: `${id}.mp4`, reference: { relativePath: null, absolutePath: `/media/${id}` }, fingerprint: FINGERPRINT, metadata: meta(10 * US) })
 const track = (id: string, kind: Track['kind'] = 'video'): Track => ({ id, kind, name: '', muted: false, hidden: false, locked: false })
 const clip = (id: string): Clip => ({ kind: 'video', id, trackId: 'V1', assetId: 'x', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 5 * US, opacity: 1, fit: 'contain', gain: 1 })
-const region = (id: string): BlurRegion => ({ id, startUs: 0, endUs: 2 * US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 10 })
+const region = (id: string): BlurRegion => ({ id, startUs: 0, endUs: 2 * US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 10, enabled: true })
 const marker = (id: string): Marker => ({ id, atUs: US, text: 'insert logo here' })
 const cue = (id: string): Cue => ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [] })
 
@@ -22,8 +22,8 @@ const cue = (id: string): Cue => ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 
 const CAPTION_COMMAND_TYPES = [
   'toggle-emphasis', 'estimate-words', 'update-text', 'update-time', 'shift-time', 'add', 'delete', 'delete-word',
   'split', 'merge-next', 'regroup', 'regroup-many', 'set-timeline-display', 'set-display', 'set-caption-display',
-  'apply-template', 'set-motion-override', 'reset-motion-overrides', 'line-break-before-word', 'split-before-word',
-  'move-from-word-to-next', 'move-through-word-to-previous',
+  'apply-template', 'set-motion-override', 'reset-motion-overrides', 'set-placement-override', 'reset-placement-overrides',
+  'line-break-before-word', 'split-before-word', 'move-from-word-to-next', 'move-through-word-to-previous',
 ] as const
 
 describe('editCommandSchema coverage', () => {
@@ -51,6 +51,7 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'toggle-emphasis', command: { type: 'toggle-emphasis', cueId: 'c1', textStart: 0 } },
     { name: 'estimate-words', command: { type: 'estimate-words', cueId: 'c1', idPrefix: 'w', missingOnly: true } },
     { name: 'update-text', command: { type: 'update-text', cueId: 'c1', text: 'പുതിയ വാചകം' } },
+    { name: 'update-text (estimateIfUntimed)', command: { type: 'update-text', cueId: 'c1', text: 'പുതിയ വാചകം', estimateIfUntimed: 'w' } },
     { name: 'update-time', command: { type: 'update-time', cueId: 'c1', startUs: 0, endUs: 2 * US } },
     { name: 'shift-time', command: { type: 'shift-time', cueId: 'c1', deltaUs: -500_000 } },
     { name: 'add', command: { type: 'add', cue: cue('c-new') } },
@@ -66,6 +67,8 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'set-caption-display', command: { type: 'set-caption-display', display: 'word' } },
     { name: 'set-motion-override', command: { type: 'set-motion-override', cueId: 'c1', override: { motion: 'word-pop', motionSpeed: 1.5 } } },
     { name: 'reset-motion-overrides', command: { type: 'reset-motion-overrides' } },
+    { name: 'set-placement-override', command: { type: 'set-placement-override', cueId: 'c1', override: { horizontal: .2, rotation: 15 } } },
+    { name: 'reset-placement-overrides', command: { type: 'reset-placement-overrides' } },
     { name: 'line-break-before-word', command: { type: 'line-break-before-word', cueId: 'c1', target: { wordId: 'w1' } } },
     { name: 'split-before-word', command: { type: 'split-before-word', cueId: 'c1', wordId: 'w1', rightCueId: 'c2' } },
     { name: 'move-from-word-to-next', command: { type: 'move-from-word-to-next', cueId: 'c1', wordId: 'w1' } },
@@ -77,6 +80,11 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'track-remove', command: { type: 'track-remove', trackId: 'V2' } },
     { name: 'track-update', command: { type: 'track-update', trackId: 'V1', changes: { muted: true } } },
     { name: 'track-reorder', command: { type: 'track-reorder', trackId: 'V1', direction: 'forward' } },
+    { name: 'caption-track-add', command: { type: 'caption-track-add', track: { id: 'C2', name: '', locked: false } } },
+    { name: 'caption-track-remove', command: { type: 'caption-track-remove', trackId: 'C2' } },
+    { name: 'caption-track-update', command: { type: 'caption-track-update', trackId: 'C1', changes: { locked: true } } },
+    { name: 'caption-track-reorder', command: { type: 'caption-track-reorder', trackId: 'C1', direction: 'forward' } },
+    { name: 'caption-track-move-cue', command: { type: 'caption-track-move-cue', cueId: 'c1', trackId: 'C1' } },
     { name: 'clip-add', command: { type: 'clip-add', clip: clip('c-new'), mode: 'overwrite', idPrefix: 'p' } },
     { name: 'clip-move', command: { type: 'clip-move', clipId: 'c1', trackId: 'V1', startUs: US, mode: 'ripple', idPrefix: 'p' } },
     { name: 'clip-trim', command: { type: 'clip-trim', clipId: 'c1', edge: 'end', deltaUs: -1000, mode: 'overwrite' } },

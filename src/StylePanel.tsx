@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { HexColorField, PercentField, Row, Section, Segmented, SliderWithNumber, Stepper, Toggle } from './style/controls'
+import { HexColorField, NumberField, PercentField, Row, Section, Segmented, SliderWithNumber, Stepper, Toggle } from './style/controls'
 import { AlignCenterIcon, AlignLeftIcon, AlignRightIcon, DropIcon, PaletteIcon, UnderlineIcon } from './style/icons'
 import { fallbackCatalog, loadLocalFontCatalog, type LocalFontCatalogState } from './style/localFonts'
 import {
@@ -147,9 +147,9 @@ export function StylePanel({ style, onDraft, onCommit }: {
           onChange={(value) => commitNow({ alignment: value })} />
       </Row>
       <Row label="Max lines" htmlFor="style-max-lines" onReset={() => reset(RESET_KEYS.maxLines)} isDefault={isDefault(RESET_KEYS.maxLines)}>
-        <input id="style-max-lines" type="number" min={1} max={6} value={draft.appearance.maxLines}
-          onChange={(event) => patch({ maxLines: Number(event.target.value) })}
-          onBlur={() => commitNow({ maxLines: Math.max(1, Math.min(6, Math.round(draft.appearance.maxLines))) })} />
+        <NumberField id="style-max-lines" min={1} max={6} step={1} value={draft.appearance.maxLines}
+          onDraft={(value) => patch({ maxLines: Math.round(value) })}
+          onCommit={(value) => commitNow({ maxLines: Math.max(1, Math.min(6, Math.round(value))) })} />
       </Row>
     </Section>
 
@@ -161,6 +161,10 @@ export function StylePanel({ style, onDraft, onCommit }: {
       <Row label="Y" htmlFor="style-position-v" onReset={() => reset(RESET_KEYS.positionY)} isDefault={isDefault(RESET_KEYS.positionY)}>
         <PercentField id="style-position-v" value={draft.appearance.vertical}
           onDraft={(vertical) => change({ vertical })} onCommit={(vertical) => commitNow({ vertical })} />
+      </Row>
+      <Row label="Rotation" htmlFor="style-rotation" onReset={() => reset(RESET_KEYS.rotation)} isDefault={isDefault(RESET_KEYS.rotation)}>
+        <SliderWithNumber id="style-rotation" min={-180} max={180} step={1} unit="°" value={draft.appearance.rotation}
+          onDraft={(rotation) => change({ rotation })} onCommit={(rotation) => commitNow({ rotation })} />
       </Row>
     </Section>
 

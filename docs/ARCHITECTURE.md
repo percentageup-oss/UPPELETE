@@ -67,8 +67,27 @@ over it. `src/core/layerPlan.ts` maps each sequence frame to its source timestam
 filtergraph is still untouched by overlays** — V2 added a second, overlay-carrying frame request
 version (`src/export/frameRequest.ts`'s v1/v2 union) the export host paints, and a `--asset <url>`
 argv allow-list (`scripts/export-host.mjs`) so the host's own `media:` scheme can load exactly the
-asset files the worker resolved, never an arbitrary path. A manifest carrying cuts, blur or sound
-effects is still refused rather than silently encoded without them.
+asset files the worker resolved, never an arbitrary path. Cuts, sound effects, blur regions
+(`split/crop/gblur/overlay`, `enable`d in sequence time, before the zoom crop) and zoom regions
+(FFmpeg dynamically scales/crops the composed picture before the transparent host layer, so captions
+and host-painted overlays stay pinned) all have dedicated FFmpeg branches — blur regions may overlap
+each other in time and in the frame, unlike zoom's one non-overlapping lane.
+
+**Frame-paint effects (schema 9, `project.effects`: vignette, letterbox, fade/dip — [EDITING.md](EDITING.md)
+"Frame-paint effects") never reach FFmpeg at all.** They are painted by the export host into the
+same transparent layer captions and host-painted overlays already use, with the identical React
+components (`CompositionLayers.tsx`, plus a new `overCaption` slot on `CaptionPreview` for fade) live
+preview calls — so, unlike blur and zoom, there is no separate FFmpeg branch and no measured
+tolerance; parity is exact by construction. The render order within that one shared layer, back to
+front: video/image clips, then blur (inside the zoomed picture, all pre-composed by FFmpeg before
+this layer even starts) → host-painted image overlays → vignette/letterbox (pinned to the output
+frame like an overlay) → captions → fade (the one frame-paint kind that must cover captions too).
+`src/core/frameEffects.ts`'s `frameEffectsAt` is the one closed-form evaluator both preview and
+`frameRequestAtSequence` (`plan.ts`) call, mirroring `zoomRectAt`'s absolute-time contract; each
+effect kind has its own non-overlapping lane (`model.ts`'s schema-9 `superRefine`, one lane per
+`kind`), but different kinds may freely overlap, unlike zoom's single lane.
+
+**Authored text (schema 10).** `project.textOverlays` is a separate collection of sequence-timed text items, each with a stable project-wide ID, complete `CaptionStyle` snapshot, item-specific enter/exit motion and a layer order that crosses the fixed caption plane. Schema 9→10 is lossless and initializes `[]`. `textCommands.ts` keeps add/update/move/trim/duplicate/delete/reorder undoable; decorative word-motion boundaries are derived at render time from whole `captionTokens`, never persisted as aligned caption timing. `TextOverlayActor` reuses the caption renderer so shaping, font readiness, styling and template motion match. In the editor, preview double-click creates a title at the mapped composition point or edits an existing title; Titles and the Text lane provide the same playhead-add path. Title templates update appearance while preserving placement and item motion; optional decorative word motion remains distinct from whole-layer transitions. Preview and export evaluate item transitions in absolute sequence time; export manifest v3 carries persisted items and frame request v4 contains only active, ordered text actors. The host waits for each actor's layout/fonts before committing its frame. Text remains absent from transcription, transcript and SRT paths.
 
 ## Jobs and failures
 [T1](TRANSCRIPTION.md) implements `electron/jobScheduler.ts`: queued/running/succeeded/failed/cancelled states with structured progress, kept in strict FIFO order. Every job kind is currently resource-heavy, so by default only one heavy job runs at a time — transcription and export do not compete unless a caller explicitly raises concurrency. `electron/jobs.ts`'s `getJobScheduler()` is the one process-wide scheduler instance transcription (`transcriptionIpc.ts`) and X2's export (`exportIpc.ts`/`exportService.ts`) both enqueue onto, so that arbitration is real rather than each feature queuing only against itself. UI remains responsive. Cancellation terminates child processes and cleans only job-owned temporary files; a job's own `run()` gates its eventual mutation behind an explicit commit step (`ctx.enterCommit()`) so cancellation after valid output exists but before it is applied still prevents the mutation, while a commit already under way is never retroactively relabeled cancelled — X2's export uses this to discard a fully-encoded temporary file rather than renaming it onto the user's destination when cancellation wins the race. Model downloads are explicit, resumable if supported and verified against trusted checksums (T2). Malformed model/backend output is validated before project mutation (T1's `validateTranscriptionOutput`/`validateAlignmentOutput`; the media worker's own result schemas).

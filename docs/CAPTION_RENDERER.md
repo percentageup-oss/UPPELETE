@@ -149,6 +149,16 @@ selected cue's own reason. Rendering itself never estimates word timing — that
 opt-in user action in the inspector (`estimateWordTimings`, T4); the renderer only ever consumes
 timing that already exists and labels it honestly.
 
+Editing a cue's text used to break this silently: `retainSafeWordTimings` (deliberately
+conservative — it drops any edited/inserted/reordered token's timing) left the cue `incomplete`,
+so a word-driven preset a cue was explicitly set to fell back to static-clean with the *stored*
+preset unchanged and no visible reason. `update-text` (`src/core/captionCommands.ts`) now restores
+only the gap this edit just opened — via the same `estimateMissingWordTimings` used elsewhere — but
+**only on a cue that already had complete timing before the edit**; a cue that never had word
+timing (imported SRT) never gains invented timing from a text edit. `CaptionsPanel.tsx`'s transcript
+list shows an "Animation paused" / "Estimated timing" badge (`wordMotionAvailability`, scoped to
+that cue's *effective* motion) so the state is visible without opening Caption Tools.
+
 ### Word display (R3, slice 1)
 
 `WORD`/`LINE` (the timeline toolbar toggle) is the saved project field `project.captionDisplay:
@@ -393,3 +403,7 @@ export smoke, and `npm run build:electron` beforehand); pass `--only landscape,p
 vfr,longform` (comma list) to scope a run. Nothing it generates is checked into Git; the evidence
 file (machine, versions, every case's measurements) lands at
 `docs/decisions/evidence/x3-parity-<date>.json`.
+
+## Authored text actors
+
+`TextOverlayActor` wraps the same `CaptionPreview`/shaped text painter used for captions, so font readiness, Malayalam shaping, whole-token emphasis, backgrounds and template motion stay shared. Its cue is built on demand from `captionTokens` with deterministic `timingSource: 'decorative'` boundaries across the item's hold duration; these timings are not persisted or represented as audio alignment. Enter/exit transforms are composed outside that painter from absolute sequence time by `textMotionAt`, keeping seeking and frame rendering deterministic. The export host waits for every active actor's ready layout before acknowledging a frame request v4.

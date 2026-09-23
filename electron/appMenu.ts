@@ -18,6 +18,8 @@ export function appMenuTemplate(platform: NodeJS.Platform, send: (command: MenuC
       { role: 'hide' as const }, { role: 'hideOthers' as const }, { role: 'unhide' as const }, { type: 'separator' as const }, { role: 'quit' as const },
     ] }] : []),
     { label: 'File', submenu: [
+      item('New Project', 'new-project', 'CmdOrCtrl+N'),
+      { type: 'separator' },
       item('Open Video…', 'open-video', 'CmdOrCtrl+Shift+O'),
       item('Import SRT…', 'import-srt', 'CmdOrCtrl+I'),
       { type: 'separator' },

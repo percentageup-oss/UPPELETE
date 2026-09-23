@@ -16,8 +16,10 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
   onSelectWord: (cue: Cue, word: CaptionWord) => void
 }) {
   const spanUs = span.sourceEndUs - span.sourceStartUs
+  // Enter (or a pointer) activates a word; Space is left alone so it reaches the global play/pause
+  // shortcut even while a word is focused/selected.
   const activate = (event: ReactPointerEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, word: CaptionWord) => {
-    if ('key' in event && event.key !== 'Enter' && event.key !== ' ') return
+    if ('key' in event && event.key !== 'Enter') return
     if ('button' in event && event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
@@ -29,7 +31,7 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
       title="No word timing. Use “Estimate all words & group” in the inspector to create reviewable estimates."
       aria-label={`Caption ${cue.text || 'empty'} without word timing, ${formatClock(cue.startUs)}`}
       onPointerDown={() => onSeek(Math.max(cue.startUs, span.sourceStartUs), cue.id)} onKeyDown={(event) => {
-        if (event.key !== 'Enter' && event.key !== ' ') return
+        if (event.key !== 'Enter') return
         event.preventDefault(); event.stopPropagation(); onSeek(Math.max(cue.startUs, span.sourceStartUs), cue.id)
       }}>{cue.text || '(empty)'}</span>
   }
@@ -53,7 +55,7 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
  * the sequence shows it (`spansOf`). A caption clipped by a cut still drags as one caption: only its
  * outer pieces carry handles.
  */
-export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, warningCueIds, draggingId, selectedWordId, onBeginDrag, onKeyboardSelect, onSeekSource, onSelectWord, onSeekTrack }: {
+export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, warningCueIds, draggingId, selectedWordId, locked = false, onBeginDrag, onKeyboardSelect, onSeekSource, onSelectWord, onSeekTrack }: {
   cues: readonly Cue[]
   spansOf: (cue: Cue) => CaptionSpan[]
   durationUs: number
@@ -62,6 +64,8 @@ export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, 
   warningCueIds: Set<string>
   draggingId: string | null
   selectedWordId: string | null
+  /** The caption track this row belongs to (schema 6) is locked: no drag handles, moving refused. */
+  locked?: boolean
   onBeginDrag: (event: ReactPointerEvent<HTMLElement>, cue: Cue, mode: CueDragMode, span: CaptionSpan) => void
   onKeyboardSelect: (event: ReactKeyboardEvent<HTMLDivElement>, cue: Cue, span: CaptionSpan) => void
   onSeekSource: (cue: Cue, sourceUs: number, span: CaptionSpan) => void
@@ -69,22 +73,22 @@ export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, 
   onSeekTrack: (event: ReactPointerEvent<HTMLDivElement>) => void
 }) {
   const place = (span: CaptionSpan) => ({ left: `${timeToPixel(span.startUs, durationUs, 100)}%`, width: `${Math.max(.02, timeToPixel(span.endUs - span.startUs, durationUs, 100))}%` })
-  return <div className={`track captions ${mode}`} onPointerDown={onSeekTrack} role="group"
+  return <div className={`track captions ${mode} ${locked ? 'locked' : ''}`} onPointerDown={onSeekTrack} role="group"
     aria-label={mode === 'line' ? 'Caption lines. Tab to a caption, then press Enter or Space to select and seek to it.' : 'Caption words. Tab to a word, then press Enter or Space to seek to it.'}>
     {mode === 'line' ? cues.flatMap((cue) => spansOf(cue).map((span, spanIndex, spans) => <div
       key={`${cue.id}:${spanIndex}`}
       role="button"
       tabIndex={0}
       lang="ml"
-      aria-label={`Cue ${cue.text}, ${formatClock(cue.startUs)} to ${formatClock(cue.endUs)}${spans.length > 1 ? `, part ${spanIndex + 1} of ${spans.length}` : ''}`}
-      className={`cue-block ${cue.id === selectedCueId ? 'active' : ''} ${warningCueIds.has(cue.id) ? 'has-warning' : ''} ${draggingId === cue.id ? 'dragging' : ''}`}
+      aria-label={`Cue ${cue.text}, ${formatClock(cue.startUs)} to ${formatClock(cue.endUs)}${spans.length > 1 ? `, part ${spanIndex + 1} of ${spans.length}` : ''}${locked ? ' (track locked)' : ''}`}
+      className={`cue-block ${cue.id === selectedCueId ? 'active' : ''} ${warningCueIds.has(cue.id) ? 'has-warning' : ''} ${draggingId === cue.id ? 'dragging' : ''} ${locked ? 'locked' : ''}`}
       style={place(span)}
       onPointerDown={(event) => onBeginDrag(event, cue, 'move', span)}
       onKeyDown={(event) => onKeyboardSelect(event, cue, span)}
     >
-      {spanIndex === 0 && <span className="cue-handle start" data-handle="start" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, cue, 'start', span)} />}
+      {!locked && spanIndex === 0 && <span className="cue-handle start" data-handle="start" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, cue, 'start', span)} />}
       <span className="cue-block-text">{cue.text}</span>
-      {spanIndex === spans.length - 1 && <span className="cue-handle end" data-handle="end" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, cue, 'end', span)} />}
+      {!locked && spanIndex === spans.length - 1 && <span className="cue-handle end" data-handle="end" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, cue, 'end', span)} />}
     </div>)) : cues.flatMap((cue) => spansOf(cue).map((span, spanIndex) => <div key={`${cue.id}:${spanIndex}`}
       className={`cue-span ${cue.id === selectedCueId ? 'active' : ''} ${warningCueIds.has(cue.id) ? 'has-warning' : ''}`} style={place(span)}>
       <WordBlocks cue={cue} span={span} selectedWordId={selectedWordId} onSeek={(sourceUs) => onSeekSource(cue, sourceUs, span)} onSelectWord={onSelectWord} />

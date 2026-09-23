@@ -1,4 +1,4 @@
-import type { Clip, Track, VideoClip } from './edit'
+import type { CaptionTrack, Clip, Track, VideoClip } from './edit'
 import type { Cue } from './model'
 
 /**
@@ -46,6 +46,11 @@ export function trackLabel(track: Track, tracks: readonly Track[]): string {
   if (track.name) return track.name
   const sameKind = tracks.filter((candidate) => candidate.kind === track.kind)
   return `${track.kind === 'video' ? 'V' : 'A'}${sameKind.indexOf(track) + 1}`
+}
+
+/** `C1`/`C2`… — the same empty-name-derives-a-label convention `trackLabel` uses for video/audio. */
+export function captionTrackLabel(track: CaptionTrack, tracks: readonly CaptionTrack[]): string {
+  return track.name || `C${tracks.indexOf(track) + 1}`
 }
 
 /**

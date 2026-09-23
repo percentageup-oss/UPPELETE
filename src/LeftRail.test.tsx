@@ -3,9 +3,9 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { LeftRail } from './LeftRail'
 
 describe('LeftRail', () => {
-  it('renders exactly the four panel tabs, each with an accessible name', () => {
+  it('renders exactly the five panel tabs, each with an accessible name', () => {
     const html = renderToStaticMarkup(<LeftRail active="media" onChange={() => {}} onSettings={() => {}} />)
-    for (const tab of ['media', 'captions', 'overlays', 'transitions']) expect(html).toContain(`id="rail-tab-${tab}"`)
+    for (const tab of ['media', 'captions', 'overlays', 'titles', 'effects']) expect(html).toContain(`id="rail-tab-${tab}"`)
     expect(html).toContain('role="tablist"')
   })
 
@@ -17,9 +17,9 @@ describe('LeftRail', () => {
     expect(html).toMatch(/id="rail-tab-media"[^>]*tabindex="-1"/i)
   })
 
-  it('renders Settings as a button outside the tablist, not a fifth tab', () => {
+  it('renders Settings as a button outside the tablist, not a sixth tab', () => {
     const html = renderToStaticMarkup(<LeftRail active="media" onChange={() => {}} onSettings={() => {}} />)
     expect(html).toMatch(/<button[^>]*aria-label="Settings"/)
-    expect([...html.matchAll(/role="tab"/g)]).toHaveLength(4)
+    expect([...html.matchAll(/role="tab"/g)]).toHaveLength(5)
   })
 })

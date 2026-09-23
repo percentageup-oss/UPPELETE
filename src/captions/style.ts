@@ -32,6 +32,8 @@ export const captionAppearanceSchema = z.strictObject({
   shadowColor: color, shadowBlur: z.number().min(0).max(20), shadowOffset: z.number().min(0).max(15),
   backgroundColor: color, backgroundOpacity: z.number().min(0).max(1), padding: z.number().min(0).max(40),
   horizontal: z.number().min(0).max(1), vertical: z.number().min(0).max(1),
+  // Applied after layout, around the block's own center; wrap/fit stay axis-aligned (docs/CAPTION_RENDERER.md).
+  rotation: z.number().min(-180).max(180).default(0),
   maxLines: z.number().int().min(1).max(6),
   // Font face (weight/italic only; family is the FONT_FAMILY_CHOICES/custom field above).
   fontWeight: fontWeight.default(700), fontItalic: z.boolean().default(false),
@@ -83,6 +85,17 @@ export const captionStyleSchema = z.strictObject({
   appearance: z.preprocess(fillLegacyToggles, captionAppearanceSchema),
 })
 export type CaptionStyle = z.infer<typeof captionStyleSchema>
+
+/** Title templates/presets define appearance and motion, not where an authored text item sits.
+ * Keep its user-authored stage transform when applying a reusable style. */
+export function applyCaptionTemplateToText(template: CaptionStyle, current: CaptionStyle): CaptionStyle {
+  return { ...template, motion: current.motion, motionSpeed: current.motionSpeed, appearance: { ...template.appearance,
+    horizontal: current.appearance.horizontal,
+    vertical: current.appearance.vertical,
+    rotation: current.appearance.rotation,
+  } }
+}
+
 export const savedCaptionPresetSchema = z.strictObject({
   id: z.string().min(1).max(128), name: z.string().trim().min(1).max(80), style: captionStyleSchema,
 })
@@ -91,7 +104,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   motion: 'static-clean', motionSpeed: 1, appearance: {
     fontFamily: 'Noto Sans Malayalam', fontSize: 59.4, primaryColor: '#ffffff', secondaryColor: '#c8ff3d',
     outlineColor: '#000000', outlineWidth: 1, shadowColor: '#000000', shadowBlur: 3, shadowOffset: 2,
-    backgroundColor: '#000000', backgroundOpacity: .6, padding: 6, horizontal: .5, vertical: 1, maxLines: 3,
+    backgroundColor: '#000000', backgroundOpacity: .6, padding: 6, horizontal: .5, vertical: 1, rotation: 0, maxLines: 3,
     fontWeight: 700, fontItalic: false,
     emphasisFontFamily: '', emphasisMotion: 'pop', emphasisWeight: 700, emphasisItalic: false, emphasisMode: 'emphasize',
     emphasisGradientEnabled: false, emphasisGradientFrom: '#c8ff3d', emphasisGradientTo: '#ffffff',
@@ -111,12 +124,31 @@ export function resolveCaptionMotion(style: CaptionStyle, override?: { motion?: 
   return { motion: override?.motion ?? style.motion, motionSpeed: override?.motionSpeed ?? style.motionSpeed }
 }
 
+/** A cue's own placement override (a stage Alt-drag/resize/rotate); every field falls back to the
+ * project style when absent. Structurally the same shape as `model.ts`'s `Cue['placementOverride']`
+ * — kept independent here (rather than imported) so `style.ts` never depends on `model.ts`. */
+export type CaptionPlacementOverride = { horizontal?: number; vertical?: number; fontSize?: number; rotation?: number }
+
+/** Resolves a cue's motion *and* placement overrides into one complete style, so preview and export
+ * both paint from a single already-resolved `CaptionStyle` (`resolveCaptionMotion` alone only
+ * resolved motion; a caller needing placement too used to have to know to merge `appearance` itself). */
+export function resolveCaptionStyle(style: CaptionStyle, cue?: { motionOverride?: { motion?: CaptionMotion; motionSpeed?: number }; placementOverride?: CaptionPlacementOverride } | null): CaptionStyle {
+  const motion = resolveCaptionMotion(style, cue?.motionOverride)
+  const placement = cue?.placementOverride
+  return { ...style, ...motion, appearance: placement ? { ...style.appearance,
+    horizontal: placement.horizontal ?? style.appearance.horizontal,
+    vertical: placement.vertical ?? style.appearance.vertical,
+    fontSize: placement.fontSize ?? style.appearance.fontSize,
+    rotation: placement.rotation ?? style.appearance.rotation,
+  } : style.appearance }
+}
+
 /** Which appearance keys a style-panel "reset" row restores to `DEFAULT_CAPTION_STYLE`. */
 export const RESET_KEYS = {
   fontFamily: ['fontFamily'], fontFace: ['fontWeight', 'fontItalic'], fontSize: ['fontSize'],
   emphasisFace: ['emphasisFontFamily', 'emphasisWeight', 'emphasisItalic'], emphasisAnimation: ['emphasisMotion'],
   textTransform: ['textTransform'], underline: ['underline'], alignment: ['alignment'], maxLines: ['maxLines'],
-  position: ['horizontal', 'vertical'], positionX: ['horizontal'], positionY: ['vertical'],
+  position: ['horizontal', 'vertical'], positionX: ['horizontal'], positionY: ['vertical'], rotation: ['rotation'],
   color: ['gradientEnabled', 'primaryColor', 'gradientFrom', 'gradientTo', 'gradientAngle'],
   emphasis: ['emphasisMode', 'emphasisGradientEnabled', 'secondaryColor', 'emphasisGradientFrom', 'emphasisGradientTo'],
   emphasisSize: ['emphasisScale'], emphasisGlow: ['emphasisGlowEnabled', 'emphasisGlowColor'],
@@ -166,6 +198,7 @@ export function captionStyleInputs(style: CaptionStyle, viewport: Size) {
       fill: a.gradientEnabled ? { from: a.gradientFrom, to: a.gradientTo, angle: a.gradientAngle } : undefined,
       secondaryFill: a.emphasisGradientEnabled ? { from: a.emphasisGradientFrom, to: a.emphasisGradientTo, angle: a.gradientAngle } : undefined,
       underline: a.underline, emphasisUnderline: a.underline || a.emphasisUnderline, spotlight: a.emphasisMode === 'spotlight',
+      rotation: a.rotation,
     },
   }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { exportArguments, exportFilterGraph, isIdentityEdit } from './exportArguments'
-import { exportFrameCount, normalizeManifest, type ExportManifest, type ExportPlan } from '../../src/export/plan'
+import { exportArguments, exportFilterGraph, exportFilterGraphV3, isIdentityEdit } from './exportArguments'
+import { exportFrameCount, normalizeManifest, type ExportManifest, type ExportManifestV3, type ExportPlan } from '../../src/export/plan'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 
 const plan: ExportPlan = { width: 1080, height: 1920, frameRate: { numerator: 30000, denominator: 1001 },
@@ -71,9 +71,20 @@ describe('manifest-driven builder', () => {
     expect(isIdentityEdit(normalizeManifest(explicitIdentity), plan)).toBe(true)
   })
 
-  it('refuses a manifest FFmpeg cannot honestly encode yet (blur, V4); mixes a sound effect (V3)', () => {
+  it('chains split/crop/gblur/overlay for a blur region, enabled over its own sequence window, before the host layer (V4)', () => {
     const blurred: ExportManifest = { ...identityV2, blurRegions: [{ id: 'b1', sequence: { startUs: 0, endUs: 1_000_000 }, rect: { x: 10, y: 10, width: 100, height: 100 }, sigmaPx: 12 }] }
-    expect(() => exportArguments('/in/s.mp4', '/out/o.mp4', plan, true, blurred)).toThrow(/V4/)
+    const graph = exportFilterGraph(plan, true, blurred)
+    expect(graph.filterComplex).toContain(',format=rgba[vbase]')
+    expect(graph.filterComplex).toContain('[vbase]split=2[bl0src][bl0copy]')
+    expect(graph.filterComplex).toContain('[bl0copy]crop=w=100:h=100:x=10:y=10:exact=1,gblur=sigma=12.000000:steps=2[bl0blur]')
+    expect(graph.filterComplex).toContain("[bl0src][bl0blur]overlay=x=10:y=10:format=auto:enable='between(t,0.000000,1.000000)'[blout0]")
+    expect(graph.filterComplex.indexOf('[bl0src]')).toBeLessThan(graph.filterComplex.indexOf('[blout0][1:v:0]overlay='))
+    // A blur-free export never gains the rgba conversion or the extra label at all.
+    expect(exportFilterGraph(plan, true, identityV2).filterComplex).not.toContain('format=rgba')
+    expect(exportFilterGraph(plan, true, identityV2).filterComplex).toContain('[v][1:v:0]overlay=')
+  })
+
+  it('mixes a sound effect (V3)', () => {
     const sfx: ExportManifest = { ...identityV2, audioClips: [{ id: 'a1', path: '/a.wav', delayUs: 1_500_000, inPointUs: 250_000, durationUs: 2_000_000, gain: .8 }] }
     const graph = exportFilterGraph(plan, true, sfx)
     expect(graph.filterComplex).toContain('[2:a:0]atrim=start=0.250000:end=2.250000,asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,adelay=delays=72000S:all=1,volume=0.800000[s0]')
@@ -136,5 +147,30 @@ describe('cuts (segments) reach FFmpeg', () => {
     expect(args).toContain('-filter_complex_script')
     expect(args[args.indexOf('-filter_complex_script') + 1]).toBe('/tmp/job/filtergraph.txt')
     expect(args).not.toContain('-filter_complex')
+  })
+})
+
+describe('v3 zoom filter placement', () => {
+  const manifest = (stacked: boolean): ExportManifestV3 => ({
+    version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, display: 'line',
+    format: { width: 320, height: 180, frameRate: { numerator: 30, denominator: 1 } }, sequenceDurationUs: 3_000_000,
+    inputs: [{ path: '/in.mp4', kind: 'video' }],
+    clips: [{ id: 'c1', inputIndex: 0, assetId: 'v1', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 3_000_000,
+      ...(stacked ? { rect: { x: 0, y: 0, width: 320, height: 180 } } : {}), opacity: 1, fit: 'contain', gain: 0 }],
+    overlays: [], blurRegions: [], effects: [], textOverlays: [],
+    zoomRegions: [{ id: 'z1', sequence: { startUs: 500_000, endUs: 2_500_000 }, rect: { x: 80, y: 45, width: 160, height: 90 }, easeInUs: 500_000, easeOutUs: 500_000 }],
+  })
+
+  it('adds dynamic scale plus fixed crop after the flat picture and before the host layer', () => {
+    const graph = exportFilterGraphV3(manifest(false), [false]).filterComplex
+    expect(graph).toContain("[v]scale=w='trunc(320*((320.000000/(if(")
+    expect(graph).toContain("eval=frame:flags=lanczos,crop=320:180")
+    expect(graph.indexOf('[v]scale=')).toBeLessThan(graph.indexOf('[vz][1:v:0]overlay='))
+  })
+
+  it('uses the same before-host-layer placement for the stacked route', () => {
+    const graph = exportFilterGraphV3(manifest(true), [false]).filterComplex
+    expect(graph).toContain('[b0]scale=')
+    expect(graph.indexOf('[b0]scale=')).toBeLessThan(graph.indexOf('[vz][1:v:0]overlay='))
   })
 })

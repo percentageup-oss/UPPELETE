@@ -20,6 +20,9 @@ export type CaptionAppearance = {
   /** Only set when it differs from `shadow` (docs/CAPTION_RENDERER.md); undefined means "inherit `shadow`". */
   emphasisShadow?: string
   emphasisUnderline?: boolean
+  /** Degrees, applied after layout around the painted block's own center (`CaptionView`); never
+   * fed into `layoutCaption`'s wrap/fit math, which stays axis-aligned. */
+  rotation: number
 }
 export type LayoutInputs = {
   /** Stable composition/media space, independent of preview pixels. */
@@ -48,7 +51,8 @@ export type CaptionLayout = {
   /** The emphasis font actually used to measure word regions, resized to match the fitted `font`. */
   emphasisFont?: CaptionFont
 }
-export type MotionCue = { text: string; startUs: number; endUs: number; words?: CaptionWord[]; emphasized?: TextSpan[] }
+export type MotionCueWord = Omit<CaptionWord, 'timingSource'> & { timingSource: CaptionWord['timingSource'] | 'decorative' }
+export type MotionCue = { text: string; startUs: number; endUs: number; words?: MotionCueWord[]; emphasized?: TextSpan[] }
 export type WordRegion = Rect & {
   lineIndex: number; wordIndex: number; textStart: number; textEnd: number; revealRight: number
   /** Position/width measured with the emphasis font's own shaping run, when it differs from the base font. */
@@ -56,7 +60,7 @@ export type WordRegion = Rect & {
 }
 export type MeasureRange = (text: string, start: number, end: number, font: CaptionFont, emphasis?: RunEmphasis) => Rect[]
 
-export type WordMotionReason = 'no-words' | 'incomplete' | 'invalid' | 'needs-review' | 'estimated' | 'ok'
+export type WordMotionReason = 'no-words' | 'incomplete' | 'invalid' | 'needs-review' | 'estimated' | 'decorative' | 'ok'
 /** No invented timings. A partial or stale word list must not drive a word animation. */
 export function wordMotionAvailability(cue: MotionCue | null): { enabled: boolean; estimated: boolean; reason: WordMotionReason; explanation: string } {
   const words = cue?.words ?? []
@@ -68,16 +72,18 @@ export function wordMotionAvailability(cue: MotionCue | null): { enabled: boolea
     && word.startUs >= cue!.startUs && word.endUs <= cue!.endUs && word.endUs > word.startUs
     && (index === 0 || word.startUs >= words[index - 1].endUs))
   const estimated = words.some((word) => word.timingSource === 'estimated')
+  const decorative = words.length > 0 && words.every((word) => word.timingSource === 'decorative')
   const stale = words.some((word) => word.needsReview && word.timingSource !== 'estimated')
   const reason: WordMotionReason = words.length === 0 ? 'no-words'
     : !complete ? 'incomplete'
       : !valid ? 'invalid'
         : stale ? 'needs-review'
-          : estimated ? 'estimated' : 'ok'
+          : decorative ? 'decorative' : estimated ? 'estimated' : 'ok'
   return { enabled: valid && !stale, estimated, reason,
     explanation: !valid ? 'Word effects unavailable: complete word timing is required. Cue timing alone uses static clean; no words are estimated by rendering.'
       : stale ? 'Word effects unavailable: word timing needs review. Preview uses static clean.'
-        : estimated ? 'Estimated word timing — not aligned to audio; needs review.'
+          : decorative ? 'Decorative word timing for this text animation; not aligned to audio.'
+          : estimated ? 'Estimated word timing — not aligned to audio; needs review.'
           : `Word timing: ${[...new Set(words.map((word) => word.timingSource))].join(', ')}.`,
   }
 }
@@ -140,7 +146,7 @@ export function defaultCaptionInputs(viewport: Size): LayoutInputs {
     font: { stack: DEFAULT_FONT_STACK, size: viewport.width * .055, weight: 700, lineHeight: 1.6, readiness: 'loading', revision: 'system',
       italic: false, letterSpacing: 0, wordSpacing: 0, textTransform: 'none' },
     maxLines: 3, position: { horizontal: .5, vertical: 1 }, alignment: 'center', wrapping: 'whitespace',
-    appearance: { color: '#ffffff', outlineColor: '#000000', outlineWidth: 1, shadow: '0 2px 3px #000', background: 'transparent', padding: 6 },
+    appearance: { color: '#ffffff', outlineColor: '#000000', outlineWidth: 1, shadow: '0 2px 3px #000', background: 'transparent', padding: 6, rotation: 0 },
   }
 }
 
@@ -227,7 +233,7 @@ export function layoutCaption(text: string, inputs: LayoutInputs, measure: Measu
 export type CaptionFrame = { visible: boolean; opacity: number; elapsedUs: number; layout: CaptionLayout
   wordSpans?: TextSpan[]; motion?: CaptionMotion; timingNotice?: string; words?: { wordIndex: number; active: boolean; revealed: boolean; scale: number }[] }
 /** Pure absolute-source-time evaluation: no CSS animation, elapsed playback clock or seek history. */
-export function captionFrame(layout: CaptionLayout, cue: { startUs: number; endUs: number; text?: string; words?: CaptionWord[] }, timestampUs: number,
+export function captionFrame(layout: CaptionLayout, cue: { startUs: number; endUs: number; text?: string; words?: MotionCueWord[] }, timestampUs: number,
   requested: CaptionMotion = 'static-clean', motionSpeed = 1): CaptionFrame {
   if (![cue.startUs, cue.endUs, timestampUs].every(Number.isSafeInteger) || cue.startUs < 0 || cue.endUs <= cue.startUs || timestampUs < 0) throw new Error('Expected safe integer source timestamps and positive cue duration.')
   if (!Number.isFinite(motionSpeed) || motionSpeed < .25 || motionSpeed > 4) throw new Error('Motion speed must be between 0.25× and 4×.')

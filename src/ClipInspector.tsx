@@ -1,11 +1,11 @@
-import { useEffect, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { useEffect, useState } from 'react'
 import type { Clip, ClipFit, CompositionRect, ProjectAsset, Track } from './core/edit'
 import type { Size } from './core/composition'
 import { formatTimestamp, parseEditedTimestamp } from './core/time'
 import { centerRect, roundRect } from './core/overlayRect'
 import { defaultOverlayRect } from './core/overlayDefaults'
 import { clipEndUs, clipLengthUs } from './core/timelineModel'
-import { Row, Segmented, SliderWithNumber, Toggle } from './style/controls'
+import { NumberField, Row, Segmented, SliderWithNumber, TimeFields, Toggle } from './style/controls'
 
 const FIT_OPTIONS: { value: ClipFit; label: string }[] = [
   { value: 'contain', label: 'Contain' },
@@ -13,7 +13,6 @@ const FIT_OPTIONS: { value: ClipFit; label: string }[] = [
   { value: 'stretch', label: 'Stretch' },
 ]
 
-const RECT_FIELD_STEP_LARGE = 10
 const KIND_LABEL: Record<Clip['kind'], string> = { video: 'Video clip', image: 'Image', audio: 'Audio clip' }
 
 /** A picture-in-picture rect: the top-right quarter of the frame, keeping the frame's aspect. */
@@ -84,20 +83,18 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
     }
     return next
   }
-  const changeRectField = (field: keyof CompositionRect) => (event: ChangeEvent<HTMLInputElement>) => {
+  // NumberField steps by its own `step` on plain arrows and ×10 on Shift+arrow (matching the
+  // stage editor's Shift-nudge), so typing and arrow-stepping both funnel through these two.
+  const draftRectField = (field: keyof CompositionRect) => (raw: number) => {
     if (!rect) return
-    const next = withAspect(rect, field, Number(event.target.value))
+    const next = withAspect(rect, field, raw)
     setRect(next)
     onRectDraft(next)
   }
-  const commitRectField = () => { if (rect) onRectCommit(roundRect(rect)) }
-  // Shift+Up/Down steps by 10 units (matching the stage editor's Shift-nudge); plain arrows keep the input's own ±1.
-  const stepRectField = (field: keyof CompositionRect) => (event: KeyboardEvent<HTMLInputElement>) => {
-    if (!rect || !event.shiftKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
-    event.preventDefault()
-    const next = withAspect(rect, field, rect[field] + (event.key === 'ArrowUp' ? 1 : -1) * RECT_FIELD_STEP_LARGE)
+  const commitRectField = (field: keyof CompositionRect) => (raw: number) => {
+    if (!rect) return
+    const next = withAspect(rect, field, raw)
     setRect(next)
-    onRectDraft(next)
     onRectCommit(roundRect(next))
   }
   const applyRect = (next: CompositionRect | null) => { setRect(next); onRectCommit(next && roundRect(next)) }
@@ -105,7 +102,7 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
   const hasPicture = clip.kind !== 'audio'
   const hasSound = clip.kind !== 'image'
 
-  return <div className="editor-form overlay-inspector clip-inspector">
+  return <div className="editor-form clip-inspector">
     <div className="overlay-asset-row">
       <span className="overlay-asset-name" title={assetName}>{KIND_LABEL[clip.kind]} · {assetName}</span>
       {assetIssue && <span className={`asset-issue-badge ${assetIssue}`}>{assetIssue === 'missing' ? 'Missing' : 'Mismatch'}</span>}
@@ -113,20 +110,20 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
     </div>
     <p className="clip-inspector-meta">On {trackLabel}{track?.locked ? ' (locked)' : ''} · ends {formatTimestamp(clipEndUs(clip), ':')}
       {clip.kind !== 'image' && <> · plays {formatTimestamp(clip.sourceStartUs, ':')}–{formatTimestamp(clip.sourceEndUs, ':')} of the file</>}</p>
-    <div className="time-fields">
-      <label htmlFor="clip-start">Start<input id="clip-start" value={start} onChange={(event) => setStart(event.target.value)} onBlur={changeStart} /></label>
-      <label htmlFor="clip-length">Length<input id="clip-length" value={length} onChange={(event) => setLength(event.target.value)} onBlur={changeLength} /></label>
-    </div>
+    <TimeFields fields={[
+      { id: 'clip-start', label: 'Start', value: start, onChange: setStart, onBlur: changeStart },
+      { id: 'clip-length', label: 'Length', value: length, onChange: setLength, onBlur: changeLength },
+    ]} />
     {hasPicture && <>
       <Row label="Placement" hint={rect ? 'Drag it on the preview to move it; drag its handles to resize. Units: 1080-wide composition.' : 'Fills the frame. Give it a position and size to show it picture-in-picture.'}>
         <Toggle id="clip-pip" checked={rect !== null} label={clip.kind === 'video' ? 'Picture-in-picture' : 'Position and size'}
           onChange={(on) => applyRect(on ? (clip.kind === 'image' ? defaultOverlayRect(asset?.metadata ?? null, composition) : defaultPipRect(composition)) : null)} />
         {rect && <>
           <div className="overlay-rect-fields">
-            <label>X<input type="number" step={1} value={Math.round(rect.x)} onChange={changeRectField('x')} onKeyDown={stepRectField('x')} onBlur={commitRectField} /></label>
-            <label>Y<input type="number" step={1} value={Math.round(rect.y)} onChange={changeRectField('y')} onKeyDown={stepRectField('y')} onBlur={commitRectField} /></label>
-            <label>W<input type="number" step={1} value={Math.round(rect.width)} onChange={changeRectField('width')} onKeyDown={stepRectField('width')} onBlur={commitRectField} /></label>
-            <label>H<input type="number" step={1} value={Math.round(rect.height)} onChange={changeRectField('height')} onKeyDown={stepRectField('height')} onBlur={commitRectField} /></label>
+            <label>X<NumberField id="clip-rect-x" step={1} value={Math.round(rect.x)} onDraft={draftRectField('x')} onCommit={commitRectField('x')} /></label>
+            <label>Y<NumberField id="clip-rect-y" step={1} value={Math.round(rect.y)} onDraft={draftRectField('y')} onCommit={commitRectField('y')} /></label>
+            <label>W<NumberField id="clip-rect-width" step={1} value={Math.round(rect.width)} onDraft={draftRectField('width')} onCommit={commitRectField('width')} /></label>
+            <label>H<NumberField id="clip-rect-height" step={1} value={Math.round(rect.height)} onDraft={draftRectField('height')} onCommit={commitRectField('height')} /></label>
           </div>
           <div className="overlay-rect-lock"><Toggle id="clip-lock-aspect" checked={lockAspect} label="Lock aspect" onChange={setLockAspect} /></div>
           <div className="overlay-quick-actions">

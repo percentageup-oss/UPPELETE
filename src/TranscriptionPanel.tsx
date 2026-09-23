@@ -42,14 +42,21 @@ function sortedLanguages(codes: string[]): string[] {
   return [...preferred, ...codes.filter((code) => !preferred.includes(code)).sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)))]
 }
 type GeminiLanguage = 'auto' | 'ml' | 'en'
-const geminiLanguages: { value: GeminiLanguage; label: string }[] = [
-  { value: 'auto', label: 'Malayalam + English (mixed)' },
-  { value: 'ml', label: 'Malayalam only' },
-  { value: 'en', label: 'English only' },
+const geminiLanguages: { value: GeminiLanguage; label: string; hint: string }[] = [
+  { value: 'auto', label: 'Automatic — mixed languages (recommended)', hint: 'Gemini detects the spoken language and handles switching mid-sentence, keeping Malayalam in Malayalam script and English in Latin script.' },
+  { value: 'ml', label: 'Malayalam only', hint: 'Forces Malayalam script for everything, including spoken English words — they will be written phonetically in Malayalam, not kept in Latin script.' },
+  { value: 'en', label: 'English only', hint: 'Forces English for everything, including spoken Malayalam words — they will be written phonetically in English, not kept in Malayalam script.' },
 ]
 const ENGINE_STORAGE_KEY = 'caption-studio.transcription-engine'
 function storedEngine(): TranscriptionEngine {
   try { return localStorage.getItem(ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'whisper' } catch { return 'whisper' }
+}
+const GEMINI_LANGUAGE_STORAGE_KEY = 'caption-studio.transcription-gemini-language'
+function storedGeminiLanguage(): GeminiLanguage {
+  try {
+    const value = localStorage.getItem(GEMINI_LANGUAGE_STORAGE_KEY)
+    return value === 'ml' || value === 'en' ? value : 'auto'
+  } catch { return 'auto' }
 }
 const TRANSLATE_STORAGE_KEY = 'caption-studio.transcription-translate'
 function storedTranslateTo(): string | null {
@@ -90,12 +97,16 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   const [device, setDevice] = useState<TranscriptionDevice | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'setup' })
   const [engine, setEngineState] = useState<TranscriptionEngine>(storedEngine)
-  const [geminiLanguage, setGeminiLanguage] = useState<GeminiLanguage>('auto')
+  const [geminiLanguage, setGeminiLanguageState] = useState<GeminiLanguage>(storedGeminiLanguage)
   const [translateTo, setTranslateToState] = useState<string | null>(storedTranslateTo)
   const setEngine = (next: TranscriptionEngine) => {
     setEngineState(next)
     try { localStorage.setItem(ENGINE_STORAGE_KEY, next) } catch { /* remembering the choice is only a convenience */ }
     if (next === 'whisper' && !models.length) void refresh()
+  }
+  const setGeminiLanguage = (next: GeminiLanguage) => {
+    setGeminiLanguageState(next)
+    try { localStorage.setItem(GEMINI_LANGUAGE_STORAGE_KEY, next) } catch { /* remembering the choice is only a convenience */ }
   }
   const setTranslateTo = (next: string | null) => {
     setTranslateToState(next)
@@ -207,6 +218,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
             <select id="transcription-gemini-language" value={geminiLanguage} onChange={(event) => setGeminiLanguage(event.target.value as GeminiLanguage)}>
               {geminiLanguages.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
             </select>
+            <p className="style-hint">{geminiLanguages.find((entry) => entry.value === geminiLanguage)?.hint}</p>
             <label htmlFor="transcription-translate-gemini">Translate to</label>
             <select id="transcription-translate-gemini" value={translateTo ?? ''} onChange={(event) => setTranslateTo(event.target.value || null)}>
               <option value="">None — keep spoken language</option>

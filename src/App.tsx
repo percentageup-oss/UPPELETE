@@ -2,7 +2,7 @@ import { TimingProvenance } from './TimingProvenance'
 import { untimedTokenCount } from './core/wordTiming'
 import { parseEditedTimestamp } from './core/time'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import type { ChangeEvent, CSSProperties } from 'react'
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { validateCaptions, type ValidationIssue } from './core/captionCommands'
 import { applyEditCommand, type CommandContext, type EditCommand } from './core/commands'
 import { validateItems } from './core/itemCommands'
@@ -43,15 +43,19 @@ import { CaptionPreview } from './captions/CaptionPreview'
 import { CompositionLayers, type CompositionLayer } from './captions/CompositionLayers'
 import { ClipInspector } from './ClipInspector'
 import { ClipStageEditor } from './ClipStageEditor'
+import { RectStageEditor } from './RectStageEditor'
+import { CaptionStageEditor, type CaptionPlacementPatch } from './CaptionStageEditor'
 import { defaultOverlayRect } from './core/overlayDefaults'
-import type { Clip, ClipFit, CompositionRect, ProjectAsset, Track, VisualClip } from './core/edit'
+import type { BlurRegion, CaptionTrack, Clip, ClipFit, CompositionRect, EffectRegion, ProjectAsset, TextOverlay, Track, VisualClip, ZoomRegion } from './core/edit'
 import { freeTrackFor, trackEndUs, type ClipEdge, type EditMode } from './core/clipEdits'
 import type { TrackFlags } from './core/trackCommands'
-import { wordMotionAvailability, type LayoutInputs, type Size } from './captions/renderer'
+import type { CaptionTrackFlags } from './core/captionTrackCommands'
+import { wordMotionAvailability, type CaptionFrame, type Size } from './captions/renderer'
 import { activeWordIndex, wordDisplayCue, type CaptionDisplay } from './captions/wordDisplay'
 import { applyCaptionPreset, deleteCaptionPreset, saveCaptionPreset } from './captions/presets'
-import { captionStyleInputs, DEFAULT_CAPTION_STYLE, resolveCaptionMotion, type CaptionStyle } from './captions/style'
+import { applyCaptionTemplateToText, captionStyleInputs, DEFAULT_CAPTION_STYLE, resolveCaptionStyle, type CaptionStyle } from './captions/style'
 import { StylePanel } from './StylePanel'
+import { TimeFields } from './style/controls'
 import { WordEmphasisPanel } from './WordEmphasisPanel'
 import { InspectorTabs, type InspectorTab } from './InspectorTabs'
 import { AlignmentControls } from './AlignmentControls'
@@ -61,7 +65,8 @@ import { MediaBin } from './MediaBin'
 import { CaptionsPanel, VideoPicker } from './CaptionsPanel'
 import { wordActionCommand, type TranscriptSpan } from './transcript'
 import { OverlaysPanel } from './OverlaysPanel'
-import { TransitionsPanel } from './TransitionsPanel'
+import { TitlesPanel } from './TitlesPanel'
+import { EffectsPanel } from './EffectsPanel'
 import { dropContent } from './core/dragPayload'
 import type { AssetDragPayload } from './core/dragPayload'
 import { DEFAULT_IMAGE_CLIP_US, dropPlanForAsset } from './core/timelineDrop'
@@ -69,6 +74,19 @@ import { findAssetByFingerprint, type InspectedFile } from './core/assetImport'
 import { useAssetUrls } from './app/useAssetUrls'
 import { useProjectPlayback } from './app/useProjectPlayback'
 import { createThumbnailQueue } from './timeline/thumbnailQueue'
+import { DEFAULT_ZOOM_REGION_US, defaultZoomRect, zoomRectAt } from './core/zoomRegion'
+import type { ZoomRegionChanges } from './core/zoomRegionCommands'
+import { ZoomInspector } from './ZoomInspector'
+import { defaultBlurAreaRect, defaultBlurFrameRect, DEFAULT_BLUR_RADIUS, DEFAULT_BLUR_REGION_US, MIN_BLUR_REGION_US } from './core/blurRegion'
+import { BlurInspector } from './BlurInspector'
+import { defaultVignette, defaultLetterbox, defaultFade, defaultFlash, type EffectChanges } from './core/effectCommands'
+import { frameEffectsAt } from './core/frameEffects'
+import { EffectInspector } from './EffectInspector'
+import { TextInspector } from './TextInspector'
+import { TextOverlayActor } from './captions/TextOverlayActor'
+import { defaultTextOverlay } from './core/textCommands'
+import { textAnchorAt, type TextAnchor } from './core/textPlacement'
+import { TextStageInput } from './TextStageInput'
 
 type Notice = { tone: 'info' | 'error' | 'warning'; text: string } | null
 type SaveStatus = { kind: 'saved'; at: number } | { kind: 'saving' } | { kind: 'error'; message: string }
@@ -100,6 +118,7 @@ function storedEditMode(): EditMode {
 /** A project with nothing on its timeline still shows a minute of ruler, like an empty editor. */
 const EMPTY_TIMELINE_US = 60 * US_PER_SECOND
 const newTrack = (kind: Track['kind']): Track => ({ id: crypto.randomUUID(), kind, name: '', muted: false, hidden: false, locked: false })
+const newCaptionTrack = (): CaptionTrack => ({ id: crypto.randomUUID(), name: '', locked: false })
 
 export default function App() {
   const [history, setHistory] = useState(() => createHistory(initial))
@@ -116,9 +135,19 @@ export default function App() {
   const primary = useMemo(() => primaryVideoAsset(project), [project.assets, project.clips])
   const assetById = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets])
   const [pendingAssetRelink, setPendingAssetRelink] = useState<{ asset: ProjectAsset; candidate: MediaCandidate } | null>(null)
+  // New Project / Open Project discard the current project outright; this holds which one is
+  // pending confirmation while unsaved work exists (see `hasUnsavedWork` and `DiscardProjectReview`).
+  const [pendingReset, setPendingReset] = useState<{ kind: 'new' | 'open' } | null>(null)
   // One draft clip substituted into the visible list, for the inspector's and the stage editor's
   // live rect/opacity/gain drafts — exactly `dragPreview`'s role for captions.
   const [clipDraft, setClipDraft] = useState<Clip | null>(null)
+  // Target framing, ease and zoom amount are all previewed live (stage gesture or inspector
+  // slider) and committed once as a `zoom-region-update` on release/blur.
+  const [zoomRegionDraft, setZoomRegionDraft] = useState<{ id: string; changes: ZoomRegionChanges } | null>(null)
+  // Same shape as `zoomRegionDraft`, for the blur area/radius stage gesture and inspector slider.
+  const [blurRegionDraft, setBlurRegionDraft] = useState<{ id: string; changes: Partial<Omit<BlurRegion, 'id'>> } | null>(null)
+  // Same shape again, for a frame-paint effect's inspector sliders.
+  const [effectDraft, setEffectDraft] = useState<{ id: string; changes: EffectChanges } | null>(null)
   // An Alt+drag clone on the stage, previewed on a transient track above everything until it commits.
   const [cloneDraft, setCloneDraft] = useState<VisualClip | null>(null)
   const [waveforms, setWaveforms] = useState<Map<string, WaveformData>>(new Map())
@@ -126,6 +155,7 @@ export default function App() {
   // One selection for every kind of timeline item (one ID namespace). `selectedCueId` keeps every
   // caption read site unchanged.
   const [selection, setSelection] = useState<Selection | null>(null)
+  const [editingText, setEditingText] = useState<{ id: string; selectAll: boolean } | null>(null)
   const selectedCueId = selection?.kind === 'cue' ? selection.id : null
   const setSelectedId = (id: string | null) => setSelection(id === null ? null : { kind: 'cue', id })
   const [selectedWordId, setSelectedWordId] = useState<string | null>(null)
@@ -193,14 +223,27 @@ export default function App() {
   const captionComposition = useMemo(() => compositionFor(formatAspect(project.format)), [project.format])
   const visibleCues = useMemo(() => dragPreview ? project.cues.map((cue) => cue.id === dragPreview.id ? dragPreview : cue) : project.cues, [project.cues, dragPreview])
   const selected = visibleCues.find((cue) => cue.id === selectedCueId) ?? null
+  const selectedText = selection?.kind === 'text' ? project.textOverlays.find((item) => item.id === selection.id) ?? null : null
   const visibleClips = useMemo(() => {
     let clips = clipDraft ? project.clips.map((clip) => clip.id === clipDraft.id ? clipDraft : clip) : project.clips
     if (cloneDraft) clips = [...clips, { ...cloneDraft, trackId: CLONE_TRACK.id }]
     return clips
   }, [project.clips, clipDraft, cloneDraft])
   const visibleTracks = useMemo(() => cloneDraft ? [...project.tracks, CLONE_TRACK] : project.tracks, [project.tracks, cloneDraft])
+  const visibleZoomRegions = useMemo(() => zoomRegionDraft
+    ? project.zoomRegions.map((region) => region.id === zoomRegionDraft.id ? { ...region, ...zoomRegionDraft.changes } : region)
+    : project.zoomRegions, [project.zoomRegions, zoomRegionDraft])
+  const visibleBlurRegions = useMemo(() => blurRegionDraft
+    ? project.blurRegions.map((region) => region.id === blurRegionDraft.id ? { ...region, ...blurRegionDraft.changes } : region)
+    : project.blurRegions, [project.blurRegions, blurRegionDraft])
+  const visibleEffects = useMemo(() => effectDraft
+    ? project.effects.map((effect) => effect.id === effectDraft.id ? { ...effect, ...effectDraft.changes } as EffectRegion : effect)
+    : project.effects, [project.effects, effectDraft])
   const clipBase = selection?.kind === 'clip' ? project.clips.find((clip) => clip.id === selection.id) ?? null : null
   const selectedClip = clipBase && clipDraft?.id === clipBase.id ? clipDraft : clipBase
+  const selectedZoomRegion = selection?.kind === 'zoomRegion' ? visibleZoomRegions.find((region) => region.id === selection.id) ?? null : null
+  const selectedBlurRegion = selection?.kind === 'blur' ? visibleBlurRegions.find((region) => region.id === selection.id) ?? null : null
+  const selectedEffect = selection?.kind === 'effect' ? visibleEffects.find((effect) => effect.id === selection.id) ?? null : null
   const captionVideo = useMemo(() => captionClips(project.tracks, project.clips), [project.tracks, project.clips])
   const under = useMemo(() => videoUnderPlayhead(currentUs, project.tracks, project.clips), [currentUs, project.tracks, project.clips])
   const underAsset = under ? assetById.get(under.clip.assetId) ?? null : null
@@ -215,9 +258,15 @@ export default function App() {
   // Style is project state so it saves/reopens and is undoable; a live draft feeds the preview
   // immediately while dragging a control, and one history commit lands per finished gesture.
   const [styleDraft, setStyleDraft] = useState<CaptionStyle | null>(null)
+  const [textStyleDraft, setTextStyleDraft] = useState<{ id: string; style: CaptionStyle } | null>(null)
   const savedStyle = project.captionStyle ?? DEFAULT_CAPTION_STYLE
-  const effectiveStyle = styleDraft ?? savedStyle
-  const captionInputs = useMemo(() => captionStyleInputs(effectiveStyle, captionComposition), [effectiveStyle, captionComposition])
+  const effectiveStyle = selectedText
+    ? (textStyleDraft?.id === selectedText.id ? textStyleDraft.style : selectedText.style)
+    : styleDraft ?? savedStyle
+  // The inspector follows the selection, but speech captions must always render from the project
+  // caption style. Reusing `effectiveStyle` here made a selected text item's stage drag appear to
+  // transform every caption even though only the text item's style was being committed.
+  const previewCaptionStyle = selectedText ? savedStyle : styleDraft ?? savedStyle
   useEffect(() => setStyleDraft(null), [project.id])
 
   // Every command and validation shares this: new unbound captions belong to the video under the
@@ -368,6 +417,9 @@ export default function App() {
   // Waveforms: one extraction per file, cached in main by fingerprint and sliced per clip. Requested
   // once per asset id; a failed request is retried the next time this runs (e.g. after a relink).
   const loadedWaveformsRef = useRef<Set<string>>(new Set())
+  // In-flight request IDs, so the timeline's cancel button can actually reach `media:waveform-cancel`
+  // instead of being permanently disconnected dead UI.
+  const activeWaveformRequestsRef = useRef<Set<string>>(new Set())
   useEffect(() => {
     const api = window.captionStudio
     if (!api) return
@@ -376,16 +428,24 @@ export default function App() {
       if (loadedWaveformsRef.current.has(asset.id)) continue
       loadedWaveformsRef.current.add(asset.id)
       const assetId = asset.id
+      const requestId = crypto.randomUUID()
+      activeWaveformRequestsRef.current.add(requestId)
       setWaveformsLoading((count) => count + 1)
-      void api.loadWaveform({ requestId: crypto.randomUUID(), fingerprint: asset.fingerprint, range: { startUs: 0, endUs: asset.metadata.durationUs }, maxPeaks: TIMELINE_WAVEFORM_PEAKS })
+      void api.loadWaveform({ requestId, fingerprint: asset.fingerprint, range: { startUs: 0, endUs: asset.metadata.durationUs }, maxPeaks: TIMELINE_WAVEFORM_PEAKS })
         .then((result) => setWaveforms((map) => new Map(map).set(assetId, result.waveform)))
         .catch((error) => {
           loadedWaveformsRef.current.delete(assetId)
           setNotice({ tone: 'warning', text: `Waveform unavailable for ${asset.name}: ${errorText(error)}` })
         })
-        .finally(() => setWaveformsLoading((count) => count - 1))
+        .finally(() => { activeWaveformRequestsRef.current.delete(requestId); setWaveformsLoading((count) => count - 1) })
     }
   }, [project.assets, media.urlOf])
+
+  const cancelWaveforms = () => {
+    const api = window.captionStudio
+    if (!api) return
+    for (const requestId of activeWaveformRequestsRef.current) void api.cancelWaveform(requestId).catch(() => {})
+  }
 
   /** Registers a relinked asset's runtime URL and rewrites its stored media fields in one undo step
    * (an initial open patches the project directly — see `openProject` — since there is nothing yet
@@ -394,6 +454,11 @@ export default function App() {
     media.register({ id: asset.id, kind: asset.kind, fingerprint: candidate.media.fingerprint }, candidate.url)
     media.clearIssue(asset.id)
     setCodecIssues((issues) => { if (!issues.has(asset.id)) return issues; const next = new Map(issues); next.delete(asset.id); return next })
+    // A relink can point the same asset id at a different file with a different fingerprint; drop
+    // its old peaks and let the waveform effect above re-request them, rather than keeping stale
+    // audio drawn under a clip that now plays something else.
+    loadedWaveformsRef.current.delete(asset.id)
+    setWaveforms((map) => { if (!map.has(asset.id)) return map; const next = new Map(map); next.delete(asset.id); return next })
     runCommand({ type: 'asset-update', assetId: asset.id, changes: candidate.media })
   }
 
@@ -511,22 +576,24 @@ export default function App() {
   /**
    * A video goes onto the timeline — never replacing what is there. With no video yet it starts V1
    * at 0 (one undoable step that also binds captions imported before it and sets the output
-   * format); otherwise it is appended to the end of V1.
+   * format); otherwise — with no explicit placement — it stacks onto a new video track above,
+   * at the playhead, the same way a dropped image or audio file already auto-lanes onto a free
+   * track (`placementTrack`/`freeTrackFor`) instead of overwriting what's already there.
    */
   const addVideoClip = (asset: ProjectAsset, mediaAsset?: ProjectAsset, at?: { startUs: number; trackId: string | null }) => {
     const current = projectRef.current
     const durationUs = asset.metadata?.durationUs ?? null
     if (durationUs === null) { setNotice({ tone: 'error', text: `${asset.name}’s duration could not be read, so it cannot be placed on the timeline.` }); return false }
-    const v1 = current.tracks.find((track) => track.kind === 'video' && !track.locked)
+    const first = !current.clips.some((candidate) => candidate.kind === 'video')
+    const v1 = first ? current.tracks.find((track) => track.kind === 'video' && !track.locked) : undefined
     const track = at?.trackId ? undefined : v1 ? undefined : newTrack('video')
     const trackId = at?.trackId ?? v1?.id ?? track!.id
-    const startUs = at?.startUs ?? trackEndUs(current.clips, trackId)
+    const startUs = at?.startUs ?? (first ? trackEndUs(current.clips, trackId) : Math.round(currentUs))
     const clip: Clip = { kind: 'video', id: crypto.randomUUID(), trackId, assetId: asset.id, timelineStartUs: startUs, sourceStartUs: 0, sourceEndUs: durationUs, opacity: 1, fit: 'contain', gain: 1 }
-    const first = !current.clips.some((candidate) => candidate.kind === 'video')
     if (!runCommand({ type: 'clip-add', clip, asset: mediaAsset, track, mode: at ? editMode : 'overwrite', idPrefix: crypto.randomUUID() })) return false
     // The first video starts a captioning session: nothing selected, playhead at the start.
     if (first) { playback.seek(0); setSelection(null) }
-    else if (!at) setNotice({ tone: 'info', text: `Added ${asset.name} to the end of ${trackLabel(current.tracks.find((entry) => entry.id === trackId) ?? track!, current.tracks)}.` })
+    else if (!at) setNotice({ tone: 'info', text: `Added ${asset.name} on ${trackLabel(current.tracks.find((entry) => entry.id === trackId) ?? track!, [...current.tracks, ...(track ? [track] : [])])}.` })
     return true
   }
 
@@ -698,25 +765,65 @@ export default function App() {
     return () => { window.clearTimeout(timer); window.removeEventListener('blur', flush) }
   }, [project, projectPath, autosaveEnabled])
 
-  const saveProjectAs = async () => {
-    if (!window.captionStudio) return
+  // Returns whether the project actually landed on disk, so a caller that must not proceed until a
+  // save lands (the unsaved-work guard below) can tell a completed save from a cancelled dialog.
+  const saveProjectAs = async (): Promise<boolean> => {
+    if (!window.captionStudio) return false
     try {
       const result = await window.captionStudio.saveProject({ project, defaultName: projectPath ?? `${project.title}.${PROJECT_FILE_EXTENSION}` })
-      if (result) {
-        lastSavedProject.current = result.project
-        setHistory((state) => ({ ...state, present: result.project }))
-        setProjectPath(result.path)
-        setMigrationPending(false)
-        setSaveStatus({ kind: 'saved', at: Date.now() })
-        setNotice({ tone: 'info', text: `Saved project to ${result.path}. Changes now autosave there.` })
-      }
-    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
+      if (!result) return false
+      lastSavedProject.current = result.project
+      setHistory((state) => ({ ...state, present: result.project }))
+      setProjectPath(result.path)
+      setMigrationPending(false)
+      setSaveStatus({ kind: 'saved', at: Date.now() })
+      setNotice({ tone: 'info', text: `Saved project to ${result.path}. Changes now autosave there.` })
+      return true
+    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }); return false }
   }
 
-  const saveProject = async () => {
+  const saveProject = async (): Promise<boolean> => {
     if (!autosaveEnabled || !projectPath) return saveProjectAs()
     await writeProject(projectPath, project, true)
-    if (lastSavedProject.current === project) setNotice({ tone: 'info', text: `Saved project to ${projectPath}` })
+    const saved = lastSavedProject.current === project
+    if (saved) setNotice({ tone: 'info', text: `Saved project to ${projectPath}` })
+    return saved
+  }
+
+  // Shared by New Project and Open Project: every piece of state that identifies or previews a
+  // particular project, so switching projects never leaves a stale draft, dialog or drag from the
+  // one just left. `migrationPending` differs per caller (Open sets it from the migration result;
+  // New never migrates), so it stays the caller's own explicit `setMigrationPending` call.
+  const resetForProject = (next: CaptionProject, path: string | null) => {
+    setHistory(createHistory(next))
+    projectRef.current = next
+    lastSavedProject.current = next
+    setProjectPath(path)
+    setSaveStatus({ kind: 'saved', at: Date.now() })
+    setSelectedId(next.cues[0]?.id ?? null)
+    setSelectedWordId(null)
+    playback.pause()
+    playback.seek(0)
+    setWaveforms(new Map())
+    loadedWaveformsRef.current = new Set()
+    setCodecIssues(new Map())
+    setClipDraft(null)
+    setCloneDraft(null)
+    setDragPreview(null)
+    setStyleDraft(null)
+    setPendingAssetRelink(null)
+    setPendingSrt(null)
+    setPickedVideoId(null)
+    setProxyState({ kind: 'idle' })
+  }
+
+  const newProject = () => {
+    resetForProject(createProject(), null)
+    setMigrationPending(false)
+    media.reset(new Map(), new Map(), new Map())
+    setRailTab('media')
+    setInspectorTab('edit')
+    setNotice({ tone: 'info', text: 'Started a new project. Open a video to transcribe it, or import an SRT file.' })
   }
 
   const openProject = async () => {
@@ -726,21 +833,8 @@ export default function App() {
       if (!result) return
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       const opened = projectSchema.parse(result.project)
-      setHistory(createHistory(opened))
-      projectRef.current = opened
-      lastSavedProject.current = opened
-      setProjectPath(result.path)
+      resetForProject(opened, result.path)
       setMigrationPending(result.migratedFrom !== null)
-      setSaveStatus({ kind: 'saved', at: Date.now() })
-      setSelectedId(opened.cues[0]?.id ?? null)
-      playback.pause()
-      playback.seek(0)
-      setWaveforms(new Map())
-      loadedWaveformsRef.current = new Set()
-      setCodecIssues(new Map())
-      setClipDraft(null)
-      setPendingAssetRelink(null)
-      setPickedVideoId(null)
       // Every asset — every video included — resolves the same way. A resolved file gets its runtime
       // URL; a missing or mismatched one only gets an issue badge, and a mismatched video the timeline
       // plays opens the review dialog straight away (exactly like an explicit Relink…).
@@ -768,6 +862,22 @@ export default function App() {
         setNotice({ tone: 'warning', text: `Project loaded${migrationNote(result.migratedFrom)}, but ${missing.map((asset) => asset.name).join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. Relink from the media bin.${migration}` })
       } else setNotice({ tone: result.migrationNotes.length ? 'warning' : 'info', text: `Project loaded${migrationNote(result.migratedFrom)}${opened.assets.length ? '; media fingerprints verified' : ''}.${migration}` })
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
+  }
+
+  // The same reference check the autosave effect uses (App.tsx's autosave `useEffect`): a project
+  // that has never diverged from what was last written — including a fresh, never-saved project with
+  // nothing added yet — has nothing worth confirming before it is discarded.
+  const hasUnsavedWork = (project.cues.length > 0 || project.clips.length > 0 || project.assets.length > 0) && project !== lastSavedProject.current
+  const requestNewProject = () => { if (hasUnsavedWork) setPendingReset({ kind: 'new' }); else newProject() }
+  const requestOpenProject = () => { if (hasUnsavedWork) setPendingReset({ kind: 'open' }); else void openProject() }
+  const resumePendingReset = () => {
+    const kind = pendingReset?.kind
+    setPendingReset(null)
+    if (kind === 'new') newProject(); else if (kind === 'open') void openProject()
+  }
+  const saveThenResumePendingReset = async () => {
+    if (await saveProject()) resumePendingReset()
+    // A cancelled or failed save leaves the dialog open so the user can retry or choose another option.
   }
 
   const importImageOverlay = async () => {
@@ -835,11 +945,80 @@ export default function App() {
     && !project.tracks.find((track) => track.id === clip.trackId)?.locked)
   const moveClip = (clipId: string, trackId: string, startUs: number) => runCommand({ type: 'clip-move', clipId, trackId, startUs, mode: editMode, idPrefix: crypto.randomUUID() })
   const trimClip = (clipId: string, edge: ClipEdge, deltaUs: number) => runCommand({ type: 'clip-trim', clipId, edge, deltaUs, mode: editMode })
+  const addZoomRegion = (preset: 'zoom-in' | 'zoom-out', atUs = currentUs) => {
+    const startUs = Math.max(0, Math.round(atUs))
+    const region: ZoomRegion = {
+      id: crypto.randomUUID(), startUs, endUs: startUs + DEFAULT_ZOOM_REGION_US,
+      rect: defaultZoomRect(captionComposition),
+      easeInUs: preset === 'zoom-in' ? 500_000 : 0,
+      easeOutUs: preset === 'zoom-in' ? 500_000 : 700_000,
+      enabled: true,
+    }
+    return runCommand({ type: 'zoom-region-add', region })
+  }
+  const moveZoomRegion = (zoomId: string, startUs: number) => runCommand({ type: 'zoom-region-move', zoomId, startUs: Math.max(0, Math.round(startUs)) })
+  const trimZoomRegion = (zoomId: string, edge: 'start' | 'end', deltaUs: number) => runCommand({ type: 'zoom-region-trim', zoomId, edge, deltaUs: Math.round(deltaUs) })
+  const draftZoomRegion = (zoomId: string, changes: ZoomRegionChanges) => setZoomRegionDraft({ id: zoomId, changes })
+  const commitZoomRegion = (zoomId: string, changes: ZoomRegionChanges) => { setZoomRegionDraft(null); return runCommand({ type: 'zoom-region-update', zoomId, changes }) }
+  // Blur has no shared lane (regions may overlap, `blurRegion.ts`), so — unlike zoom — `blur-update`
+  // takes start/end directly rather than going through separate move/trim commands.
+  const addBlurRegion = (preset: 'blur-area' | 'blur-frame', atUs = currentUs) => {
+    const startUs = Math.max(0, Math.round(atUs))
+    const region: BlurRegion = {
+      id: crypto.randomUUID(), startUs, endUs: startUs + DEFAULT_BLUR_REGION_US,
+      rect: preset === 'blur-area' ? defaultBlurAreaRect(captionComposition) : defaultBlurFrameRect(captionComposition),
+      radius: DEFAULT_BLUR_RADIUS,
+      enabled: true,
+    }
+    return runCommand({ type: 'blur-add', region })
+  }
+  const moveBlurRegion = (blurId: string, startUs: number) => {
+    const region = project.blurRegions.find((candidate) => candidate.id === blurId)
+    if (!region) return false
+    const clampedStart = Math.max(0, Math.round(startUs))
+    return runCommand({ type: 'blur-update', blurId, changes: { startUs: clampedStart, endUs: clampedStart + (region.endUs - region.startUs) } })
+  }
+  const trimBlurRegion = (blurId: string, edge: 'start' | 'end', deltaUs: number) => {
+    const region = project.blurRegions.find((candidate) => candidate.id === blurId)
+    if (!region) return false
+    if (edge === 'start') return runCommand({ type: 'blur-update', blurId, changes: { startUs: Math.min(region.endUs - MIN_BLUR_REGION_US, Math.max(0, Math.round(region.startUs + deltaUs))) } })
+    return runCommand({ type: 'blur-update', blurId, changes: { endUs: Math.max(region.startUs + MIN_BLUR_REGION_US, Math.round(region.endUs + deltaUs)) } })
+  }
+  const draftBlurRegion = (blurId: string, changes: Partial<Omit<BlurRegion, 'id'>>) => setBlurRegionDraft({ id: blurId, changes })
+  const commitBlurRegion = (blurId: string, changes: Partial<Omit<BlurRegion, 'id'>>) => { setBlurRegionDraft(null); return runCommand({ type: 'blur-update', blurId, changes }) }
+  // Frame-paint effects (docs/EDITING.md "Frame-paint effects"): one lane per kind, so — like zoom,
+  // unlike blur — move/trim go through the clamped `effect-move`/`effect-trim` commands.
+  const addFrameEffect = (preset: 'vignette' | 'letterbox-239' | 'letterbox-185' | 'fade-in' | 'fade-out' | 'fade-dip' | 'flash', atUs = currentUs) => {
+    const startUs = Math.max(0, Math.round(atUs))
+    const id = crypto.randomUUID()
+    const effect: EffectRegion = preset === 'vignette' ? defaultVignette(id, startUs)
+      : preset === 'letterbox-239' ? defaultLetterbox(id, startUs, 2.39)
+      : preset === 'letterbox-185' ? defaultLetterbox(id, startUs, 1.85)
+      : preset === 'fade-in' ? defaultFade(id, startUs, 'in')
+      : preset === 'fade-out' ? defaultFade(id, startUs, 'out')
+      : preset === 'fade-dip' ? defaultFade(id, startUs, 'dip')
+      : defaultFlash(id, startUs)
+    return runCommand({ type: 'effect-add', effect })
+  }
+  const moveEffect = (effectId: string, startUs: number) => runCommand({ type: 'effect-move', effectId, startUs: Math.max(0, Math.round(startUs)) })
+  const trimEffect = (effectId: string, edge: 'start' | 'end', deltaUs: number) => runCommand({ type: 'effect-trim', effectId, edge, deltaUs: Math.round(deltaUs) })
+  const draftEffect = (effectId: string, changes: EffectChanges) => setEffectDraft({ id: effectId, changes })
+  const commitEffect = (effectId: string, changes: EffectChanges) => { setEffectDraft(null); return runCommand({ type: 'effect-update', effectId, changes }) }
+  const addEffectPreset = (preset: 'zoom-in' | 'zoom-out' | 'blur-area' | 'blur-frame' | 'vignette' | 'letterbox-239' | 'letterbox-185' | 'fade-in' | 'fade-out' | 'fade-dip' | 'flash', atUs = currentUs) =>
+    preset === 'zoom-in' || preset === 'zoom-out' ? addZoomRegion(preset, atUs)
+      : preset === 'blur-area' || preset === 'blur-frame' ? addBlurRegion(preset, atUs)
+      : addFrameEffect(preset, atUs)
   const trackActions = {
     onUpdate: (trackId: string, changes: TrackFlags) => runCommand({ type: 'track-update', trackId, changes }),
     onReorder: (trackId: string, direction: 'forward' | 'backward') => runCommand({ type: 'track-reorder', trackId, direction }),
     onRemove: (trackId: string) => runCommand({ type: 'track-remove', trackId }),
     onAdd: (kind: Track['kind']) => runCommand({ type: 'track-add', track: newTrack(kind) }),
+  }
+  const captionTrackActions = {
+    onUpdate: (trackId: string, changes: CaptionTrackFlags) => runCommand({ type: 'caption-track-update', trackId, changes }),
+    onReorder: (trackId: string, direction: 'forward' | 'backward') => runCommand({ type: 'caption-track-reorder', trackId, direction }),
+    onRemove: (trackId: string) => runCommand({ type: 'caption-track-remove', trackId }),
+    onAdd: () => runCommand({ type: 'caption-track-add', track: newCaptionTrack() }),
   }
 
   const exportSrt = async () => {
@@ -1027,10 +1206,14 @@ export default function App() {
   }
   const setCaptionDisplay = (next: CaptionDisplay) => runCommand({ type: 'set-caption-display', display: next })
 
-  const draftStyle = (style: CaptionStyle) => setStyleDraft(style)
-  const commitStyle = (style: CaptionStyle) => { setStyleDraft(null); commit((state) => ({ ...state, captionStyle: style })) }
+  const draftStyle = (style: CaptionStyle) => selectedText ? setTextStyleDraft({ id: selectedText.id, style }) : setStyleDraft(style)
+  const commitStyle = (style: CaptionStyle) => {
+    if (selectedText) { setTextStyleDraft(null); runCommand({ type: 'text-update', textId: selectedText.id, changes: { style } }); return }
+    setStyleDraft(null); commit((state) => ({ ...state, captionStyle: style }))
+  }
   const applyTemplate = (style: CaptionStyle) => {
     setStyleDraft(null)
+    if (selectedText) { setTextStyleDraft(null); runCommand({ type: 'text-update', textId: selectedText.id, changes: { style: applyCaptionTemplateToText(style, selectedText.style) } }); return }
     const needsEstimates = ['active-word-highlight', 'word-pop', 'progressive-word-reveal'].includes(style.motion)
       && project.cues.some((cue) => untimedTokenCount(cue) > 0)
     runCommand({ type: 'apply-template', style, idPrefix: crypto.randomUUID() }, (warnings) => {
@@ -1044,13 +1227,42 @@ export default function App() {
       return { tone: skipped || overlaps ? 'warning' : 'info', text: `Template applied to all captions.${details ? ` ${details}` : ''}` }
     })
   }
+  const addTextAtPlayhead = (anchor?: TextAnchor) => {
+    if (durationUs <= 0) { setNotice({ tone: 'warning', text: 'Add a video or caption with duration before adding text.' }); return }
+    const startUs = Math.min(currentUs, Math.max(0, durationUs - 1))
+    const endUs = Math.min(durationUs, startUs + 3 * US_PER_SECOND)
+    const overlay = defaultTextOverlay(crypto.randomUUID(), startUs, endUs)
+    if (anchor) overlay.style = { ...overlay.style, appearance: { ...overlay.style.appearance, ...anchor } }
+    if (startUs !== currentUs) playback.seek(startUs)
+    setInspectorTab('edit')
+    if (runCommand({ type: 'text-add', overlay })) setEditingText({ id: overlay.id, selectAll: true })
+  }
+  const addTextFromPreview = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (target instanceof Element && target.closest('.caption-overlay-hit, .text-overlay-hit, .overlay-handle, .zoom-hit, .blur-hit, button, input, textarea')) return
+    event.preventDefault()
+    const rect = event.currentTarget.getBoundingClientRect()
+    const anchor = textAnchorAt(event.clientX, event.clientY, { left: rect.left, top: rect.top, width: rect.width, height: rect.height })
+    if (anchor) addTextAtPlayhead(anchor)
+  }
   const savePreset = (name: string) => { setStyleDraft(null); commit((state) => saveCaptionPreset(state, name, effectiveStyle, () => crypto.randomUUID())) }
-  const applyPreset = (id: string) => { setStyleDraft(null); commit((state) => applyCaptionPreset(state, id)) }
+  const applyPreset = (id: string) => {
+    setStyleDraft(null)
+    if (selectedText) {
+      const preset = project.savedCaptionPresets?.find((entry) => entry.id === id)
+      if (!preset) return
+      runCommand({ type: 'text-update', textId: selectedText.id, changes: { style: applyCaptionTemplateToText(preset.style, selectedText.style) } })
+      return
+    }
+    commit((state) => applyCaptionPreset(state, id))
+  }
   const deletePreset = (id: string) => commit((state) => deleteCaptionPreset(state, id))
 
   const deleteSelection = (ripple: boolean) => {
     if (selection?.kind === 'clip') return deleteClip(ripple)
     if (selection?.kind === 'blur') return runCommand({ type: 'blur-delete', blurId: selection.id })
+    if (selection?.kind === 'zoomRegion') return runCommand({ type: 'zoom-region-delete', zoomId: selection.id })
+    if (selection?.kind === 'effect') return runCommand({ type: 'effect-delete', effectId: selection.id })
     if (ripple) return
     if (selectedWord) return deleteSelectedWord()
     return deleteSelectedCue()
@@ -1062,7 +1274,11 @@ export default function App() {
       if (!action) return
       // Space must toggle exactly once: a held key auto-repeats keydown.
       if (action === 'toggle-playback' && event.repeat) return
-      if (action === 'toggle-playback' && event.target instanceof Element && event.target.closest('button, summary, a, video, [role="button"]')) return
+      // A focused native button/link still gets its own Space activation (including the transport's
+      // own Play/Pause button, which does the right thing either way). Timeline/caption `[role="button"]`
+      // items no longer consume Space themselves (Enter selects instead), so Space reaches playback
+      // even while a cue card, clip block or word is selected.
+      if (action === 'toggle-playback' && event.target instanceof Element && event.target.closest('button, summary, a')) return
       event.preventDefault()
       const actions: Record<ShortcutAction, () => void> = {
         'toggle-playback': togglePlayback,
@@ -1087,7 +1303,8 @@ export default function App() {
   // Native menu commands run whatever the handlers are on the latest render.
   const menuHandlers = useRef<Record<MenuCommand, () => void>>(null!)
   menuHandlers.current = {
-    'open-video': () => void openVideo(), 'import-srt': () => void importSrt(), 'open-project': () => void openProject(),
+    'new-project': requestNewProject,
+    'open-video': () => void openVideo(), 'import-srt': () => void importSrt(), 'open-project': requestOpenProject,
     'save-project': () => void saveProject(), 'save-project-as': () => void saveProjectAs(),
     // The native accelerators fire even while typing; a focused field keeps its own edit history.
     undo: () => isEditableTarget(document.activeElement) ? void window.captionStudio?.editText('undo') : undo(),
@@ -1109,10 +1326,12 @@ export default function App() {
     : null
   const shortcutLabel = (key: string) => `${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}${key}`
   const fileEntries: MenuEntry[] = [
+    { id: 'new-project', label: 'New project', onSelect: requestNewProject, shortcut: shortcutLabel('N') },
+    { id: 'sep-new', separator: true },
     { id: 'open-video', label: hasVideo ? 'Add video…' : 'Open video…', onSelect: () => void openVideo(), shortcut: shortcutLabel('⇧O') },
     { id: 'import-srt', label: 'Import SRT…', onSelect: () => void importSrt(), shortcut: shortcutLabel('I') },
     { id: 'sep', separator: true },
-    { id: 'open-project', label: 'Open project…', onSelect: () => void openProject(), shortcut: shortcutLabel('O') },
+    { id: 'open-project', label: 'Open project…', onSelect: requestOpenProject, shortcut: shortcutLabel('O') },
     { id: 'save-project', label: 'Save project', onSelect: () => void saveProject(), shortcut: shortcutLabel('S') },
     { id: 'save-project-as', label: 'Save project as…', onSelect: () => void saveProjectAs(), shortcut: shortcutLabel('⇧S') },
   ]
@@ -1132,6 +1351,7 @@ export default function App() {
     { id: 'split-clips', label: 'Split clips at playhead', onSelect: splitClips, disabledReason: canSplitClips ? null : 'No clip under the playhead', shortcut: shortcutLabel('B') },
     { id: 'add-video-track', label: 'Add video track', onSelect: () => trackActions.onAdd('video') },
     { id: 'add-audio-track', label: 'Add audio track', onSelect: () => trackActions.onAdd('audio') },
+    { id: 'add-caption-track', label: 'Add caption track', onSelect: captionTrackActions.onAdd },
     { id: 'sep-silence', separator: true },
     { id: 'remove-silence', label: 'Remove silence…', onSelect: () => setSilenceDialogOpen(true), disabledReason: hasVideo ? null : 'Open a video first' },
     { id: 'restore-cuts', label: 'Restore removed ranges', onSelect: restoreCuts, disabledReason: hasTrimmedClips(project) ? null : 'No trimmed clips to restore' },
@@ -1172,7 +1392,7 @@ export default function App() {
 
     <section className="workspace">
       <LeftRail active={railTab} onChange={setRailTab} onSettings={() => setSettingsTab('models')} />
-      <aside className="panel side-panel" aria-label={railTab === 'media' ? 'Media' : railTab === 'captions' ? 'Captions' : railTab === 'overlays' ? 'Overlays' : 'Transitions'}>
+      <aside className="panel side-panel" aria-label={railTab === 'media' ? 'Media' : railTab === 'captions' ? 'Captions' : railTab === 'overlays' ? 'Overlays' : railTab === 'effects' ? 'Effects' : 'Titles'}>
         {railTab === 'media' && <MediaBin assets={project.assets} assetUrls={media.assetUrls} assetIssues={media.issues} useCountByAsset={useCountByAsset}
           videoReady={(asset) => media.urlOf(asset) !== null}
           onImportFiles={() => void importAssetFiles()} onDropFiles={(files) => inspectAndAdd(files)}
@@ -1186,11 +1406,12 @@ export default function App() {
           effectiveStyle={effectiveStyle} selected={selected} captionDisplay={captionDisplay} onCaptionDisplay={setCaptionDisplay} onProjectStyle={commitStyle}
           onOverride={(override) => selected && runCommand({ type: 'set-motion-override', cueId: selected.id, override })}
           onResetOverrides={() => runCommand({ type: 'reset-motion-overrides' })}
+          onPlacementOverride={(override) => selected && runCommand({ type: 'set-placement-override', cueId: selected.id, override })}
           onEstimate={() => selected && runCommand({ type: 'estimate-words', cueId: selected.id, idPrefix: crypto.randomUUID() })}
           onGroup={(options, all) => runCommand(all
             ? { type: 'regroup-many', cueIds: project.cues.map((cue) => cue.id), idPrefix: crypto.randomUUID(), estimateMissing: false, options }
             : selected ? { type: 'regroup', cueId: selected.id, idPrefix: crypto.randomUUID(), estimateMissing: false, options } : { type: 'regroup-many', cueIds: [], idPrefix: crypto.randomUUID(), estimateMissing: false, options })}
-          onSelect={seek} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text })} onSelectWord={onSelectSpan}
+          onSelect={seek} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text, estimateIfUntimed: crypto.randomUUID() })} onSelectWord={onSelectSpan}
           onWordAction={(cueId, type, span) => {
             const command = wordActionCommand(cueId, type, span, () => crypto.randomUUID())
             if (command) runCommand(command)
@@ -1202,10 +1423,12 @@ export default function App() {
           geminiKeyConfigured={Boolean(geminiKey?.configured)} onNeedGeminiKey={() => setSettingsTab('gemini')} onImportSrt={() => void importSrt()} />}
         {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
           onImportAndAdd={() => void importImageOverlay()} mediaReady />}
-        {railTab === 'transitions' && <TransitionsPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []}
+        {railTab === 'titles' && <TitlesPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []} target={selectedText ? 'text' : 'captions'}
           onApplyTemplate={applyTemplate} onCommitMotion={(motion) => commitStyle({ ...effectiveStyle, motion })}
           onSavePreset={savePreset} onApplyPreset={applyPreset} onDeletePreset={deletePreset}
-          onEstimate={activeCue ? () => runCommand({ type: 'estimate-words', cueId: activeCue.id, idPrefix: crypto.randomUUID() }) : undefined} />}
+          onEstimate={selectedText ? undefined : activeCue ? () => runCommand({ type: 'estimate-words', cueId: activeCue.id, idPrefix: crypto.randomUUID() }) : undefined}
+          onAddText={addTextAtPlayhead} />}
+        {railTab === 'effects' && <EffectsPanel onAddAtPlayhead={addEffectPreset} />}
       </aside>
 
       <section className="stage-panel" aria-label="Video preview and transport">
@@ -1219,21 +1442,39 @@ export default function App() {
             // what is already there — it joins the end of V1, like the media bin's Add.
             inspectAndAdd(content.files, { sequenceUs: currentUs, trackId: null, appendVideos: true })
           }}>
-          {project.clips.length || project.cues.length ? <div className="video-frame" style={{ '--video-aspect': formatAspect(project.format) } as CSSProperties}>
-            <CaptionStage clock={clock} cues={visibleCues} dragPreview={dragPreview} composition={captionComposition} inputs={captionInputs} style={effectiveStyle} display={captionDisplay}
-              tracks={visibleTracks} clips={visibleClips} assets={project.assets} blurRegions={project.blurRegions} urlOf={media.urlOf}
-              poolVersion={playback.poolVersion} elementFor={(trackId, assetId) => playback.transport.elementFor(trackId, assetId) as HTMLVideoElement | null} />
+          {project.clips.length || project.cues.length ? <div className="video-frame" style={{ '--video-aspect': formatAspect(project.format) } as CSSProperties} onDoubleClick={addTextFromPreview}>
+            <CaptionStage clock={clock} cues={visibleCues} dragPreview={dragPreview} composition={captionComposition} style={previewCaptionStyle} display={captionDisplay}
+              tracks={visibleTracks} clips={visibleClips} assets={project.assets} blurRegions={visibleBlurRegions} zoomRegions={visibleZoomRegions} effects={visibleEffects} textOverlays={project.textOverlays} urlOf={media.urlOf}
+              poolVersion={playback.poolVersion} elementFor={(trackId, assetId) => playback.transport.elementFor(trackId, assetId) as HTMLVideoElement | null}
+              selectedCueId={selectedCueId} selectedTextId={selectedText?.id ?? null} onSelectCue={setSelectedId} onSelectText={(textId) => setSelection({ kind: 'text', id: textId })} onStyleDraft={draftStyle} onStyleCommit={commitStyle}
+              editingTextId={editingText?.id ?? null} editingTextSelectAll={editingText?.selectAll ?? false}
+              onEditText={(textId) => { setSelection({ kind: 'text', id: textId }); setEditingText({ id: textId, selectAll: false }) }}
+              onFinishTextEdit={() => setEditingText(null)} onCommitText={(textId, text) => runCommand({ type: 'text-update', textId, changes: { text } })}
+              onCuePlacementCommit={(cueId, override) => runCommand({ type: 'set-placement-override', cueId, override })} />
             <ClipStageEditor tracks={visibleTracks} clips={visibleClips} composition={captionComposition} clock={clock}
               selectedId={selection?.kind === 'clip' ? selection.id : null}
               onSelect={(clipId) => setSelection({ kind: 'clip', id: clipId })}
               onRectDraft={(rect) => draftClip({ rect })} onRectCommit={(rect) => commitClip({ rect })}
               onCloneDraft={setCloneDraft} onCloneCommit={(clip) => { setCloneDraft(null); placeCopy(clip) }} />
+            <RectStageEditor label="Zoom target" hitClassName="zoom-hit" keepAspect
+              region={visibleZoomRegions.find((region) => currentUs >= region.startUs && currentUs < region.endUs) ?? null}
+              composition={captionComposition} selected={selection?.kind === 'zoomRegion' && visibleZoomRegions.some((region) => region.id === selection.id && currentUs >= region.startUs && currentUs < region.endUs)}
+              onSelect={(id) => setSelection({ kind: 'zoomRegion', id })}
+              onDraft={(rect) => selection?.kind === 'zoomRegion' && (rect ? draftZoomRegion(selection.id, { rect }) : setZoomRegionDraft(null))}
+              onCommit={(rect) => selection?.kind === 'zoomRegion' && commitZoomRegion(selection.id, { rect })} />
+            <RectStageEditor label="Blur area" hitClassName="blur-hit" keepAspect={false}
+              region={visibleBlurRegions.find((region) => currentUs >= region.startUs && currentUs < region.endUs) ?? null}
+              composition={captionComposition} selected={selection?.kind === 'blur' && visibleBlurRegions.some((region) => region.id === selection.id && currentUs >= region.startUs && currentUs < region.endUs)}
+              onSelect={(id) => setSelection({ kind: 'blur', id })}
+              onDraft={(rect) => selection?.kind === 'blur' && (rect ? draftBlurRegion(selection.id, { rect }) : setBlurRegionDraft(null))}
+              onCommit={(rect) => selection?.kind === 'blur' && commitBlurRegion(selection.id, { rect })} />
             <div className="safe-area" />
           </div> : <Empty title="Your video appears here" body="Open a local video to start, or continue from subtitles or a saved project. Media stays on this device." action={<div className="empty-actions">
             <button className="accent" onClick={() => void openVideo()}>Open video</button>
             <button onClick={() => void importSrt()}>Import SRT</button>
-            <button onClick={() => void openProject()}>Open project</button>
+            <button onClick={requestOpenProject}>Open project</button>
           </div>} />}
+          {selection?.kind === 'cue' && <CaptionShortcutHint />}
           {summaryAsset?.metadata && <MediaSummary name={summaryAsset.name} metadata={summaryAsset.metadata} format={project.format ?? null} />}
           {issueAsset && codecIssue && <div className="codec-diagnostic" role="status">
             <span>{issueAsset.name}: {codecIssue.kind === 'confirmed-unsupported' ? codecIssue.message : 'This media’s codec is likely unsupported by the embedded player.'}</span>
@@ -1272,10 +1513,45 @@ export default function App() {
               onDelete={deleteClip}
               onRelink={() => void relinkAsset(selectedClip.assetId)}
               onInvalid={(text) => setNotice({ tone: 'error', text })}
-            /> : selected ? <>
+            /> : selectedZoomRegion ? <ZoomInspector
+              region={selectedZoomRegion}
+              composition={captionComposition}
+              onMove={(startUs) => moveZoomRegion(selectedZoomRegion.id, startUs)}
+              onLength={(lengthUs) => trimZoomRegion(selectedZoomRegion.id, 'end', lengthUs - (selectedZoomRegion.endUs - selectedZoomRegion.startUs))}
+              onEnabledChange={(enabled) => commitZoomRegion(selectedZoomRegion.id, { enabled })}
+              onDraft={(changes) => draftZoomRegion(selectedZoomRegion.id, changes)}
+              onCommit={(changes) => commitZoomRegion(selectedZoomRegion.id, changes)}
+              onReset={() => commitZoomRegion(selectedZoomRegion.id, { rect: defaultZoomRect(captionComposition) })}
+              onDelete={() => runCommand({ type: 'zoom-region-delete', zoomId: selectedZoomRegion.id })}
+              onInvalid={(text) => setNotice({ tone: 'error', text })}
+            /> : selectedBlurRegion ? <BlurInspector
+              region={selectedBlurRegion}
+              onMove={(startUs) => moveBlurRegion(selectedBlurRegion.id, startUs)}
+              onLength={(lengthUs) => trimBlurRegion(selectedBlurRegion.id, 'end', lengthUs - (selectedBlurRegion.endUs - selectedBlurRegion.startUs))}
+              onEnabledChange={(enabled) => commitBlurRegion(selectedBlurRegion.id, { enabled })}
+              onRadiusDraft={(radius) => draftBlurRegion(selectedBlurRegion.id, { radius })}
+              onRadiusCommit={(radius) => commitBlurRegion(selectedBlurRegion.id, { radius })}
+              onDelete={() => runCommand({ type: 'blur-delete', blurId: selectedBlurRegion.id })}
+              onInvalid={(text) => setNotice({ tone: 'error', text })}
+            /> : selectedEffect ? <EffectInspector
+              effect={selectedEffect}
+              onMove={(startUs) => moveEffect(selectedEffect.id, startUs)}
+              onLength={(lengthUs) => trimEffect(selectedEffect.id, 'end', lengthUs - (selectedEffect.endUs - selectedEffect.startUs))}
+              onEnabledChange={(enabled) => commitEffect(selectedEffect.id, { enabled })}
+              onDraft={(changes) => draftEffect(selectedEffect.id, changes)}
+              onCommit={(changes) => commitEffect(selectedEffect.id, changes)}
+              onDelete={() => runCommand({ type: 'effect-delete', effectId: selectedEffect.id })}
+              onInvalid={(text) => setNotice({ tone: 'error', text })}
+            /> : selectedText ? <TextInspector item={selectedText}
+              onUpdate={(changes) => runCommand({ type: 'text-update', textId: selectedText.id, changes })}
+              onMove={(startUs) => runCommand({ type: 'text-move', textId: selectedText.id, startUs })}
+              onLength={(lengthUs) => runCommand({ type: 'text-trim', textId: selectedText.id, edge: 'end', deltaUs: lengthUs - (selectedText.endUs - selectedText.startUs) })}
+              onDuplicate={() => runCommand({ type: 'text-duplicate', textId: selectedText.id, duplicateId: crypto.randomUUID() })}
+              onDelete={() => runCommand({ type: 'text-delete', textId: selectedText.id })}
+              onInvalid={(text) => setNotice({ tone: 'error', text })} /> : selected ? <>
               <CueEditor
                 cue={selected}
-                onUpdateText={(text) => runCommand({ type: 'update-text', cueId: selected.id, text })}
+                onUpdateText={(text) => runCommand({ type: 'update-text', cueId: selected.id, text, estimateIfUntimed: crypto.randomUUID() })}
                 onUpdateTime={(startUs, endUs) => runCommand({ type: 'update-time', cueId: selected.id, startUs, endUs })}
                 onInvalid={(text) => setNotice({ tone: 'error', text })}
               />
@@ -1309,27 +1585,37 @@ export default function App() {
       </aside>
     </section>
 
-    <Timeline cues={project.cues} tracks={project.tracks} clips={project.clips} assets={project.assets} currentUs={currentUs} durationUs={Math.max(durationUs, 1)}
+    <Timeline cues={project.cues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} assets={project.assets} currentUs={currentUs} durationUs={Math.max(durationUs, 1)}
       selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
       warningCueIds={warningCueIds} waveforms={waveforms}
       waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
+      onCancelWaveform={waveformsLoading > 0 ? cancelWaveforms : undefined}
       onSeek={seekTo} onDragPreview={previewCueDrag} onDragCommit={commitCueDrag}
       editMode={editMode} onEditMode={setEditMode}
       onSelectClip={(clipId) => setSelection({ kind: 'clip', id: clipId })}
       onClipMove={moveClip} onClipClone={(clip) => placeCopy(clip, clip.timelineStartUs, clip.trackId)} onClipTrim={trimClip}
+      onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomTrim={trimZoomRegion}
+      onSelectBlur={(blurId) => setSelection({ kind: 'blur', id: blurId })} onBlurMove={moveBlurRegion} onBlurTrim={trimBlurRegion}
+      onSelectEffect={(effectId) => setSelection({ kind: 'effect', id: effectId })} onEffectMove={moveEffect} onEffectTrim={trimEffect}
+      onSelectText={(textId) => setSelection({ kind: 'text', id: textId })}
+      onAddText={() => addTextAtPlayhead()}
+      onTextMove={(textId, startUs) => runCommand({ type: 'text-move', textId, startUs})}
+      onTextTrim={(textId, edge, deltaUs) => runCommand({ type: 'text-trim', textId, edge, deltaUs })}
       onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
-      trackActions={trackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
+      trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
       display={timelineDisplay} onDisplay={setTimelineDisplay} selectedWordId={selectedWord?.id ?? null} onSelectWord={onSelectWord}
       actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1), delete: () => selectedWord ? deleteSelectedWord() : deleteSelectedCue(), split: splitSelectedCue, trim: trimSelectedCue }}
       clipTools={{ split: splitClips, canSplit: canSplitClips, remove: deleteClip, hasClip: clipBase !== null }}
       canAdd={canAddCue} canSplit={canSplitSelected} canMerge={canMergeSelected} hasSelectedWord={selectedWord !== null}
-      onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} thumbnailQueue={thumbnailQueue} />
+      onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} onDropPreset={(payload, sequenceUs) => addEffectPreset(payload.preset, sequenceUs)} thumbnailQueue={thumbnailQueue} />
     {pendingAssetRelink && <RelinkReview title={pendingAssetRelink.asset.kind === 'video' ? 'Replacement video does not match' : 'Replacement file does not match'} candidate={pendingAssetRelink.candidate}
       onUse={() => { useAssetCandidate(pendingAssetRelink.asset, pendingAssetRelink.candidate); setPendingAssetRelink(null); setNotice({ tone: 'warning', text: `Using ${pendingAssetRelink.candidate.media.name} by your choice; stored identity was replaced with the selected media.` }) }}
       onChooseAgain={() => { const assetId = pendingAssetRelink.asset.id; setPendingAssetRelink(null); void relinkAsset(assetId) }}
       onCancel={() => setPendingAssetRelink(null)} />}
     {pendingSrt && <ReplaceCaptionsReview name={pendingSrt.name} existingCount={project.cues.length} importedCount={pendingSrt.parsed.cues.length}
       onCancel={() => setPendingSrt(null)} onReplace={() => { applyParsedSrt(pendingSrt.parsed); setPendingSrt(null) }} />}
+    {pendingReset && <DiscardProjectReview kind={pendingReset.kind}
+      onCancel={() => setPendingReset(null)} onSaveFirst={() => void saveThenResumePendingReset()} onDiscard={resumePendingReset} />}
     {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
   </main>
 }
@@ -1341,14 +1627,30 @@ const CLONE_TRACK: Track = { id: '__clone-preview__', kind: 'video', name: '', m
  * small subtree — the transcript list, timeline body and waveform/thumbnails never re-render per
  * frame. It composites every visual clip under the playhead, back to front, then blur, then the
  * caption the one shared rule (`activeCueAt`) picks, evaluated at its own source time. */
-function CaptionStage({ clock, cues, dragPreview, composition, inputs, style, display, tracks, clips, assets, blurRegions, urlOf, elementFor }: {
+function CaptionStage({ clock, cues, dragPreview, composition, style, display, tracks, clips, assets, blurRegions, zoomRegions, effects, textOverlays, urlOf, elementFor,
+  selectedCueId, selectedTextId, onSelectCue, onSelectText, onStyleDraft, onStyleCommit, onCuePlacementCommit,
+  editingTextId, editingTextSelectAll, onEditText, onFinishTextEdit, onCommitText }: {
   /** Bumped when the transport creates a pooled element, so a new video layer finds it. */
   poolVersion: number
   clock: PlaybackClock; cues: readonly Cue[]; dragPreview: Cue | null
-  composition: Size; inputs: LayoutInputs; style: CaptionStyle; display: CaptionDisplay
-  tracks: readonly Track[]; clips: readonly Clip[]; assets: readonly ProjectAsset[]; blurRegions: CaptionProject['blurRegions']
+  composition: Size; style: CaptionStyle; display: CaptionDisplay
+  tracks: readonly Track[]; clips: readonly Clip[]; assets: readonly ProjectAsset[]; blurRegions: CaptionProject['blurRegions']; zoomRegions: readonly ZoomRegion[]
+  effects: readonly EffectRegion[]
+  textOverlays: readonly TextOverlay[]
   urlOf: (asset: ProjectAsset | null | undefined) => string | null
   elementFor: (trackId: string, assetId: string) => HTMLVideoElement | null
+  selectedCueId: string | null
+  selectedTextId: string | null
+  onSelectCue: (cueId: string) => void
+  onSelectText: (textId: string) => void
+  onStyleDraft: (style: CaptionStyle) => void
+  onStyleCommit: (style: CaptionStyle) => void
+  onCuePlacementCommit: (cueId: string, override: Cue['placementOverride']) => void
+  editingTextId: string | null
+  editingTextSelectAll: boolean
+  onEditText: (textId: string) => void
+  onFinishTextEdit: () => void
+  onCommitText: (textId: string, text: string) => void
 }) {
   const frameUs = useSyncExternalStore(clock.subscribe, clock.getUs)
   const active = activeCueAt(frameUs, tracks, clips, cues)
@@ -1360,20 +1662,96 @@ function CaptionStage({ clock, cues, dragPreview, composition, inputs, style, di
   const shownCue = useMemo(() => wordIndex === null || !lineCue ? lineCue : wordDisplayCue(lineCue, wordIndex), [lineCue, wordIndex])
   const fallback = display === 'word' && lineCue && wordIndex === null && sourceUs >= lineCue.startUs && sourceUs < lineCue.endUs
     ? wordMotionAvailability(lineCue).explanation : null
-  const resolved = resolveCaptionMotion(style, lineCue?.motionOverride)
+  // Memoized on (style, lineCue) — both stay referentially stable tick to tick when nothing style- or
+  // cue-related actually changes (see `shownCue`'s own comment above) — so `captionInputs` below keeps
+  // skipping recomputation during ordinary playback, exactly as it did before this per-cue resolution
+  // existed, rather than rebuilding the whole font/shadow/appearance object on every 60fps tick.
+  const resolved = useMemo(() => resolveCaptionStyle(style, lineCue), [style, lineCue])
+  // A live, uncommitted Alt-drag/resize/rotate on the caption's own per-cue override: layered on top
+  // of `resolved` (which already carries any *committed* per-cue override) so a gesture in flight
+  // paints immediately without writing project history on every pointer move — exactly the project
+  // style's own `styleDraft` role, but scoped to one cue instead of the whole project.
+  const [placementDraft, setPlacementDraft] = useState<{ cueId: string; patch: CaptionPlacementPatch } | null>(null)
+  const draftedForThisCue = placementDraft && placementDraft.cueId === lineCue?.id ? placementDraft.patch : null
+  const resolvedStyle = useMemo(() => draftedForThisCue ? { ...resolved, appearance: { ...resolved.appearance, ...draftedForThisCue } } : resolved,
+    [resolved, draftedForThisCue])
+  const captionInputs = useMemo(() => captionStyleInputs(resolvedStyle, composition), [resolvedStyle, composition])
   const assetById = useMemo(() => new Map(assets.map((asset) => [asset.id, asset])), [assets])
-  const layers: CompositionLayer[] = [
-    ...activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio'), { skipHidden: true }).map(({ clip, track }): CompositionLayer => {
+  const activeVisual = activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio'), { skipHidden: true })
+  // The export host paints images only when every image track is above every video track. Mirror
+  // that split in preview so those host-painted overlays stay pinned while the picture zooms.
+  const trackOrder = new Map(tracks.map((track, index) => [track.id, index]))
+  const highestVideoTrack = Math.max(-1, ...clips.filter((clip) => clip.kind === 'video').map((clip) => trackOrder.get(clip.trackId) ?? -1))
+  const hostPaintedImages = clips.every((clip) => clip.kind !== 'image' || (trackOrder.get(clip.trackId) ?? -1) > highestVideoTrack)
+  const visualLayers = activeVisual.map(({ clip, track }): CompositionLayer => {
       const asset = assetById.get(clip.assetId)
       const label = asset?.name ?? 'Missing file'
       if (clip.kind === 'video') return { kind: 'video', id: `${track.id}/${clip.assetId}`, element: elementFor(track.id, clip.assetId), label, rect: clip.rect ?? null, opacity: clip.opacity, fit: clip.fit }
       return { kind: 'image', id: clip.id, url: urlOf(asset), label, rect: clip.kind === 'image' ? clip.rect ?? null : null, opacity: clip.kind === 'image' ? clip.opacity : 1, fit: clip.kind === 'image' ? clip.fit : 'contain' }
-    }),
-    ...blurRegions.filter((region) => frameUs >= region.startUs && frameUs < region.endUs).map((region): CompositionLayer => ({ kind: 'blur', id: region.id, rect: region.rect, radius: region.radius })),
+    })
+  const pictureLayers: CompositionLayer[] = [
+    ...visualLayers.filter((layer) => layer.kind !== 'image' || !hostPaintedImages),
+    ...blurRegions.filter((region) => region.enabled && frameUs >= region.startUs && frameUs < region.endUs).map((region): CompositionLayer => ({ kind: 'blur', id: region.id, rect: region.rect, radius: region.radius })),
   ]
+  // Frame-paint effects (docs/EDITING.md "Frame-paint effects"): vignette/letterbox stay pinned to
+  // the output frame like a host-painted overlay, never zooming with the picture; fade paints over
+  // everything, including captions, so it goes through `CaptionPreview`'s separate `overCaption` slot.
+  const frameEffects = frameEffectsAt(effects, frameUs, composition)
+  const pinnedEffectLayers: CompositionLayer[] = [
+    ...(frameEffects.vignette ? [{ kind: 'vignette' as const, id: 'vignette', amount: frameEffects.vignette.amount, softness: frameEffects.vignette.softness }] : []),
+    ...(frameEffects.letterbox ? [{ kind: 'letterbox' as const, id: 'letterbox', orientation: frameEffects.letterbox.orientation, barPx: frameEffects.letterbox.barPx, color: frameEffects.letterbox.color }] : []),
+  ]
+  const pinnedLayers = [...(hostPaintedImages ? visualLayers.filter((layer) => layer.kind === 'image') : []), ...pinnedEffectLayers]
+  const fadeLayer = frameEffects.fade
+    ? <CompositionLayers layers={[{ kind: 'fade', id: 'fade', color: frameEffects.fade.color, opacity: frameEffects.fade.opacity }]} composition={composition} />
+    : null
+  const activeText = textOverlays.filter((item) => item.startUs <= frameUs && frameUs < item.endUs)
+    .sort((a, b) => a.layerOrder - b.layerOrder || a.startUs - b.startUs || a.id.localeCompare(b.id))
+  const [textStageFrame, setTextStageFrame] = useState<{ id: string; frame: CaptionFrame | null } | null>(null)
+  const captureTextStageFrame = (id: string, frame: CaptionFrame | null) => setTextStageFrame((current) =>
+    current?.id === id && current.frame?.layout === frame?.layout ? current : { id, frame })
+  const textActor = (item: TextOverlay) => <TextOverlayActor key={item.id} item={item} timestampUs={frameUs} composition={composition}
+    onFrame={item.id === selectedTextId ? (frame) => captureTextStageFrame(item.id, frame) : undefined} editing={item.id === editingTextId}
+    onPointerDown={() => onSelectText(item.id)} onDoubleClick={() => onEditText(item.id)} />
+  const belowText = activeText.filter((item) => item.layerOrder < 0).map(textActor)
+  const aboveText = activeText.filter((item) => item.layerOrder >= 0).map(textActor)
+  const editingTextItem = activeText.find((item) => item.id === editingTextId) ?? null
+  const selectedStageText = activeText.find((item) => item.id === selectedTextId) ?? null
+  const selectedTextFrame = selectedStageText && textStageFrame?.id === selectedStageText.id ? textStageFrame.frame : null
+  const editingFrame = editingTextItem && textStageFrame?.id === editingTextItem.id ? textStageFrame.frame : null
+  // A bypassed zoom region is still selectable and editable (RectStageEditor, below, reads from
+  // `visibleZoomRegions` directly, not this filtered view) — only the picture crop itself skips it.
+  const zoomRect = zoomRectAt(zoomRegions.filter((region) => region.enabled), frameUs, composition)
+  const zoomStyle: CSSProperties = zoomRect
+    ? { position: 'absolute', inset: 0, overflow: 'hidden' }
+    : { position: 'absolute', inset: 0 }
+  const pictureStyle: CSSProperties = zoomRect
+    ? { position: 'absolute', inset: 0, transform: `scale(${composition.width / zoomRect.width}) translate(${-zoomRect.x}px, ${-zoomRect.y}px)`, transformOrigin: 'top left' }
+    : { position: 'absolute', inset: 0 }
+  const [stageFrame, setStageFrame] = useState<CaptionFrame | null>(null)
+  const draftPlacement = (patch: CaptionPlacementPatch, scope: 'project' | 'cue') => {
+    if (scope === 'project') return onStyleDraft({ ...style, appearance: { ...style.appearance, ...patch } })
+    if (lineCue) setPlacementDraft({ cueId: lineCue.id, patch })
+  }
+  const commitPlacement = (patch: CaptionPlacementPatch, scope: 'project' | 'cue') => {
+    if (scope === 'project') return onStyleCommit({ ...style, appearance: { ...style.appearance, ...patch } })
+    if (!lineCue) return
+    setPlacementDraft(null)
+    onCuePlacementCommit(lineCue.id, { ...(lineCue.placementOverride ?? {}), ...patch })
+  }
   return <>
-    <CaptionPreview cue={shownCue} timestampUs={sourceUs} composition={composition} inputs={inputs} motion={resolved.motion} motionSpeed={resolved.motionSpeed} fontSample={lineCue?.text}
-      layers={<CompositionLayers layers={layers} composition={composition} />} />
+    <CaptionPreview cue={shownCue} timestampUs={sourceUs} composition={composition} inputs={captionInputs} motion={resolvedStyle.motion} motionSpeed={resolvedStyle.motionSpeed} fontSample={lineCue?.text}
+      onFrame={setStageFrame} layers={<><div style={zoomStyle}><div style={pictureStyle}><CompositionLayers layers={pictureLayers} composition={composition} /></div></div><CompositionLayers layers={pinnedLayers} composition={composition} />{belowText}</>}
+      overCaption={<>{aboveText}{fadeLayer}</>} />
+    {selectedStageText ? <CaptionStageEditor frame={selectedTextFrame} composition={composition} appearance={selectedStageText.style.appearance}
+      selected onSelect={() => onSelectText(selectedStageText.id)} onDoubleClick={() => onEditText(selectedStageText.id)} fixedScope="project"
+      onDraft={(patch) => onStyleDraft({ ...selectedStageText.style, appearance: { ...selectedStageText.style.appearance, ...patch } })}
+      onCommit={(patch) => onStyleCommit({ ...selectedStageText.style, appearance: { ...selectedStageText.style.appearance, ...patch } })} />
+      : <CaptionStageEditor frame={stageFrame} composition={composition} appearance={resolvedStyle.appearance}
+        selected={lineCue !== null && selectedCueId === lineCue.id}
+        onSelect={() => lineCue && onSelectCue(lineCue.id)} onDraft={draftPlacement} onCommit={commitPlacement} />}
+    {editingTextItem && <TextStageInput key={editingTextItem.id} item={editingTextItem} frame={editingFrame} composition={composition}
+      selectAll={editingTextSelectAll} onFinish={onFinishTextEdit} onCommit={(text) => onCommitText(editingTextItem.id, text)} />}
     {fallback && <span role="status" data-word-display-notice style={{ position: 'absolute', bottom: 8, right: 8, maxWidth: '40%',
       fontSize: 12, color: '#ffda8b', background: '#101010cc', padding: 4, zIndex: 2 }}>Showing the full caption: {fallback}</span>}
   </>
@@ -1391,6 +1769,22 @@ function MediaSummary({ name, metadata, format }: { name: string; metadata: Medi
     <span>{metadata.rotationDegrees == null ? 'rotation unknown' : `${metadata.rotationDegrees}° rotation`}</span>
     <span>{codecs || 'no streams reported'}</span>
     {format && <span title="The output frame every clip is fitted into">Sequence {format.width}×{format.height} · {rateText(format.frameRate)}</span>}
+  </div>
+}
+
+/** Shown whenever a caption is selected, so the stage's drag/resize/rotate/nudge gestures — easy to
+ * miss, since nothing else in the UI names them — are discoverable right where they're used. */
+function CaptionShortcutHint() {
+  return <div className="caption-shortcut-hint" role="note" aria-label="Caption placement shortcuts">
+    <strong>Move this caption</strong>
+    <dl>
+      <dt>Drag</dt><dd>Move</dd>
+      <dt>Corner handle</dt><dd>Resize</dd>
+      <dt>Top handle</dt><dd>Rotate (Shift snaps to 15°)</dd>
+      <dt>Arrow keys</dt><dd>Nudge (Shift = ×10)</dd>
+      <dt>Alt + drag</dt><dd>This caption only</dd>
+      <dt>Esc</dt><dd>Cancel the drag</dd>
+    </dl>
   </div>
 }
 
@@ -1413,12 +1807,22 @@ function ReplaceCaptionsReview({ name, existingCount, importedCount, onCancel, o
   </section></div>
 }
 
+/** New Project / Open Project both discard the current project outright; shown only when it holds
+ * work not yet written to disk (`hasUnsavedWork`). Undo cannot help here — the whole history resets. */
+function DiscardProjectReview({ kind, onCancel, onSaveFirst, onDiscard }: { kind: 'new' | 'open'; onCancel: () => void; onSaveFirst: () => void; onDiscard: () => void }) {
+  return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="discard-project-title">
+    <small>{kind === 'new' ? 'NEW PROJECT' : 'OPEN PROJECT'}</small><h2 id="discard-project-title">Discard unsaved work?</h2>
+    <p>{kind === 'new' ? 'Starting a new project' : 'Opening another project'} will close this one. Anything not yet saved will be lost; this cannot be undone.</p>
+    <div><button onClick={onCancel}>Cancel</button><button onClick={onSaveFirst}>Save first…</button><button className="accent" onClick={onDiscard}>Discard</button></div>
+  </section></div>
+}
+
 function CueEditor({ cue, onUpdateText, onUpdateTime, onInvalid }: { cue: Cue; onUpdateText: (text: string) => boolean; onUpdateTime: (startUs: number, endUs: number) => boolean; onInvalid: (message: string) => void }) {
   const [text, setText] = useState(cue.text)
   const [start, setStart] = useState(formatTimestamp(cue.startUs, ':'))
   const [end, setEnd] = useState(formatTimestamp(cue.endUs, ':'))
   useEffect(() => { setText(cue.text); setStart(formatTimestamp(cue.startUs, ':')); setEnd(formatTimestamp(cue.endUs, ':')) }, [cue.id, cue.text, cue.startUs, cue.endUs])
-  const changeTime = (_event: ChangeEvent<HTMLInputElement>) => {
+  const changeTime = () => {
     const startUs = parseEditedTimestamp(start, cue.startUs)
     const endUs = parseEditedTimestamp(end, cue.endUs)
     if (startUs === null || endUs === null) {
@@ -1430,7 +1834,10 @@ function CueEditor({ cue, onUpdateText, onUpdateTime, onInvalid }: { cue: Cue; o
   }
   return <div className="editor-form">
     <label htmlFor="cue-text">Text<textarea id="cue-text" aria-describedby="cue-provenance" value={text} lang="ml" onChange={(event) => setText(event.target.value)} onBlur={() => { if (text !== cue.text && !onUpdateText(text)) setText(cue.text) }} /></label>
-    <div className="time-fields"><label htmlFor="cue-start">Start<input id="cue-start" aria-label="Cue start timestamp in its video, HH hours MM minutes SS seconds milliseconds" value={start} onChange={(event) => setStart(event.target.value)} onBlur={changeTime} /></label><label htmlFor="cue-end">End<input id="cue-end" aria-label="Cue end timestamp in its video, HH hours MM minutes SS seconds milliseconds" value={end} onChange={(event) => setEnd(event.target.value)} onBlur={changeTime} /></label></div>
+    <TimeFields fields={[
+      { id: 'cue-start', label: 'Start', value: start, ariaLabel: 'Cue start timestamp in its video, HH hours MM minutes SS seconds milliseconds', onChange: setStart, onBlur: changeTime },
+      { id: 'cue-end', label: 'End', value: end, ariaLabel: 'Cue end timestamp in its video, HH hours MM minutes SS seconds milliseconds', onChange: setEnd, onBlur: changeTime },
+    ]} />
     <TimingProvenance cue={cue} />
   </div>
 }

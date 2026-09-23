@@ -4,6 +4,7 @@ import { applyItemCommand, validateItems, type ItemCommand } from './itemCommand
 import { commitHistory, createHistory, undoHistory } from './history'
 import type { CaptionProject, Cue } from './model'
 import type { Clip, ProjectAsset, Track } from './edit'
+import { defaultTextOverlay } from './textCommands'
 
 const US = 1_000_000
 const dates = { createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
@@ -23,10 +24,10 @@ const cue = (id: string, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 5, id: 'project', title: 'Test', cues: [cue('cue-a')],
+  schemaVersion: 10, id: 'project', title: 'Test', cues: [cue('cue-a')],
   assets: [asset('x', 'video'), asset('y', 'video', 10 * US), asset('img', 'image'), asset('snd', 'audio', 4 * US)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')],
-  clips: [video('c1', 'V1', 0, 0, 20 * US)], blurRegions: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
+  clips: [video('c1', 'V1', 0, 0, 20 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
   ...dates, ...extra,
 })
 const context = { compositionHeight: 607.5 }
@@ -150,6 +151,26 @@ describe('item commands', () => {
     expect(run(base, { type: 'track-update', trackId: 'A1', changes: { name: '  Music  ', muted: true } }).project.tracks[1]).toMatchObject({ name: 'Music', muted: true })
   })
 
+  it('adds, renames, reorders and removes caption tracks; a caption track holding captions refuses removal', () => {
+    const captionTrack = (id: string, extra: Partial<{ name: string; locked: boolean }> = {}) => ({ id, name: '', locked: false, ...extra })
+    const withC1 = project({ captionTracks: [captionTrack('C1')], cues: [cue('cue-a', { captionTrackId: 'C1' })] })
+    expect(refuse(withC1, { type: 'caption-track-remove', trackId: 'C1' })).toMatch(/Move or delete the 1 caption on/)
+    const added = run(withC1, { type: 'caption-track-add', track: captionTrack('C2', { name: 'Translation' }) })
+    expect(added.project.captionTracks.map((entry) => entry.id)).toEqual(['C1', 'C2'])
+    expect(run(added.project, { type: 'caption-track-reorder', trackId: 'C2', direction: 'back' }).project.captionTracks.map((entry) => entry.id)).toEqual(['C2', 'C1'])
+    expect(run(added.project, { type: 'caption-track-update', trackId: 'C2', changes: { name: '  Malayalam  ', locked: true } }).project.captionTracks[1]).toMatchObject({ name: 'Malayalam', locked: true })
+    expect(run(added.project, { type: 'caption-track-remove', trackId: 'C2' }).project.captionTracks.map((entry) => entry.id)).toEqual(['C1'])
+  })
+
+  it('moves a caption onto a different caption track, refusing a locked source or destination', () => {
+    const captionTrack = (id: string, extra: Partial<{ name: string; locked: boolean }> = {}) => ({ id, name: '', locked: false, ...extra })
+    const base = project({ captionTracks: [captionTrack('C1'), captionTrack('C2', { locked: true })], cues: [cue('cue-a', { captionTrackId: 'C1' })] })
+    expect(run(base, { type: 'caption-track-move-cue', cueId: 'cue-a', trackId: 'C1' }).project.cues[0].captionTrackId).toBe('C1')
+    expect(refuse(base, { type: 'caption-track-move-cue', cueId: 'cue-a', trackId: 'C2' })).toMatch(/locked/)
+    const lockedSource = project({ captionTracks: [captionTrack('C1', { locked: true }), captionTrack('C2')], cues: [cue('cue-a', { captionTrackId: 'C1' })] })
+    expect(refuse(lockedSource, { type: 'caption-track-move-cue', cueId: 'cue-a', trackId: 'C2' })).toMatch(/locked/)
+  })
+
   it('removes silence per video, rippling only the tracks that play it, and restores it back', () => {
     const base = project({ clips: [video('a', 'V1', 0, 0, 20 * US), video('b', 'V1', 20 * US, 0, 10 * US, 'y'), image('i', 'V2', 12 * US, US)] })
     const trimmed = run(base, { type: 'clips-set', keptByAsset: [{ assetId: 'x', ranges: [{ startUs: 0, endUs: 2 * US }, { startUs: 5 * US, endUs: 8 * US }] }], idPrefix: 'k' })
@@ -161,12 +182,83 @@ describe('item commands', () => {
   })
 
   it('adds, updates and deletes sequence-timed blur regions', () => {
-    const region = { id: 'b1', startUs: 0, endUs: US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 8 }
+    const region = { id: 'b1', startUs: 0, endUs: US, rect: { x: 0, y: 0, width: 100, height: 100 }, radius: 8, enabled: true }
     const added = run(project(), { type: 'blur-add', region })
     expect(added.selection).toEqual({ kind: 'blur', id: 'b1' })
     const moved = run(added.project, { type: 'blur-update', blurId: 'b1', changes: { startUs: US, endUs: 2 * US } })
     expect(moved.project.blurRegions[0]).toMatchObject({ startUs: US, endUs: 2 * US })
     expect(run(moved.project, { type: 'blur-delete', blurId: 'b1' }).project.blurRegions).toEqual([])
+  })
+
+  it('adds, moves, trims, updates and deletes zoom regions, keeping the one lane sorted', () => {
+    const rect = { x: 100, y: 100, width: 800, height: 450 }
+    const region = { id: 'z1', startUs: US, endUs: 2 * US, rect, easeInUs: 500_000, easeOutUs: 500_000, enabled: true }
+    const added = run(project(), { type: 'zoom-region-add', region })
+    expect(added.selection).toEqual({ kind: 'zoomRegion', id: 'z1' })
+    expect(added.project.zoomRegions).toEqual([region])
+
+    const moved = run(added.project, { type: 'zoom-region-move', zoomId: 'z1', startUs: 3 * US })
+    expect(moved.project.zoomRegions[0]).toMatchObject({ startUs: 3 * US, endUs: 4 * US })
+
+    const trimmed = run(moved.project, { type: 'zoom-region-trim', zoomId: 'z1', edge: 'end', deltaUs: US })
+    expect(trimmed.project.zoomRegions[0]).toMatchObject({ startUs: 3 * US, endUs: 5 * US })
+
+    const restyled = run(trimmed.project, { type: 'zoom-region-update', zoomId: 'z1', changes: { easeInUs: 0 } })
+    expect(restyled.project.zoomRegions[0]).toMatchObject({ easeInUs: 0, easeOutUs: 500_000 })
+    expect(restyled.selection).toEqual({ kind: 'zoomRegion', id: 'z1' })
+
+    expect(run(restyled.project, { type: 'zoom-region-delete', zoomId: 'z1' }).project.zoomRegions).toEqual([])
+  })
+
+  it('clamps a second zoom region into the gap beside the first rather than overlapping it', () => {
+    const rect = { x: 0, y: 0, width: 800, height: 450 }
+    const first = run(project(), { type: 'zoom-region-add', region: { id: 'z1', startUs: 0, endUs: 2 * US, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    // Requested to start inside z1 and run past it; clamped to the free gap starting at z1's end.
+    const second = run(first.project, { type: 'zoom-region-add', region: { id: 'z2', startUs: US, endUs: 3 * US, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    expect(second.project.zoomRegions.map((region) => region.id)).toEqual(['z1', 'z2'])
+    expect(second.project.zoomRegions[1].startUs).toBeGreaterThanOrEqual(2 * US)
+    expect(second.project.zoomRegions[1].startUs).toBeLessThan(second.project.zoomRegions[1].endUs)
+  })
+
+  it('refuses a zoom region dropped into a gap too thin to hold the minimum region length', () => {
+    const rect = { x: 0, y: 0, width: 800, height: 450 }
+    const first = run(project(), { type: 'zoom-region-add', region: { id: 'z1', startUs: 0, endUs: 300_000, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    // z1 ends at 300_000, z2 starts at 300_100: a 100µs sliver, well under MIN_ZOOM_REGION_US.
+    const second = run(first.project, { type: 'zoom-region-add', region: { id: 'z2', startUs: 300_100, endUs: 600_000, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    refuse(second.project, { type: 'zoom-region-add', region: { id: 'z3', startUs: 300_020, endUs: 300_080, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+  })
+
+  it('adds, moves, trims, updates and deletes a frame-paint effect, one lane per kind', () => {
+    const effect = { id: 'e1', kind: 'vignette' as const, startUs: US, endUs: 2 * US, enabled: true, amount: .5, softness: .5 }
+    const added = run(project(), { type: 'effect-add', effect })
+    expect(added.selection).toEqual({ kind: 'effect', id: 'e1' })
+    expect(added.project.effects).toEqual([effect])
+
+    const moved = run(added.project, { type: 'effect-move', effectId: 'e1', startUs: 3 * US })
+    expect(moved.project.effects[0]).toMatchObject({ startUs: 3 * US, endUs: 4 * US })
+
+    const trimmed = run(moved.project, { type: 'effect-trim', effectId: 'e1', edge: 'end', deltaUs: US })
+    expect(trimmed.project.effects[0]).toMatchObject({ startUs: 3 * US, endUs: 5 * US })
+
+    const restyled = run(trimmed.project, { type: 'effect-update', effectId: 'e1', changes: { amount: .8 } })
+    expect(restyled.project.effects[0]).toMatchObject({ amount: .8, softness: .5 })
+    expect(restyled.selection).toEqual({ kind: 'effect', id: 'e1' })
+
+    expect(run(restyled.project, { type: 'effect-delete', effectId: 'e1' }).project.effects).toEqual([])
+  })
+
+  it('clamps a second effect of the same kind into the gap beside the first rather than overlapping it', () => {
+    const first = run(project(), { type: 'effect-add', effect: { id: 'e1', kind: 'vignette', startUs: 0, endUs: 2 * US, enabled: true, amount: .5, softness: .5 } })
+    // Requested to start inside e1 and run past it; clamped to the free gap starting at e1's end.
+    const second = run(first.project, { type: 'effect-add', effect: { id: 'e2', kind: 'vignette', startUs: US, endUs: 3 * US, enabled: true, amount: .5, softness: .5 } })
+    expect(second.project.effects.map((effect) => effect.id)).toEqual(['e1', 'e2'])
+    expect(second.project.effects[1].startUs).toBeGreaterThanOrEqual(2 * US)
+  })
+
+  it('lets a different-kind effect freely overlap, since each kind has its own lane', () => {
+    const withVignette = run(project(), { type: 'effect-add', effect: { id: 'e1', kind: 'vignette', startUs: 0, endUs: 2 * US, enabled: true, amount: .5, softness: .5 } })
+    const withLetterbox = run(withVignette.project, { type: 'effect-add', effect: { id: 'e2', kind: 'letterbox', startUs: 0, endUs: 2 * US, enabled: true, aspect: 2.39, color: '#000000', easeInUs: 0, easeOutUs: 0 } })
+    expect(withLetterbox.project.effects.map((effect) => [effect.id, effect.startUs, effect.endUs])).toEqual([['e1', 0, 2 * US], ['e2', 0, 2 * US]])
   })
 
   it('adds, updates and deletes ruler markers, keeping them sorted by time', () => {
@@ -179,5 +271,22 @@ describe('item commands', () => {
     const deleted = run(renamed.project, { type: 'marker-delete', markerId: 'm1' })
     expect(deleted.project.markers.map((marker) => marker.id)).toEqual(['m2'])
     expect(refuse(deleted.project, { type: 'marker-delete', markerId: 'm1' })).toMatch(/no longer exists/)
+  })
+
+  it('edits authored text independently, permits overlap, clamps boundaries, and preserves selection through undoable steps', () => {
+    const base = project({ textOverlays: [] })
+    const first = run(base, { type: 'text-add', overlay: defaultTextOverlay('t1', 2 * US, 5 * US, 'Apple iPhone') })
+    expect(first.selection).toEqual({ kind: 'text', id: 't1' })
+    const overlapping = run(first.project, { type: 'text-add', overlay: defaultTextOverlay('t2', 3 * US, 6 * US, 'iPhone') })
+    const duplicated = run(overlapping.project, { type: 'text-duplicate', textId: 't1', duplicateId: 't3' })
+    expect(duplicated.project.textOverlays).toHaveLength(3)
+    const styled = run(duplicated.project, { type: 'text-update', textId: 't3', changes: { text: 'White Card' } })
+    expect(styled.project.cues).toEqual(base.cues)
+    const deleted = run(styled.project, { type: 'text-delete', textId: 't3' })
+    expect(deleted.project.textOverlays).toHaveLength(2)
+    const moved = run(overlapping.project, { type: 'text-move', textId: 't1', startUs: 19 * US })
+    expect(moved.project.textOverlays.find((item) => item.id === 't1')).toMatchObject({ startUs: 17 * US, endUs: 20 * US })
+    const trimmed = run(moved.project, { type: 'text-trim', textId: 't1', edge: 'start', deltaUs: -100 * US })
+    expect(trimmed.project.textOverlays.find((item) => item.id === 't1')?.startUs).toBe(0)
   })
 })

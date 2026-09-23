@@ -43,6 +43,32 @@ it('validates all template styles and migrates older saved appearances with safe
   expect(captionStyleSchema.parse({ motion: 'static-clean', appearance: legacy }).appearance).toMatchObject({ emphasisFontFamily: '', emphasisMotion: 'pop' })
 })
 
+it('defines Malayalam Gold as a stable two-line outlined phrase-fade style', () => {
+  const gold = CAPTION_TEMPLATES.find((template) => template.id === 'malayalam-gold')!
+  expect(gold.style).toMatchObject({ motion: 'phrase-fade', appearance: {
+    fontFamily: 'Anek Malayalam', fontSize: 92, fontWeight: 900, lineHeight: 1.05, letterSpacing: -2, maxLines: 2,
+    gradientEnabled: true, gradientFrom: '#FFF12A', gradientTo: '#FFD228', gradientAngle: 180,
+    strokeEnabled: true, outlineColor: '#E93C13', outlineWidth: 8,
+    depthEnabled: true, depthColor: '#C52408', depthAmount: 8,
+    shadowEnabled: true, shadowColor: '#380900', shadowBlur: 0, shadowOffset: 9,
+    backgroundEnabled: false, emphasisMotion: 'none',
+  } })
+})
+
+it('keeps mixed Malayalam and English shaping intact while painting Malayalam Gold effects', () => {
+  const gold = CAPTION_TEMPLATES.find((template) => template.id === 'malayalam-gold')!
+  const inputs = captionStyleInputs(gold.style, { width: 1080, height: 1920 })
+  inputs.font.readiness = 'ready'
+  const cue = { text: 'മലയാളം Gold ടൈറ്റിൽ', startUs: 0, endUs: 3_000_000 }
+  const layout = layoutCaption(cue.text, inputs, measure)
+  const html = renderToStaticMarkup(<CaptionView frame={captionFrame(layout, cue, 1_500_000, gold.style.motion)} />)
+  expect(layout.lines.map((line) => line.text).join('')).toContain(cue.text)
+  expect(html).toContain('linear-gradient(180deg, #FFF12A, #FFD228)')
+  expect(html).toContain('-webkit-text-stroke:8px #E93C13')
+  expect(html).toContain('#C52408')
+  expect(html).toContain('#380900')
+})
+
 it('renders an emphasized word at its scaled font-size, with its own glow shadow and underline, leaving non-emphasized runs unchanged', () => {
   const style = { ...DEFAULT_CAPTION_STYLE, appearance: { ...DEFAULT_CAPTION_STYLE.appearance,
     emphasisScale: 1.5, emphasisGlowEnabled: true, emphasisGlowColor: '#ff00ff', emphasisUnderline: true } }

@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { cueSchema } from './model'
-import { blurRegionSchema, clipSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, compositionRectSchema } from './edit'
-import { captionStyleSchema, motionSchema, motionSpeedSchema } from '../captions/style'
+import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema } from './edit'
+import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import type { EditCommand } from './commands'
 
@@ -56,6 +56,16 @@ const setMotionOverride = z.strictObject({
   override: z.strictObject({ motion: motionSchema.optional(), motionSpeed: motionSpeedSchema.optional() }).optional(),
 })
 const resetMotionOverrides = z.strictObject({ type: z.literal('reset-motion-overrides') })
+const setPlacementOverride = z.strictObject({
+  type: z.literal('set-placement-override'), cueId: itemId,
+  override: z.strictObject({
+    horizontal: captionAppearanceSchema.shape.horizontal.optional(),
+    vertical: captionAppearanceSchema.shape.vertical.optional(),
+    fontSize: captionAppearanceSchema.shape.fontSize.optional(),
+    rotation: captionAppearanceSchema.shape.rotation.optional(),
+  }).optional(),
+})
+const resetPlacementOverrides = z.strictObject({ type: z.literal('reset-placement-overrides') })
 const lineBreakBeforeWord = z.strictObject({ type: z.literal('line-break-before-word'), cueId: itemId, target: wordTarget })
 const splitBeforeWord = z.strictObject({ type: z.literal('split-before-word'), cueId: itemId, wordId: z.string().min(1), rightCueId: itemId })
 const moveFromWordToNext = z.strictObject({ type: z.literal('move-from-word-to-next'), cueId: itemId, wordId: z.string().min(1) })
@@ -64,7 +74,7 @@ const moveThroughWordToPrevious = z.strictObject({ type: z.literal('move-through
 export const captionCommandSchema = z.discriminatedUnion('type', [
   toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, deleteCue, deleteWord, split, mergeNext,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
-  resetMotionOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
+  resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
 ])
 
 // ---------------------------------------------------------------------------------------------
@@ -89,6 +99,19 @@ const trackUpdate = z.strictObject({ type: z.literal('track-update'), trackId: i
 const trackReorder = z.strictObject({ type: z.literal('track-reorder'), trackId: itemId, direction: z.enum(['forward', 'backward', 'front', 'back']) })
 
 export const trackCommandSchema = z.discriminatedUnion('type', [trackAdd, trackRemove, trackUpdate, trackReorder])
+
+// ---------------------------------------------------------------------------------------------
+// CaptionTrackCommand (captionTrackCommands.ts)
+// ---------------------------------------------------------------------------------------------
+
+const captionTrackFlags = captionTrackSchema.pick({ name: true, locked: true }).partial()
+const captionTrackAdd = z.strictObject({ type: z.literal('caption-track-add'), track: captionTrackSchema, index: z.number().int().nonnegative().optional() })
+const captionTrackRemove = z.strictObject({ type: z.literal('caption-track-remove'), trackId: itemId })
+const captionTrackUpdate = z.strictObject({ type: z.literal('caption-track-update'), trackId: itemId, changes: captionTrackFlags })
+const captionTrackReorder = z.strictObject({ type: z.literal('caption-track-reorder'), trackId: itemId, direction: z.enum(['forward', 'backward', 'front', 'back']) })
+const captionTrackMoveCue = z.strictObject({ type: z.literal('caption-track-move-cue'), cueId: itemId, trackId: itemId })
+
+export const captionTrackCommandSchema = z.discriminatedUnion('type', [captionTrackAdd, captionTrackRemove, captionTrackUpdate, captionTrackReorder, captionTrackMoveCue])
 
 // ---------------------------------------------------------------------------------------------
 // ClipCommand (clipCommands.ts)
@@ -127,16 +150,63 @@ const blurChanges = z.strictObject({
   endUs: z.number().int().positive().optional(),
   rect: compositionRectSchema.optional(),
   radius: z.number().finite().min(1).max(100).optional(),
+  enabled: z.boolean().optional(),
 })
 const blurAdd = z.strictObject({ type: z.literal('blur-add'), region: blurRegionSchema })
 const blurUpdate = z.strictObject({ type: z.literal('blur-update'), blurId: itemId, changes: blurChanges })
 const blurDelete = z.strictObject({ type: z.literal('blur-delete'), blurId: itemId })
+
+/** `zoomRegionSchema` carries a top-level `.refine()` (end after start) like blur, so the change set
+ * is spelled out; timing changes go through `zoom-region-move`/`zoom-region-trim` instead. */
+const zoomRegionChanges = z.strictObject({
+  rect: compositionRectSchema.optional(),
+  easeInUs: z.number().int().nonnegative().max(5_000_000).optional(),
+  easeOutUs: z.number().int().nonnegative().max(5_000_000).optional(),
+  enabled: z.boolean().optional(),
+})
+const zoomRegionAdd = z.strictObject({ type: z.literal('zoom-region-add'), region: zoomRegionSchema })
+const zoomRegionMove = z.strictObject({ type: z.literal('zoom-region-move'), zoomId: itemId, startUs: z.number().int().nonnegative() })
+const zoomRegionTrim = z.strictObject({ type: z.literal('zoom-region-trim'), zoomId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int() })
+const zoomRegionUpdate = z.strictObject({ type: z.literal('zoom-region-update'), zoomId: itemId, changes: zoomRegionChanges })
+const zoomRegionDelete = z.strictObject({ type: z.literal('zoom-region-delete'), zoomId: itemId })
+
+export const zoomRegionCommandSchema = z.discriminatedUnion('type', [zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete])
+
+/** `effectRegionSchema` carries a top-level `.refine()` per kind like blur/zoom, so the change set
+ * is spelled out per kind (a plain, non-discriminated union — a caller's `changes` object always
+ * matches exactly one kind's shape by which fields it sets); timing goes through
+ * `effect-move`/`effect-trim` instead. */
+const effectHexColor = z.string().regex(/^#[\da-fA-F]{6}$/)
+const effectEaseUs = z.number().int().nonnegative().max(5_000_000)
+const vignetteChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), softness: z.number().finite().min(0).max(1).optional(), enabled: z.boolean().optional() })
+const letterboxChanges = z.strictObject({ aspect: z.number().finite().min(0.2).max(5).optional(), color: effectHexColor.optional(), easeInUs: effectEaseUs.optional(), easeOutUs: effectEaseUs.optional(), enabled: z.boolean().optional() })
+const fadeChanges = z.strictObject({ shape: z.enum(['in', 'out', 'dip']).optional(), color: effectHexColor.optional(), easeInUs: effectEaseUs.optional(), easeOutUs: effectEaseUs.optional(), enabled: z.boolean().optional() })
+const effectChanges = z.union([vignetteChanges, letterboxChanges, fadeChanges])
+const effectAdd = z.strictObject({ type: z.literal('effect-add'), effect: effectRegionSchema })
+const effectMove = z.strictObject({ type: z.literal('effect-move'), effectId: itemId, startUs: z.number().int().nonnegative() })
+const effectTrim = z.strictObject({ type: z.literal('effect-trim'), effectId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int() })
+const effectUpdate = z.strictObject({ type: z.literal('effect-update'), effectId: itemId, changes: effectChanges })
+const effectDelete = z.strictObject({ type: z.literal('effect-delete'), effectId: itemId })
+
+export const effectCommandSchema = z.discriminatedUnion('type', [effectAdd, effectMove, effectTrim, effectUpdate, effectDelete])
 
 /** `markerSchema` has no top-level `.refine()`, so `.omit()` works directly here. */
 const markerChanges = markerSchema.omit({ id: true }).partial()
 const markerAdd = z.strictObject({ type: z.literal('marker-add'), marker: markerSchema })
 const markerUpdate = z.strictObject({ type: z.literal('marker-update'), markerId: itemId, changes: markerChanges })
 const markerDelete = z.strictObject({ type: z.literal('marker-delete'), markerId: itemId })
+const textChanges = z.strictObject({
+  text: textOverlaySchema.shape.text.optional(), style: captionStyleSchema.optional(),
+  enter: textOverlaySchema.shape.enter.optional(), exit: textOverlaySchema.shape.exit.optional(),
+  layerOrder: textOverlaySchema.shape.layerOrder.optional(),
+})
+const textAdd = z.strictObject({ type: z.literal('text-add'), overlay: textOverlaySchema })
+const textUpdate = z.strictObject({ type: z.literal('text-update'), textId: itemId, changes: textChanges })
+const textMove = z.strictObject({ type: z.literal('text-move'), textId: itemId, startUs: z.number().int().nonnegative() })
+const textTrim = z.strictObject({ type: z.literal('text-trim'), textId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int() })
+const textDuplicate = z.strictObject({ type: z.literal('text-duplicate'), textId: itemId, duplicateId: itemId })
+const textDelete = z.strictObject({ type: z.literal('text-delete'), textId: itemId })
+const textReorder = z.strictObject({ type: z.literal('text-reorder'), textId: itemId, direction: z.enum(['forward', 'backward', 'above-captions', 'below-captions']) })
 
 export const clipCommandSchema = z.discriminatedUnion('type', [
   clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
@@ -149,8 +219,12 @@ export const clipCommandSchema = z.discriminatedUnion('type', [
 
 export const itemCommandSchema = z.discriminatedUnion('type', [
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,
+  captionTrackAdd, captionTrackRemove, captionTrackUpdate, captionTrackReorder, captionTrackMoveCue,
   clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
-  blurAdd, blurUpdate, blurDelete, markerAdd, markerUpdate, markerDelete,
+  blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
+  effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  markerAdd, markerUpdate, markerDelete,
 ])
 
 /** Every `CaptionCommand`/`ItemCommand` variant, keyed by `type` — the schema `edit`'s MCP tool
@@ -160,10 +234,14 @@ export const itemCommandSchema = z.discriminatedUnion('type', [
 export const editCommandSchema = z.discriminatedUnion('type', [
   toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, deleteCue, deleteWord, split, mergeNext,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
-  resetMotionOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
+  resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,
+  captionTrackAdd, captionTrackRemove, captionTrackUpdate, captionTrackReorder, captionTrackMoveCue,
   clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
-  blurAdd, blurUpdate, blurDelete, markerAdd, markerUpdate, markerDelete,
+  blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
+  effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  markerAdd, markerUpdate, markerDelete,
 ])
 
 export type EditCommandInput = z.infer<typeof editCommandSchema>

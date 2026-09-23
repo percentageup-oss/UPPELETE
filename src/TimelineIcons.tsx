@@ -23,3 +23,17 @@ export const CaptionsIcon = (props: IconProps) => <Icon {...props}><path d="M6 3
 export const VideoIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="4" width="8" height="8" rx="1.5" /><path d="m10 7 4-2v6l-4-2" /></Icon>
 export const AudioIcon = (props: IconProps) => <Icon {...props}><path d="M2 8h1.5M5 5v6M8 3v10M11 5v6M13.5 8H15" /></Icon>
 export const GripIcon = (props: IconProps) => <Icon {...props}><path d="M5 6h.01M8 6h.01M11 6h.01M5 10h.01M8 10h.01M11 10h.01" strokeWidth="2" /></Icon>
+/** A magnifying glass framing a rect — the zoom lane's target region, not the timeline-zoom control
+ * above (`ZoomInIcon`/`ZoomOutIcon`), which share the same glass but never frame anything. */
+export const ZoomRegionIcon = (props: IconProps) => <Icon {...props}><circle cx="6.5" cy="6.5" r="4" /><rect x="4.5" y="4.5" width="4" height="4" rx=".5" /><path d="m9.7 9.7 3.3 3.3" /></Icon>
+/** Blur tiles: a dashed target rect (area) or the full frame (frame), both with a soft dotted fill
+ * suggesting a Gaussian blur, distinct from the crosshair glass the zoom icons above use. */
+export const BlurAreaIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" strokeDasharray="2 1.5" opacity=".55" /><rect x="5" y="5" width="6" height="6" rx="1" /><circle cx="8" cy="8" r=".4" fill="currentColor" stroke="none" /><circle cx="6.3" cy="9.7" r=".4" fill="currentColor" stroke="none" /><circle cx="9.7" cy="6.3" r=".4" fill="currentColor" stroke="none" /></Icon>
+export const BlurFrameIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" /><circle cx="5.5" cy="5.5" r=".4" fill="currentColor" stroke="none" /><circle cx="10.5" cy="5.5" r=".4" fill="currentColor" stroke="none" /><circle cx="5.5" cy="10.5" r=".4" fill="currentColor" stroke="none" /><circle cx="10.5" cy="10.5" r=".4" fill="currentColor" stroke="none" /><circle cx="8" cy="8" r=".4" fill="currentColor" stroke="none" /></Icon>
+/** Frame-paint effects (docs/EDITING.md "Frame-paint effects"): painted by the shared caption/
+ * overlay host layer, never an FFmpeg filter — a distinct visual family from the zoom glass and the
+ * blur dots above. */
+export const VignetteIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" opacity=".4" /><circle cx="8" cy="8" r="3.5" /></Icon>
+export const LetterboxIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" opacity=".4" /><rect x="2" y="5.5" width="12" height="5" fill="currentColor" stroke="none" /></Icon>
+export const FadeIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" /><path d="M2 8a6 6 0 0 1 12 0" fill="currentColor" stroke="none" opacity=".6" /></Icon>
+export const FlashIcon = (props: IconProps) => <Icon {...props}><path d="M9 2 4 9h3.2L7 14l5-7H8.8L9 2Z" /></Icon>

@@ -7,24 +7,34 @@ import type { CommandContext, CommandResult, ValidationIssue } from './captionCo
 import { issue, isItemFailure } from './itemStep'
 import { applyAssetCommand, type AssetCommand } from './assetCommands'
 import { applyTrackCommand, type TrackCommand } from './trackCommands'
+import { applyCaptionTrackCommand, type CaptionTrackCommand } from './captionTrackCommands'
 import { applyClipCommand, type ClipCommand } from './clipCommands'
+import { applyZoomRegionCommand, type ZoomRegionCommand } from './zoomRegionCommands'
+import { applyEffectCommand, type EffectCommand } from './effectCommands'
+import { applyTextCommand, type TextCommand } from './textCommands'
 
 /**
  * The second command union, beside `CaptionCommand`. It shares `CommandResult`/`ValidationIssue`
  * with caption editing and produces a whole new project, so `history.ts`'s project snapshots give
  * every item the same undo/redo captions already have (docs/EDITING.md). The verbs live in
- * `assetCommands.ts`, `trackCommands.ts` and `clipCommands.ts`; this module owns the union, the
- * shared validation and the one epilogue every item command runs through.
+ * `assetCommands.ts`, `trackCommands.ts`, `captionTrackCommands.ts`, `clipCommands.ts` and
+ * `zoomRegionCommands.ts`; this module owns the union, the shared validation and the one epilogue
+ * every item command runs through.
  */
-export type ItemCommand = AssetCommand | TrackCommand | ClipCommand
-export type { AssetCommand, TrackCommand, ClipCommand, ClipEdge, EditMode }
+export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand
+export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, ClipEdge, EditMode }
 export type { BlurRegion, Clip, ClipKind, ProjectAsset, SequenceFormat, TimeRange, Track }
 
 export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<ItemCommand['type']>([
   'asset-add', 'asset-remove', 'asset-update',
   'track-add', 'track-remove', 'track-update', 'track-reorder',
+  'caption-track-add', 'caption-track-remove', 'caption-track-update', 'caption-track-reorder', 'caption-track-move-cue',
   'clip-add', 'clip-move', 'clip-trim', 'clip-update', 'clip-split', 'clip-delete', 'gap-close', 'clips-set', 'clips-restore', 'format-set',
-  'blur-add', 'blur-update', 'blur-delete', 'marker-add', 'marker-update', 'marker-delete',
+  'blur-add', 'blur-update', 'blur-delete',
+  'zoom-region-add', 'zoom-region-move', 'zoom-region-trim', 'zoom-region-update', 'zoom-region-delete',
+  'effect-add', 'effect-move', 'effect-trim', 'effect-update', 'effect-delete',
+  'text-add', 'text-update', 'text-move', 'text-trim', 'text-duplicate', 'text-delete', 'text-reorder',
+  'marker-add', 'marker-update', 'marker-delete',
 ])
 
 function rectOutsideHeight(rect: CompositionRect, compositionHeight: number | null | undefined): boolean {
@@ -73,12 +83,40 @@ export function validateItems(project: CaptionProject, context: CommandContext =
     }
     checkRect(region.id, region.rect, 'A blur region')
   }
+  // A rect of a different aspect than the output would make the export's FFmpeg crop distort the
+  // picture — a warning, like the height bound above, since a later format change must never make
+  // a saved project unloadable.
+  const targetAspect = context.compositionHeight ? COMPOSITION_WIDTH / context.compositionHeight : null
+  for (const region of project.zoomRegions) {
+    if (!Number.isSafeInteger(region.startUs) || !Number.isSafeInteger(region.endUs) || region.startUs < 0 || region.endUs <= region.startUs) {
+      errors.push(issue('invalid-duration', [region.id], 'A zoom region must end after its non-negative start.'))
+    }
+    if (!Number.isSafeInteger(region.easeInUs) || region.easeInUs < 0 || !Number.isSafeInteger(region.easeOutUs) || region.easeOutUs < 0) {
+      errors.push(issue('invalid-duration', [region.id], 'A zoom region’s ease-in/out must be zero or positive.'))
+    }
+    checkRect(region.id, region.rect, 'A zoom region')
+    if (targetAspect !== null) {
+      const rectAspect = region.rect.width / region.rect.height
+      if (Math.abs(rectAspect - targetAspect) > targetAspect * 0.02) {
+        warnings.push(issue('rect-bounds', [region.id], 'A zoom region’s target framing should match the output aspect ratio, or the export will letterbox or distort it.'))
+      }
+    }
+  }
+  for (const effect of project.effects) {
+    if (!Number.isSafeInteger(effect.startUs) || !Number.isSafeInteger(effect.endUs) || effect.startUs < 0 || effect.endUs <= effect.startUs) {
+      errors.push(issue('invalid-duration', [effect.id], 'An effect must end after its non-negative start.'))
+    }
+  }
   return { errors, warnings }
 }
 
 export function applyItemCommand(project: CaptionProject, command: ItemCommand, context: CommandContext = {}): CommandResult {
-  const step = command.type.startsWith('asset-') ? applyAssetCommand(project, command as AssetCommand, context)
+  const step = command.type.startsWith('text-') ? applyTextCommand(project, command as TextCommand)
+    : command.type.startsWith('asset-') ? applyAssetCommand(project, command as AssetCommand, context)
+    : command.type.startsWith('caption-track-') ? applyCaptionTrackCommand(project, command as CaptionTrackCommand)
     : command.type.startsWith('track-') ? applyTrackCommand(project, command as TrackCommand)
+    : command.type.startsWith('zoom-region-') ? applyZoomRegionCommand(project, command as ZoomRegionCommand)
+    : command.type.startsWith('effect-') ? applyEffectCommand(project, command as EffectCommand)
     : applyClipCommand(project, command as ClipCommand, context)
   if (isItemFailure(step)) return step
 

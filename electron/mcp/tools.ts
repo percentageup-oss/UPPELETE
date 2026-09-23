@@ -52,7 +52,7 @@ const cueTarget = z.strictObject({ startUs: z.number().int().nonnegative(), endU
 export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('get_project', {
     title: 'Get project',
-    description: 'Overview of the open Caption Studio project: title, output format, assets, tracks, clips, blur regions, caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
+    description: 'Overview of the open Caption Studio project: title, output format, assets, tracks, clips, blur regions, frame-paint effects (vignette/letterbox/fade), caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'get-state' }, stateOf))
 
@@ -70,7 +70,7 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
 
   server.registerTool('edit', {
     title: 'Edit',
-    description: 'Applies one or more editing commands as a SINGLE undo step — nothing commits if any command fails, and the failing index is returned so you can fix and retry. This is the same command set the UI itself uses (captions, assets, tracks, clips, blur regions, markers): see `get_project`/`get_captions` for current ids, and `list_style_options` for style fields. Composition is 1080 units wide by 1080/aspect tall.',
+    description: 'Applies one or more editing commands as a SINGLE undo step — nothing commits if any command fails, and the failing index is returned so you can fix and retry. This is the same command set the UI itself uses (captions, assets, tracks, clips, blur regions, frame-paint effects, markers): see `get_project`/`get_captions` for current ids, and `list_style_options` for style fields. Composition is 1080 units wide by 1080/aspect tall.',
     inputSchema: { commands: z.array(editCommandSchema).min(1).max(200) },
   }, async ({ commands }) => relay(deps, { id: randomUUID(), kind: 'run-commands', commands }, outcomesOf))
 
@@ -82,9 +82,9 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
 
   server.registerTool('select', {
     title: 'Select',
-    description: 'Selects a caption, clip, blur region or marker (or clears the selection with a null id), highlighting it in the editor.',
+    description: 'Selects a caption, clip, blur region, frame-paint effect or marker (or clears the selection with a null id), highlighting it in the editor.',
     inputSchema: {
-      kind: z.enum(['cue', 'clip', 'blur', 'marker']).nullable(),
+      kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'marker']).nullable(),
       id: z.string().min(1).nullable(),
     },
   }, async ({ kind, id }) => relay(deps, { id: randomUUID(), kind: 'select', selection: kind && id ? { kind, id } : null }, stateOf))

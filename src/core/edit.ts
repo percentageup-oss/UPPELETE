@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { projectMediaSchema, rationalSchema } from './media'
+import { captionStyleSchema } from '../captions/style'
 
 /**
  * Composition space (docs/EDITING.md): a fixed 1080-unit-wide canvas whose height is
@@ -62,6 +63,22 @@ export const trackSchema = z.strictObject({
 })
 
 /**
+ * One caption lane (docs/EDITING.md "Schema 6"): an organizational track cues can be grouped and
+ * reordered onto, and locked against edits. `project.captionTracks` is ordered back to front like
+ * `project.tracks`. Cues reference one by `cue.captionTrackId`. Deliberately no `hidden` yet:
+ * preview and export do not yet pick one cue per visible caption track the way they already do for
+ * stacked video (`activeCueAt` still finds the first time-matching cue across every caption track,
+ * unchanged) — a `hidden` flag here would look like it removes a track from the output without
+ * doing so. It lands with that slice instead.
+ */
+export const captionTrackSchema = z.strictObject({
+  id: itemId,
+  /** Empty derives `C1`/`C2` from the track's position, the same way a video/audio track's does. */
+  name: z.string().max(120).default(''),
+  locked: z.boolean().default(false),
+})
+
+/**
  * Every clip sits at an **absolute** sequence position, so gaps are allowed and array order carries
  * no information. There is deliberately no `rate`/speed field: a clip's timeline length is always
  * `sourceEndUs - sourceStartUs`, which is what keeps every source↔sequence mapping a pure
@@ -115,14 +132,93 @@ export const markerSchema = z.strictObject({
   color: z.string().regex(/^#[\da-fA-F]{6}$/).optional(),
 })
 
-/** An effect over the composited program: sequence-timed, with no asset, source or in point. */
+export const textAnimationSchema = z.strictObject({
+  kind: z.enum(['none', 'fade', 'pop', 'slide']),
+  durationUs: z.number().int().nonnegative().max(5_000_000).default(250_000),
+  direction: z.enum(['left', 'right', 'up', 'down']).optional(),
+}).superRefine((animation, context) => {
+  if (animation.kind === 'slide' && !animation.direction) context.addIssue({ code: 'custom', path: ['direction'], message: 'Slide animation needs a direction.' })
+})
+export const textOverlaySchema = z.strictObject({
+  id: itemId,
+  text: z.string().trim().min(1).max(16000),
+  startUs: sourceUs,
+  endUs: positiveUs,
+  style: captionStyleSchema,
+  enter: textAnimationSchema,
+  exit: textAnimationSchema,
+  /** Negative values paint below captions; positive values paint above them. */
+  layerOrder: z.number().int().min(-10000).max(10000).default(1),
+}).refine((overlay) => overlay.endUs > overlay.startUs, 'Text end must follow its start')
+
+/** An effect over the composited program: sequence-timed, with no asset, source or in point.
+ * `enabled` (schema 8) bypasses the effect without deleting it: preview and export both skip a
+ * disabled region, but it keeps its place in the lane and still counts toward the non-overlap rule. */
 export const blurRegionSchema = z.strictObject({
   id: itemId,
   ...timeRange,
   rect: compositionRectSchema,
   /** Gaussian sigma in composition units; CSS `blur(r)` is Gaussian with σ = r, matching `gblur`. */
   radius: z.number().finite().min(1).max(100),
+  enabled: z.boolean().default(true),
 }).refine(endAfterStart, 'Blur region end must follow its start')
+
+/**
+ * A camera move over the composited program (docs/EDITING.md "Zoom regions"): sequence-timed, with
+ * no asset, source or in point — the same shape as `blurRegionSchema`. `rect` is the target framing
+ * in composition units; the picture eases from the full frame into it over `easeInUs`, holds, and
+ * eases back out over `easeOutUs`. Deliberately one static target rather than keyframed `from`/`to`
+ * rects: one rect is one gizmo drag, and it covers both "zoom in and hold" and "start tight, pull
+ * out" (`easeInUs: 0`). Only the video picture zooms — captions and host-painted overlays stay
+ * pinned to the output frame, which is what keeps export's frame-signature dedup (layerPlan.ts)
+ * untouched by this feature. `enabled` (schema 8) bypasses the zoom the same way as blur, above.
+ */
+export const zoomRegionSchema = z.strictObject({
+  id: itemId,
+  ...timeRange,
+  rect: compositionRectSchema,
+  easeInUs: z.number().int().nonnegative().max(5_000_000).default(500_000),
+  easeOutUs: z.number().int().nonnegative().max(5_000_000).default(500_000),
+  enabled: z.boolean().default(true),
+}).refine(endAfterStart, 'Zoom region end must follow its start')
+
+const hexColor = z.string().regex(/^#[\da-fA-F]{6}$/)
+const easeUs = z.number().int().nonnegative().max(5_000_000)
+
+/**
+ * Frame-paint effects (docs/EDITING.md "Frame-paint effects"): sequence-timed, with no asset,
+ * source or in point — the same shape blur and zoom regions use — but painted by the shared React
+ * caption/overlay host layer (`CompositionLayers.tsx`) in both preview and export rather than by an
+ * FFmpeg filter, so parity is exact by construction instead of a measured tolerance. Vignette and
+ * letterbox paint under the captions, pinned to the output frame like a host-painted image overlay
+ * (they never zoom with the picture); fade paints over everything, including captions. Each kind is
+ * its own lane with its own non-overlap rule (`model.ts`) — unlike zoom's one lane, two regions of
+ * *different* kinds may freely overlap in time (e.g. a vignette held under a fade to black).
+ */
+const effectRegionBase = { id: itemId, ...timeRange, enabled: z.boolean().default(true) }
+export const vignetteEffectSchema = z.strictObject({
+  ...effectRegionBase, kind: z.literal('vignette'),
+  amount: z.number().finite().min(0).max(1),
+  softness: z.number().finite().min(0).max(1),
+}).refine(endAfterStart, 'Effect end must follow its start')
+export const letterboxEffectSchema = z.strictObject({
+  ...effectRegionBase, kind: z.literal('letterbox'),
+  /** Target display aspect (width / height), e.g. 2.39. Bars land top/bottom or left/right,
+   * whichever the composition's own aspect calls for (`frameEffects.ts`). */
+  aspect: z.number().finite().min(0.2).max(5),
+  color: hexColor.default('#000000'),
+  easeInUs: easeUs.default(300_000),
+  easeOutUs: easeUs.default(300_000),
+}).refine(endAfterStart, 'Effect end must follow its start')
+export const fadeEffectSchema = z.strictObject({
+  ...effectRegionBase, kind: z.literal('fade'),
+  shape: z.enum(['in', 'out', 'dip']),
+  color: hexColor.default('#000000'),
+  /** Only `dip` uses both edges; `in`/`out` ramp across the region's whole length. */
+  easeInUs: easeUs.default(300_000),
+  easeOutUs: easeUs.default(300_000),
+}).refine(endAfterStart, 'Effect end must follow its start')
+export const effectRegionSchema = z.discriminatedUnion('kind', [vignetteEffectSchema, letterboxEffectSchema, fadeEffectSchema])
 
 /**
  * The output frame. Load-bearing: the caption composition is derived from it, so stacked videos
@@ -139,6 +235,7 @@ export type CompositionRect = z.infer<typeof compositionRectSchema>
 export type ProjectAsset = z.infer<typeof projectAssetSchema>
 export type Track = z.infer<typeof trackSchema>
 export type TrackKind = Track['kind']
+export type CaptionTrack = z.infer<typeof captionTrackSchema>
 export type VideoClip = z.infer<typeof videoClipSchema>
 export type ImageClip = z.infer<typeof imageClipSchema>
 export type AudioClip = z.infer<typeof audioClipSchema>
@@ -146,7 +243,15 @@ export type Clip = z.infer<typeof clipSchema>
 export type ClipKind = Clip['kind']
 export type VisualClip = VideoClip | ImageClip
 export type BlurRegion = z.infer<typeof blurRegionSchema>
+export type ZoomRegion = z.infer<typeof zoomRegionSchema>
+export type EffectRegion = z.infer<typeof effectRegionSchema>
+export type VignetteEffect = z.infer<typeof vignetteEffectSchema>
+export type LetterboxEffect = z.infer<typeof letterboxEffectSchema>
+export type FadeEffect = z.infer<typeof fadeEffectSchema>
+export type EffectRegionKind = EffectRegion['kind']
 export type Marker = z.infer<typeof markerSchema>
+export type TextAnimation = z.infer<typeof textAnimationSchema>
+export type TextOverlay = z.infer<typeof textOverlaySchema>
 export type SequenceFormat = z.infer<typeof sequenceFormatSchema>
 export type ClipFit = z.infer<typeof fitSchema>
 

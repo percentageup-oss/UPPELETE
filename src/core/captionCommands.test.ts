@@ -23,11 +23,11 @@ const timedWords = (text: string, idPrefix = 'w'): CaptionWord[] => captionToken
 }))
 
 const project = (...cues: Cue[]): CaptionProject => ({
-  schemaVersion: 5,
+  schemaVersion: 10,
   tracks: [],
   clips: [],
   assets: [],
-  blurRegions: [], markers: [],
+  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
   id: 'project',
   title: 'Test',
   cues,
@@ -52,6 +52,18 @@ describe('caption editing commands', () => {
     expect(result.project.cues[0].needsReview).toBe(true)
     expect(wordMotionAvailability(result.project.cues[0]).enabled).toBe(true)
     expect(result.project.cues[1].words).toEqual(aligned.words)
+  })
+
+  it('applies Malayalam Gold without changing cue text, timings, or word data', () => {
+    const gold = CAPTION_TEMPLATES.find((template) => template.id === 'malayalam-gold')!
+    const original = cue('a', 1_000_000, 4_000_000, 'മലയാളം Gold ടൈറ്റിൽ', {
+      words: timedWords('മലയാളം Gold ടൈറ്റിൽ', 'gold-').map((word) => ({ ...word, startUs: word.startUs + 1_000_000, endUs: word.endUs + 1_000_000 })),
+    })
+    const result = applyCaptionCommand(project(original), { type: 'apply-template', style: gold.style, idPrefix: 'gold' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.project.captionStyle).toEqual(gold.style)
+    expect(result.project.cues[0]).toEqual(original)
   })
 
   it('makes mixed Malayalam/English corrections authoritative without changing cue timing', () => {
@@ -184,32 +196,52 @@ describe('word-boundary caption editing', () => {
   })
 })
 
-describe('update-text with estimateIfUntimed (WORD display live typing)', () => {
-  it('estimates word timing for a freshly typed cue when requested', () => {
-    const c = cue('a', 0, 5_000, '')
-    const result = applyCaptionCommand(project(c), { type: 'update-text', cueId: 'a', text: 'one two', estimateIfUntimed: 'e' })
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.project.cues[0].words).toHaveLength(2)
-    expect(result.project.cues[0].words.every((word) => word.timingSource === 'estimated')).toBe(true)
-  })
-
-  it('gap-fills only what changed, leaving retained model timing untouched', () => {
-    const original = cue('a', 0, 5_000, 'one two three', { words: timedWords('one two three') })
+describe('update-text with estimateIfUntimed (keeps word-driven motion working through an edit)', () => {
+  it('gap-fills only what changed, leaving retained model timing and a motion override untouched', () => {
+    const original = cue('a', 0, 5_000, 'one two three', { words: timedWords('one two three'), motionOverride: { motion: 'word-pop' } })
     const result = applyCaptionCommand(project(original), { type: 'update-text', cueId: 'a', text: 'one TWO three', estimateIfUntimed: 'e' })
     expect(result.ok).toBe(true)
     if (!result.ok) return
     const updated = result.project.cues[0]
+    expect(updated.motionOverride).toEqual({ motion: 'word-pop' })
     expect(updated.words.find((word) => word.id === 'w0')).toMatchObject({ timingSource: 'model' })
     expect(updated.words.find((word) => word.id === 'w2')).toMatchObject({ timingSource: 'model' })
-    expect(updated.words.some((word) => word.timingSource === 'estimated')).toBe(true)
+    expect(updated.words.some((word) => word.timingSource === 'estimated' && word.needsReview)).toBe(true)
+    // The whole cue is fully timed again, so the word-pop motion this cue is set to keeps animating
+    // instead of the renderer silently falling back to static-clean.
+    const availability = wordMotionAvailability(updated)
+    expect(availability.enabled).toBe(true)
+    expect(availability.estimated).toBe(true)
   })
 
-  it('does not estimate when the flag is absent (LINE display keeps today’s behaviour)', () => {
+  it('never invents word timing for a cue that had none to begin with (e.g. imported SRT)', () => {
     const c = cue('a', 0, 5_000, '')
-    const result = applyCaptionCommand(project(c), { type: 'update-text', cueId: 'a', text: 'one two' })
+    const result = applyCaptionCommand(project(c), { type: 'update-text', cueId: 'a', text: 'one two', estimateIfUntimed: 'e' })
     expect(result.ok).toBe(true)
     if (result.ok) expect(result.project.cues[0].words).toEqual([])
+  })
+
+  it('does not estimate when the flag is absent', () => {
+    const original = cue('a', 0, 5_000, 'one two three', { words: timedWords('one two three') })
+    const result = applyCaptionCommand(project(original), { type: 'update-text', cueId: 'a', text: 'one TWO three' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.project.cues[0].words.find((word) => word.id === 'w1')).toBeUndefined()
+    expect(result.project.cues[0].words).toHaveLength(2)
+  })
+
+  it('reports estimate-skipped instead of silently leaving the animation on static-clean', () => {
+    const original = cue('a', 0, 2_000, 'one two', { words: [
+      { id: 'w0', text: 'one', startUs: 0, endUs: 1_000, timingSource: 'model', needsReview: false },
+      { id: 'w1', text: 'two', startUs: 1_000, endUs: 2_000, timingSource: 'model', needsReview: false },
+    ] })
+    // Inserting a word into a zero-width gap between two adjacent kept words leaves no room for a
+    // positive-duration estimate.
+    const result = applyCaptionCommand(project(original), { type: 'update-text', cueId: 'a', text: 'one X two', estimateIfUntimed: 'e' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.warnings.some((warning) => warning.kind === 'estimate-skipped' && warning.cueIds.includes('a'))).toBe(true)
+    expect(result.project.cues[0].words.map((word) => word.id).sort()).toEqual(['w0', 'w1'])
   })
 })
 

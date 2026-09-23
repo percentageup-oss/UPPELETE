@@ -21,11 +21,19 @@ describe('dropTimeAt', () => {
 })
 
 describe('dropPlanForAsset', () => {
-  it('puts a video on the video track under the pointer, else V1 — never replacing the source', () => {
+  it('puts a video on a free video track under or near the pointer, never overwriting a clip it lands on', () => {
+    // v1 is free before the existing video starts... but here it's occupied for the whole test
+    // fixture, so a drop with no free video track asks the caller for a new one (trackId: null)
+    // instead of landing on top of what's already there.
     expect(dropPlanForAsset({ kind: 'video', durationUs: 4_000_000 }, 2_000_000, tracks, [video], 'v2'))
       .toEqual({ kind: 'clip', placement: { trackId: 'v2', startUs: 2_000_000, lengthUs: 4_000_000 } })
-    expect(dropPlanForAsset({ kind: 'video', durationUs: 4_000_000 }, 2_000_000, tracks, [video], 'a1'))
-      .toEqual({ kind: 'clip', placement: { trackId: 'v1', startUs: 2_000_000, lengthUs: 4_000_000 } })
+    // Dropping onto the span the existing video already occupies is refused, even when explicitly
+    // targeted at that track — the pointer target is only honoured when it's actually free there.
+    expect(dropPlanForAsset({ kind: 'video', durationUs: 4_000_000 }, 2_000_000, tracks, [video, title], 'v2'))
+      .toEqual({ kind: 'clip', placement: { trackId: null, startUs: 2_000_000, lengthUs: 4_000_000 } })
+    // Targeting a non-video track falls back to searching video tracks in array order; none free.
+    expect(dropPlanForAsset({ kind: 'video', durationUs: 4_000_000 }, 2_000_000, tracks, [video, title], 'a1'))
+      .toEqual({ kind: 'clip', placement: { trackId: null, startUs: 2_000_000, lengthUs: 4_000_000 } })
   })
 
   it('puts an image above the video for three seconds, or asks for a new track when nothing is free', () => {

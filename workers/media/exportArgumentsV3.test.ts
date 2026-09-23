@@ -96,7 +96,27 @@ describe('manifest v3 routes', () => {
     expect(exportFilterGraphV3(stacked, [false, false, false, false, false]).hasAudioOut).toBe(false)
   })
 
-  it('refuses blur, as manifest v2 does, until ticket V4', () => {
-    expect(() => exportFilterGraphV3({ ...backToBack, blurRegions: [{ id: 'b', sequence: { startUs: 0, endUs: US }, rect: { x: 0, y: 0, width: 10, height: 10 }, sigmaPx: 4 }] }, [true, true])).toThrow(/Blur/)
+  it('blurs before the zoom crop on the flat route, converting to rgba only when a region is present (V4)', () => {
+    const region = { id: 'b', sequence: { startUs: 0, endUs: US }, rect: { x: 0, y: 0, width: 10, height: 10 }, sigmaPx: 4 }
+    const graph = exportFilterGraphV3({ ...backToBack, blurRegions: [region] }, [true, true]).filterComplex
+    expect(graph).toContain(',format=rgba[vraw]')
+    expect(graph).toContain('[vraw]split=2[bl0src][bl0copy]')
+    expect(graph).toContain('[bl0copy]crop=w=10:h=10:x=0:y=0:exact=1,gblur=sigma=4.000000:steps=2[bl0blur]')
+    expect(graph).toContain("[bl0src][bl0blur]overlay=x=0:y=0:format=auto:enable='between(t,0.000000,1.000000)'[blout0]")
+    expect(graph.indexOf('[bl0src]')).toBeLessThan(graph.indexOf('overlay=0:0:alpha=straight'))
+    // Blur-free flat exports keep the original `[v]` label and never gain a format=rgba step.
+    const plain = exportFilterGraphV3(backToBack, [true, true]).filterComplex
+    expect(plain).not.toContain('format=rgba')
+    expect(plain).toContain('fps=fps=25/1:start_time=0[v]')
+  })
+
+  it('blurs the already-rgba stacked canvas with no extra format conversion (V4)', () => {
+    const region = { id: 'b', sequence: { startUs: 0, endUs: 4 * US }, rect: { x: 0, y: 0, width: 20, height: 20 }, sigmaPx: 6 }
+    const plain = exportFilterGraphV3(stacked, [true, false, true, false, true]).filterComplex
+    const graph = exportFilterGraphV3({ ...stacked, blurRegions: [region] }, [true, false, true, false, true]).filterComplex
+    expect(graph).toContain('[bl0copy]crop=w=20:h=20:x=0:y=0:exact=1,gblur=sigma=6.000000:steps=2[bl0blur]')
+    // The stacked canvas and every clip on it are already rgba, so blur adds no format=rgba of its own.
+    const countRgba = (text: string) => text.split(';').filter((chain) => chain.includes('format=rgba')).length
+    expect(countRgba(graph)).toBe(countRgba(plain))
   })
 })

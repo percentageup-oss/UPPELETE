@@ -179,8 +179,8 @@ the cut instant" is gone, since with gaps there is no well-defined collapse.
    An open-ended `durationUs: null` becomes an explicit out point at the end of the file
    (`duration-resolved`), or a one-second placeholder when the file's length was never probed
    (`duration-placeholder`); both are reported.
-5. **Blur regions** take the same span rule and drop `mediaAssetId`. In practice this never fires:
-   export still refuses blur and there is no UI entry point.
+5. **Blur regions** take the same span rule and drop `mediaAssetId`. In practice this rarely fires
+   against a real file: schema 4 predates the blur UI (V4).
 6. **Cues** are untouched. 7. **`format`** is byte for byte what `planFromMedia` produced.
 
 **Park, never drop**: an overlay or sound effect schema 4 no longer played (anchored inside a removed
@@ -337,7 +337,7 @@ Both routes are kept permanently. (The plan also proposed promoting v1/v2 to v3 
   all of them); the renderer sends only `{ requestId, project }` and main resolves **every** asset the
   timeline plays through its fingerprint registry, refusing by name before the job starts; the plan
   comes from `project.format`, falling back to the first video's probe. `PROTOCOL_VERSION` stays 1
-  (nothing is persisted). Blur is still refused by both routes until V4.
+  (nothing is persisted). Blur reaches FFmpeg on both routes as of V4 (`blurPictureChain`).
 
 **Verified with real FFmpeg 9.0.1** (h264_videotoolbox, this machine, 2026-09-19), using the builder's
 own argv: Route A two different files back to back → 5.000 s / 125 frames, and with a per-frame
@@ -472,8 +472,8 @@ Encoder: X2 selected `h264_videotoolbox` on macOS; a Windows encoder within the 
 | --- | --- |
 | V1 | ✅ Schema 3, `sequence.ts`, generic timeline items/tracks/selection, item commands, manifest v2 + builder refactor, cut-skipping playback on `playbackClock` |
 | V2 | ✅ Image overlays: asset import/resolve/relink IPC, `CompositionLayers`, overlay track and inspector, layer export via frame request v2 |
-| V3 | Sound effects: `SfxScheduler`, SFX track/inspector, audio filtergraph branch |
-| V4 | Blur regions: stage rect tool, blur inspector, video filtergraph branch, measured parity tolerance |
+| V3 | ✅ Sound effects: `SfxScheduler`, SFX track/inspector, audio filtergraph branch |
+| V4 | ✅ Blur regions: Effects-panel tiles, timeline lane, blur inspector, stage rect gizmo, `split/crop/gblur/overlay` filtergraph branch (v2 and v3) — parity tolerance not yet measured (2026-09-23) |
 | V5 | Trim in/out: I/O commands and shortcuts, sequence ruler, SRT in sequence time, single-segment export |
 | V6 | Cuts: cut/delete/join segments, per-segment strips, multi-segment concat, straddling-caption behaviour |
 
@@ -492,12 +492,12 @@ encoding a video without the edit:
 | Manifest carries | Behaviour | Implemented by |
 | --- | --- | --- |
 | `segments` that are not the whole range | trim/concat filtergraph, sequence-time frame count | Remove Silence (2026-09-18), ahead of V6's manual UI |
-| `blurRegions` | throws | V4 |
-| `audioClips` | throws | V3 |
+| `blurRegions` | `split/crop/gblur/overlay`, `enable` in sequence time, before the zoom crop | ✅ V4 (2026-09-23) |
+| `audioClips` | `amix` onto a fixed-duration base, exact sample delays, per-clip gain | ✅ V3 |
 | `overlays` | frame request v2 to the export host; FFmpeg's filtergraph is unchanged | ✅ V2 (2026-09-18) |
 
-V4/V3 each remove their line from `assertExportableManifest` and add the corresponding filtergraph
-branch from the skeleton above, with their own measured smoke evidence. Cuts reached
+`assertExportableManifest` is gone from `workers/media/exportArguments.ts` — every manifest field
+this table lists now has a filtergraph branch, so there was nothing left for it to refuse. Cuts reached
 `assertExportableManifest`/`exportFilterGraph` early, driven by the Remove Silence feature rather than
 V6's own cut/delete/join UI — see `docs/STATUS.md`'s 2026-09-18 entry for exactly what landed and what
 of V6 (the manual tools, and a real-media smoke test) is still open.
@@ -598,10 +598,16 @@ than one, instead of the constant "Image overlay".
 The fixed transcript column became a CapCut-style icon rail (`src/LeftRail.tsx`, roving-tabindex
 tablist copied from `InspectorTabs.tsx`) that switches a `.side-panel` between Media
 (`src/MediaBin.tsx`), Captions (`src/CaptionsPanel.tsx` — `TranscriptCue`/`CaptionTools` moved out of
-`App.tsx` unchanged), Overlays (`src/OverlaysPanel.tsx`) and Transitions (`src/TransitionsPanel.tsx`,
-a thin wrapper around the unchanged `TemplatesPanel.tsx`, which the inspector's Templates tab
-dropped — `InspectorTabs` is now Edit/Style only). Settings stays a button, opening the existing
+`App.tsx` unchanged), Overlays (`src/OverlaysPanel.tsx`), Titles (`src/TitlesPanel.tsx`, a thin
+wrapper around the unchanged `TemplatesPanel.tsx`, which the inspector's Templates tab dropped —
+`InspectorTabs` is now Edit/Style only) and Effects (`src/EffectsPanel.tsx`, a library of picture
+effects grouped by section — Zoom is the first). Settings stays a button, opening the existing
 dialog; it was never a panel and still isn't.
+
+Titles and Effects were named Transitions and Zoom respectively until the effects library grew
+past zoom; only the rail labels, icons and the two panel/test files were renamed (`git mv` from
+`TransitionsPanel`/`ZoomPanel` — see "Zoom regions", below, for the data model, which keeps its
+`project.zoomRegions` name).
 
 **Classification stays real, not extension-based.** `src/core/assetKind.ts`'s `classifyMedia`
 extends the existing `classifyAsset` (image/audio) with a `'video'` outcome for any non-image-codec
@@ -639,3 +645,205 @@ import (from any of these paths, or the File menu) never silently replaces exist
 **`Timeline.tsx`** gained `onDropAsset`/`onDropFiles` on `.timeline-content`, driven by the same
 `dropContent`; a `.drop-indicator` previews the drop point (and, for an image, its 3s placeholder
 width) during `dragover` and is cleared on `dragleave`/`drop`.
+
+## Zoom regions (schema 8)
+
+`project.zoomRegions` is one sequence-timed, non-overlapping lane over the whole program. A region
+stores `{ id, startUs, endUs, rect, easeInUs, easeOutUs, enabled }`: the picture eases from the full
+output frame into one static composition-space target rectangle, holds, then eases back out. It is
+not a keyframe or tracking system. Zoom in defaults to 500 ms in/out; Zoom out starts tight
+(`easeInUs: 0`) and defaults to a 700 ms release. The timeline has one permanent lane for it,
+labeled **Effects** to match the rail tab (`TimelineTrackHeaders.tsx`'s `zoomLane` row, and
+`ZoomLane.tsx`'s own block label and aria-labels — the component and its props stay zoom-specific
+internally); regions move and trim like clips, but do not belong to tracks or assets.
+
+`zoomRectAt` is the absolute-time evaluator used by preview. The preview transforms the picture
+below host-painted images; captions and host-painted overlays remain pinned. Any project with at
+least one *enabled* zoom region uses export manifest v3, where target rectangles become output
+pixels and FFmpeg runs dynamic `scale=…:eval=frame` plus a fixed output-sized crop **after** the
+flat/stacked picture chain and **before** the transparent caption/overlay layer. Slow ramps can
+differ by an integer pixel from browser resampling; this is measured tolerance, not byte parity.
+Zoom enlarges the already-composed canvas, so it does not recover extra source detail from
+higher-resolution footage.
+
+**Settings and bypass (schema 8).** Selecting a zoom region on the timeline shows `ZoomInspector`
+(`src/ZoomInspector.tsx`) in the right inspector's Edit tab — the same slot `ClipInspector` fills
+for a selected clip, and the pattern every later effect follows. It exposes start/length (move/trim,
+committing immediately), ease in/out (a slider showing the *effective*, half-length-clamped value
+when the raw one is longer than the region can use), a "Zoom amount" slider (rescales the target
+rect around its own center at the composition's aspect ratio — `rectAtZoomFactor`/`zoomFactorOf` in
+`src/core/zoomRegion.ts`), Reset framing and Delete. Rect and ease edits draft into the live preview
+through one shared `{ id, changes: ZoomRegionChanges }` draft (`App.tsx`'s `zoomRegionDraft`, folded
+into `visibleZoomRegions`) and commit as a single `zoom-region-update`, mirroring `ClipInspector`'s
+rect-drag contract.
+
+`enabled` (default `true`) bypasses a region without deleting it: the picture stays full-frame in
+preview (`CaptionStage` filters `zoomRegions`/`blurRegions` to the enabled ones before calling
+`zoomRectAt` or building the blur layer) and the region is left out of the export manifest
+(`blurFor`/`zoomFor` in `src/export/plan.ts`). A disabled region still claims its place in the one
+lane — the non-overlap check does not exempt it, so re-enabling it can never surprise-overlap
+another region — and still renders in the Zoom lane, dashed and dimmed (`.zoom-block.disabled`,
+`ZoomLane.tsx`), so it stays selectable. A project whose zoom regions are *all* disabled is treated
+as zoom-free for the v2/v3 export routing decision (`flatSequence`), the same as a project with none.
+
+Blur regions (`project.blurRegions`) gained the same `enabled` flag in the same schema bump — see
+"Blur regions (V4)" below for its own lane and inspector, added later.
+
+Schema 7 → 8 (`src/core/migrateV7.ts`) only bumps the version number: `enabled` defaults to `true`
+on `blurRegionSchema`/`zoomRegionSchema`, so parsing a schema-7 file through the frozen
+`projectSchemaV7` already back-fills it before the migration function ever runs — the same
+"parsing already did the work" shape as schema 6 → 7's empty zoom lane.
+
+## Blur regions (V4)
+
+`project.blurRegions` predates zoom (schema 5) and already had `id`/timing/`rect`/`radius`/`enabled`
+and its own `blur-add`/`blur-update`/`blur-delete` commands, MCP access and a preview layer
+(`CompositionLayers`'s `backdrop-filter` blur, under the captions). What V4 added is everything a
+user needs to reach it without MCP, plus the FFmpeg branch that had refused it until now — no schema
+change. Unlike zoom, **blur regions may overlap**: `blur-update` never checks for overlap, and
+neither does the UI, so several blurred areas can be live at the same timestamp. This is also why
+blur has no `clampZoomRegion`-style gap-fitting: `src/core/blurRegion.ts`'s `previewBlurDrag` clamps
+a drag only against zero and the region's own `MIN_BLUR_REGION_US`, never against other regions.
+
+**Timeline lane.** Unlike the always-shown Zoom lane, the blur lane (`blurLane` in
+`timelineLayout.ts`, `BlurLane.tsx`) is shown only when `project.blurRegions` is non-empty — the
+pattern every later effect kind follows; a first blur region is created from the Effects panel tile,
+not an empty permanent row. Overlapping regions currently stack in DOM order rather than packing
+into sub-rows (a stated limitation, not yet built).
+
+**Effects panel and stage editor.** `EffectsPanel.tsx`'s "Blur" section offers two tiles — *Blur
+area* (`defaultBlurAreaRect`, a third of the frame, centered) and *Blur frame*
+(`defaultBlurFrameRect`, the whole output) — both draggable to the timeline or clickable to add at
+the playhead, reusing the same `PresetDragPayload` the Zoom tiles use (`preset: 'blur-area' |
+'blur-frame'`). The stage rect gizmo was generalized: `ZoomStageEditor.tsx` became
+`RectStageEditor.tsx`, taking `keepAspect` and a `label`/`hitClassName` so zoom (aspect-locked, lime)
+and blur (free aspect, cyan `.blur-hit`) share one gesture implementation. `BlurInspector.tsx`
+mirrors `ZoomInspector.tsx` minus ease and zoom-amount (blur has neither ramps nor an aspect-locked
+target) plus a radius slider (1–100 composition units, `blurRegionSchema`'s own bounds).
+
+**Export.** `workers/media/exportArguments.ts`'s `blurPictureChain` chains FFmpeg's
+`split/crop/gblur/overlay` per enabled region, each `enable`d over its own sequence-time window,
+before the zoom crop (matching preview's paint order: blur is inside the zoomed picture) and before
+the transparent caption/host-overlay layer. `crop=…:exact=1` on a `format=rgba` input keeps
+arbitrary (possibly odd) pixel offsets exact — a chroma-subsampled format would round them to even
+boundaries. The normalize/concat step's own label and `,format=rgba` only appear when a manifest
+actually carries a blur region, so a blur-free export's filtergraph string is provably unchanged
+(`exportArguments.test.ts`, `exportArgumentsV3.test.ts`). `assertExportableManifest` — the guard that
+refused any manifest carrying `blurRegions` — is gone; there is nothing left for it to refuse.
+`flatSequence` needed no change: `blurFor` already resolved blur regions into both v2 and v3
+manifests before V4, so blur reaches FFmpeg on whichever route the rest of the project already takes.
+
+**Verified**: `split/crop/gblur/overlay/format` (and, for later effects, `colorchannelmixer`,
+`lutrgb`, `rgbashift`) are present in this project's pinned LGPL-only FFmpeg 9.0.1 build (`--disable-
+gpl`); `eq`/`boxblur` are absent, confirming the doc's `gblur`-over-`boxblur` choice was necessary,
+not stylistic. The exact filter-graph fragments `blurPictureChain` generates — single and two
+chained, time-overlapping regions — were run against that real binary and produced valid RGBA output
+with no filter errors. Not yet run: `scripts/export-parity.mjs`'s full Electron smoke encode, so
+there is no measured pixel tolerance yet (docs/STATUS.md).
+
+## Frame-paint effects (schema 9)
+
+`project.effects` holds vignette, letterbox and fade/dip regions — a new discriminated-union item
+kind (`effectRegionSchema`, `src/core/edit.ts`), sequence-timed like blur and zoom. Unlike blur/zoom,
+this family is never touched by FFmpeg: it is painted by the exact same React layer the caption and
+host-painted-overlay pipeline already uses (`CompositionLayers.tsx`), once in the live preview and
+once by the export host — so preview/export parity is exact by construction, not a measured
+tolerance the way blur and zoom's pixel-grid differences are. This is the "frame paint" family from
+the effects shortlist (blur, fade/flash, color adjust, vignette/letterbox/pan); color adjust and pan
+are not part of this slice.
+
+**Data model.** Each kind shares `{ id, startUs, endUs, enabled }` plus its own fields:
+`vignette` (`amount`, `softness`, both 0–1), `letterbox` (`aspect`, `color`, `easeInUs`/`easeOutUs`
+for the bars sliding in/out) and `fade` (`shape: 'in' | 'out' | 'dip'`, `color`,
+`easeInUs`/`easeOutUs` — only `dip` uses both; `in`/`out` ramp once across the whole region). Flash
+is a UI preset, not its own kind: a brief white `dip` (`defaultFlash`, `src/core/effectCommands.ts`).
+Unlike zoom's single lane, **each kind has its own non-overlap lane**: two vignettes must be
+ascending and non-overlapping (the schema-9 `superRefine` in `model.ts` tracks the last end per
+kind), but a vignette and a letterbox may freely overlap in time — a fade held over a vignette is a
+normal composition, not a conflict. `src/core/migrateV8.ts` only bumps the version: `effects`
+defaults to `[]`, so parsing a schema-8 file through the schema-9 object already back-fills it.
+
+**Evaluator (`src/core/frameEffects.ts`).** `frameEffectsAt(effects, sequenceUs, composition)` is
+the one closed-form-in-absolute-time function both preview and export call — the same contract
+`zoomRectAt` established, so seeking to the same timestamp from either direction gives the same
+result. `rampAmount` reuses `zoomRectAt`'s own ease-in/hold/ease-out shape (now exported from
+`zoomRegion.ts` as `smoothstep`/`lerp` so every effect ramps on the identical curve) for letterbox's
+slide and fade's `dip`; `in`/`out` are a single ramp across the region's length. Letterbox bars land
+top/bottom when the target aspect is *wider* than the composition's own aspect (shrinking the
+visible height to `width / aspect`) and left/right when it is *narrower* (shrinking the visible
+width to `height * aspect`) — so a "Letterbox 2.39" preset bars top/bottom on both a 16:9 and a 9:16
+vertical export, since 2.39 is wider than either. All effect data stays in **composition units**
+(never resolved to output pixels the way blur/zoom's manifest fields are), because
+`CompositionLayers` already does that scaling itself for every layer kind.
+
+**Preview (`App.tsx`'s `CaptionStage`).** Vignette and letterbox are pinned to the output frame like
+a host-painted image overlay — never zoomed with the picture — so they join the same
+`CompositionLayers` call `pinnedLayers` already used for host-painted images, under the captions.
+Fade must cover the captions too, so `CaptionPreview.tsx` gained a new `overCaption` slot, rendered
+after `CaptionView` inside the same scaled composition wrapper `layers` renders below it in.
+
+**Commands (`src/core/effectCommands.ts`).** `effect-add/move/trim/update/delete` mirror
+`zoomRegionCommands.ts` exactly, reusing its `clampZoomRegion`/`MIN_ZOOM_REGION_US` (both already
+generic over any `{startUs,endUs}` item) with one change: the "others" an add/move/trim clamps
+against are only effects of the *same kind* (`sameKindOthers`), never the whole `project.effects`
+array. `EffectChanges` is a plain (non-discriminated) union of each kind's own partial change shape,
+since a caller's inspector already knows which kind it is editing. `TimelineItemKind`/`Selection`
+gained `'effect'`; the MCP `select` tool and `agentProtocol.ts`'s `select` request schema follow.
+
+**Timeline.** `timelineRows` (`timelineLayout.ts`) takes an `effectKinds` list and emits one
+`effectLane` row per kind actually present (`EFFECT_KIND_ORDER`: vignette, letterbox, fade), shown
+only when used — the same "each lane names its own kind" convention blur set. `EffectLane.tsx` is
+one generic component parameterized by kind (label, CSS class), rather than three near-duplicate
+files, since — unlike blur's one-off addition — three new lane kinds arriving at once justified the
+shared component. `Timeline.tsx`'s drag state machine gained one `EffectDrag` kind mirroring `zoom`'s
+branch (`previewEffectDrag`, filtering "others" to the dragged region's own kind); blur's branch was
+left untouched as the precedent for "no lane, may overlap" items, which frame-paint effects are not.
+
+**Effects panel.** Two new sections: **Look** (Vignette, Letterbox 2.39, Letterbox 1.85) and
+**Transitions** (Fade in, Fade out, Dip to black, Flash), same `PresetDragPayload`/tile pattern as
+Zoom and Blur (`PresetDragPayload['preset']` extended with the seven new preset ids).
+`App.tsx`'s `addEffectPreset` dispatcher now routes zoom/blur/frame-paint presets to their own
+default-builder (`defaultVignette`/`defaultLetterbox`/`defaultFade`/`defaultFlash`).
+
+**Inspector (`src/EffectInspector.tsx`).** One shared shell (enabled/bypass, start/length, Delete)
+across all three kinds, plus a per-kind section below it — the same settings-view shape
+`ZoomInspector`/`BlurInspector` established, generalized instead of duplicated a third time.
+
+**Export.** `flatSequence` (`src/export/plan.ts`) forces v3 whenever any effect is enabled, the same
+reason zoom does — v2's `frameRequestAt` never evaluates frame-paint effects. `buildExportManifest`'s
+v3 branch adds `effects: effectsFor(sequenceDurationUs)` (clipped to the sequence end, composition
+units untouched); `manifestEffectSchema` is `effectRegionSchema` reused directly, since — unlike
+blur/zoom, which need FFmpeg pixel coordinates — the manifest's effect data is exactly what the
+project already stores. `frameRequestAtSequence` evaluates `frameEffectsAt` at each requested
+sequence timestamp (in `compositionFor(formatAspect(manifest.format))`, never the manifest's own
+output-pixel `format`) and, only when something is actually visible, emits a new `frameRequestV3`
+(base shape plus `overlays` plus `frameEffects`) instead of v1/v2 — an effect-free v3 project's frame
+requests are therefore still v1/v2, unaffected. `frameHarness.tsx` paints `frameEffects` with the
+exact same `CompositionLayers`/`overCaption` split preview uses. `layerPlan.ts`'s frame signature
+folds in `frameEffectsAt`'s result (sequence-timed, like `timeline` overlays already are) so ramp
+frames are never wrongly deduplicated as identical to their neighbors.
+
+**Verified**: `npx tsc --noEmit` and `npx vitest run` are clean (1112 tests, 115 files, including new
+`frameEffects.test.ts`, effect-command and per-kind-overlap cases in `itemCommands.test.ts`, schema-9
+migration/validation cases in `model.test.ts`, v3-forcing/frame-request cases in `plan.test.ts`, and
+signature/ramp-dedup cases in `layerPlan.test.ts`). `npm run build` (Vite renderer, Electron
+main/preload, worker) succeeds.
+
+**Not verified.** No FFmpeg work was needed or run for this slice — there is nothing to check against
+a real binary, unlike blur. `scripts/export-parity.mjs`'s full Electron smoke encode was not run, so
+there is no real rendered frame confirming a vignette, sliding letterbox bars or a fade actually
+paint correctly pixel-for-pixel between preview and export, only that both sides call the same pure
+evaluator and the same paint component. Not exercised in the running app (`/run`): add each preset
+by click and drag, the new lanes appear only when used, drag/trim/select on each lane, the inspector
+sliders move the live preview, Undo/redo, Bypass, a saved schema-8 project opening and re-saving as
+schema 9. Only macOS (this machine) was touched; Windows is unvalidated.
+
+## Authored text (schema 10)
+
+`project.textOverlays` stores authored sequence-timed text independently of speech cues. Items carry stable project-wide IDs, non-empty text, a full `CaptionStyle` snapshot, item-specific enter/exit motion, and layer order relative to the caption plane. Schema 9→10 only adds an empty array; text is not a transcript, does not participate in alignment, and is never included in SRT. Text may overlap other text and captions. The always-visible Text lane packs overlapping blocks into stable subrows; new items start at the playhead with a three-second default, clamped to sequence duration. Users can add from Titles or the Text lane, or double-click empty video-frame space to create a title at that normalized composition location. The new item is selected and opens for direct preview editing; double-clicking an existing title edits it instead.
+
+The selected text item is the target for Titles styles, saved presets, word-animation choices and style controls; with no selected text, existing global caption-style behavior is unchanged. Applying a style/template updates appearance while preserving position, rotation, word animation and item-specific In/Out transitions. `TextInspector` exposes text, timing, whole-layer transition kinds/directions/durations, layer controls, duplicate and delete. Its stage editor shares caption move/resize/rotation behavior. Text items can move above or below the caption plane and are pinned to the output frame.
+
+`textMotionAt` evaluates enter/exit animation from absolute sequence time (fade, pop and four slide directions), proportionally shortening ramps on short items. Template word motion uses deterministic runtime-only timing distributed across whole `captionTokens`; it is decorative, not estimated/aligned audio timing. Preview and the export host share `TextOverlayActor` and the same shaped caption painter. Text forces manifest v3; frame request v4 carries already-ordered active text actors, and the host waits for each actor's font/layout readiness before frame commit. Text render order is below-captions items, caption plane, above-captions items, then fade.
+
+Verification for the initial implementation: `npm test` and `npm run typecheck` pass. `npm run build` builds the Vite, Electron and media worker bundles. GUI interaction and pixel-level export parity have not yet been manually exercised; Windows remains unvalidated.
