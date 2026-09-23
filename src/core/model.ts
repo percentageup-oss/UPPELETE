@@ -15,6 +15,7 @@ import { migrateV6 } from './migrateV6'
 import { migrateV7 } from './migrateV7'
 import { migrateV8 } from './migrateV8'
 import { migrateV9 } from './migrateV9'
+import { migrateV10 } from './migrateV10'
 
 export const wordSchema = z.object({
   id: z.string().min(1),
@@ -753,7 +754,7 @@ export const projectSchemaV9 = z.object({
 
 /** Schema 10 adds independent sequence-timed authored text layers. The schema-9 validator is
  * retained as the base validation contract; then text IDs are checked against its full namespace. */
-export const projectSchema = z.object({
+export const projectSchemaV10 = z.object({
   ...projectSchemaV9.shape,
   schemaVersion: z.literal(10),
   textOverlays: z.array(textOverlaySchema).max(1000).default([]),
@@ -776,6 +777,16 @@ export const projectSchema = z.object({
   }
 })
 
+/** Schema 11 adds the optional pan start rect (`zoomRegionSchema.fromRect`). No structural change
+ * beyond that field, so validation delegates to the frozen schema-10 contract. */
+export const projectSchema = z.object({
+  ...projectSchemaV10.shape,
+  schemaVersion: z.literal(11),
+}).superRefine((project, context) => {
+  const old = projectSchemaV10.safeParse({ ...project, schemaVersion: 10 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
 export type Cue = z.infer<typeof cueSchema>
 export type CaptionWord = z.infer<typeof wordSchema>
 export type CaptionProject = z.infer<typeof projectSchema>
@@ -787,6 +798,7 @@ export type CaptionProjectV6 = z.infer<typeof projectSchemaV6>
 export type CaptionProjectV7 = z.infer<typeof projectSchemaV7>
 export type CaptionProjectV8 = z.infer<typeof projectSchemaV8>
 export type CaptionProjectV9 = z.infer<typeof projectSchemaV9>
+export type CaptionProjectV10 = z.infer<typeof projectSchemaV10>
 export type TranscriptionRun = z.infer<typeof transcriptionRunSchema>
 export type AlignmentRun = z.infer<typeof alignmentRunSchema>
 export type { MigrationNote }
@@ -803,7 +815,7 @@ const legacyProjectSchema = z.object({
 
 export type ProjectLoadResult = {
   project: CaptionProject
-  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | null
+  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | null
   /** What the 4 → 5 migration could not carry over exactly, surfaced as a notice (never silent loss). */
   migrationNotes: MigrationNote[]
 }
@@ -883,8 +895,13 @@ function toV9(project: CaptionProjectV4, newId: () => string): { project: Captio
   return { project: toV9FromV8(toV8FromV7(migrated.project)), notes: migrated.notes }
 }
 
-function toV10FromV9(project: CaptionProjectV9): CaptionProject {
-  return projectSchema.parse(migrateV9(project).project)
+function toV10FromV9(project: CaptionProjectV9): CaptionProjectV10 {
+  return projectSchemaV10.parse(migrateV9(project).project)
+}
+
+/** Schema 10 → 11: `fromRect` is optional, so only the version number changes. */
+function toV11FromV10(project: CaptionProjectV10): CaptionProject {
+  return projectSchema.parse(migrateV10(project).project)
 }
 
 /** `newId` mints the ids a migration needs (assets, clips, tracks); injectable for tests. */
@@ -893,18 +910,20 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (current.success) return { project: current.data, migratedFrom: null, migrationNotes: [] }
   const from = (migratedFrom: 1 | 2 | 3 | 4, v4: CaptionProjectV4): ProjectLoadResult => {
     const { project, notes } = toV9(v4, newId)
-    return { project: toV10FromV9(project), migratedFrom, migrationNotes: notes }
+    return { project: toV11FromV10(toV10FromV9(project)), migratedFrom, migrationNotes: notes }
   }
+  const v10 = projectSchemaV10.safeParse(value)
+  if (v10.success) return { project: toV11FromV10(v10.data), migratedFrom: 10, migrationNotes: [] }
   const v9 = projectSchemaV9.safeParse(value)
-  if (v9.success) return { project: toV10FromV9(v9.data), migratedFrom: 9, migrationNotes: [] }
+  if (v9.success) return { project: toV11FromV10(toV10FromV9(v9.data)), migratedFrom: 9, migrationNotes: [] }
   const v8 = projectSchemaV8.safeParse(value)
-  if (v8.success) return { project: toV10FromV9(toV9FromV8(v8.data)), migratedFrom: 8, migrationNotes: [] }
+  if (v8.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(v8.data))), migratedFrom: 8, migrationNotes: [] }
   const v7 = projectSchemaV7.safeParse(value)
-  if (v7.success) return { project: toV10FromV9(toV9FromV8(toV8FromV7(v7.data))), migratedFrom: 7, migrationNotes: [] }
+  if (v7.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data)))), migratedFrom: 7, migrationNotes: [] }
   const v6 = projectSchemaV6.safeParse(value)
-  if (v6.success) return { project: toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data)))), migratedFrom: 6, migrationNotes: [] }
+  if (v6.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data))))), migratedFrom: 6, migrationNotes: [] }
   const v5 = projectSchemaV5.safeParse(value)
-  if (v5.success) return { project: toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId))))), migratedFrom: 5, migrationNotes: [] }
+  if (v5.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId)))))), migratedFrom: 5, migrationNotes: [] }
   const v4 = projectSchemaV4.safeParse(value)
   if (v4.success) return from(4, v4.data)
   const v3 = projectSchemaV3.safeParse(value)
@@ -913,7 +932,8 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (v2.success) return from(2, migrateV3(migrateV2(v2.data), newId))
   // A file that claims the current (or a previous, still-named) schema but fails it reports
   // *that* failure, not schema 1's.
-  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 10) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 11) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 10) projectSchemaV10.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 9) projectSchemaV9.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 8) projectSchemaV8.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 7) projectSchemaV7.parse(value)
@@ -953,7 +973,7 @@ export function defaultCaptionTracks(newId: () => string = () => crypto.randomUU
 export function createProject(): CaptionProject {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 10,
+    schemaVersion: 11,
     id: crypto.randomUUID(),
     title: 'Untitled project',
     cues: [],

@@ -24,7 +24,7 @@ const cue = (id: string, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 10, id: 'project', title: 'Test', cues: [cue('cue-a')],
+  schemaVersion: 11, id: 'project', title: 'Test', cues: [cue('cue-a')],
   assets: [asset('x', 'video'), asset('y', 'video', 10 * US), asset('img', 'image'), asset('snd', 'audio', 4 * US)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')],
   clips: [video('c1', 'V1', 0, 0, 20 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
@@ -208,6 +208,18 @@ describe('item commands', () => {
     expect(restyled.selection).toEqual({ kind: 'zoomRegion', id: 'z1' })
 
     expect(run(restyled.project, { type: 'zoom-region-delete', zoomId: 'z1' }).project.zoomRegions).toEqual([])
+  })
+
+  it('sets and clears a pan start framing through zoom-region-update', () => {
+    const rect = { x: 400, y: 0, width: 540, height: 303.75 }
+    const added = run(project(), { type: 'zoom-region-add', region: { id: 'z1', startUs: 0, endUs: 2 * US, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    const fromRect = { x: 0, y: 0, width: 540, height: 303.75 }
+    const panned = run(added.project, { type: 'zoom-region-update', zoomId: 'z1', changes: { fromRect } })
+    expect(panned.project.zoomRegions[0].fromRect).toEqual(fromRect)
+    const retargeted = run(panned.project, { type: 'zoom-region-update', zoomId: 'z1', changes: { rect: { ...rect, x: 500 } } })
+    expect(retargeted.project.zoomRegions[0].fromRect).toEqual(fromRect)
+    const cleared = run(retargeted.project, { type: 'zoom-region-update', zoomId: 'z1', changes: { fromRect: null } })
+    expect('fromRect' in cleared.project.zoomRegions[0]).toBe(false)
   })
 
   it('clamps a second zoom region into the gap beside the first rather than overlapping it', () => {

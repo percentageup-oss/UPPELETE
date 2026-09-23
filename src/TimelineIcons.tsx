@@ -26,6 +26,9 @@ export const GripIcon = (props: IconProps) => <Icon {...props}><path d="M5 6h.01
 /** A magnifying glass framing a rect — the zoom lane's target region, not the timeline-zoom control
  * above (`ZoomInIcon`/`ZoomOutIcon`), which share the same glass but never frame anything. */
 export const ZoomRegionIcon = (props: IconProps) => <Icon {...props}><circle cx="6.5" cy="6.5" r="4" /><rect x="4.5" y="4.5" width="4" height="4" rx=".5" /><path d="m9.7 9.7 3.3 3.3" /></Icon>
+/** Pan: a frame with an arrow sliding across it; Ken Burns: a small frame growing into a larger one. */
+export const PanIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="4" width="12" height="8" rx="1.5" /><path d="M5 8h6M9 6l2 2-2 2" /></Icon>
+export const KenBurnsIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" /><rect x="7" y="7" width="5" height="5" rx=".8" /><path d="M5 5l3 3" /></Icon>
 /** Blur tiles: a dashed target rect (area) or the full frame (frame), both with a soft dotted fill
  * suggesting a Gaussian blur, distinct from the crosshair glass the zoom icons above use. */
 export const BlurAreaIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" strokeDasharray="2 1.5" opacity=".55" /><rect x="5" y="5" width="6" height="6" rx="1" /><circle cx="8" cy="8" r=".4" fill="currentColor" stroke="none" /><circle cx="6.3" cy="9.7" r=".4" fill="currentColor" stroke="none" /><circle cx="9.7" cy="6.3" r=".4" fill="currentColor" stroke="none" /></Icon>

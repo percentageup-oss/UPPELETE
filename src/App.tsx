@@ -74,8 +74,8 @@ import { findAssetByFingerprint, type InspectedFile } from './core/assetImport'
 import { useAssetUrls } from './app/useAssetUrls'
 import { useProjectPlayback } from './app/useProjectPlayback'
 import { createThumbnailQueue } from './timeline/thumbnailQueue'
-import { DEFAULT_ZOOM_REGION_US, defaultZoomRect, zoomRectAt } from './core/zoomRegion'
-import type { ZoomRegionChanges } from './core/zoomRegionCommands'
+import { DEFAULT_PAN_REGION_US, DEFAULT_ZOOM_REGION_US, defaultPanRects, defaultZoomRect, zoomRectAt } from './core/zoomRegion'
+import { applyZoomChanges, type ZoomRegionChanges } from './core/zoomRegionCommands'
 import { ZoomInspector } from './ZoomInspector'
 import { defaultBlurAreaRect, defaultBlurFrameRect, DEFAULT_BLUR_RADIUS, DEFAULT_BLUR_REGION_US, MIN_BLUR_REGION_US } from './core/blurRegion'
 import { BlurInspector } from './BlurInspector'
@@ -144,6 +144,8 @@ export default function App() {
   // Target framing, ease and zoom amount are all previewed live (stage gesture or inspector
   // slider) and committed once as a `zoom-region-update` on release/blur.
   const [zoomRegionDraft, setZoomRegionDraft] = useState<{ id: string; changes: ZoomRegionChanges } | null>(null)
+  // Which framing of a pan region the stage gizmo and the inspector's amount slider edit.
+  const [panFraming, setPanFraming] = useState<'start' | 'end'>('end')
   // Same shape as `zoomRegionDraft`, for the blur area/radius stage gesture and inspector slider.
   const [blurRegionDraft, setBlurRegionDraft] = useState<{ id: string; changes: Partial<Omit<BlurRegion, 'id'>> } | null>(null)
   // Same shape again, for a frame-paint effect's inspector sliders.
@@ -231,7 +233,7 @@ export default function App() {
   }, [project.clips, clipDraft, cloneDraft])
   const visibleTracks = useMemo(() => cloneDraft ? [...project.tracks, CLONE_TRACK] : project.tracks, [project.tracks, cloneDraft])
   const visibleZoomRegions = useMemo(() => zoomRegionDraft
-    ? project.zoomRegions.map((region) => region.id === zoomRegionDraft.id ? { ...region, ...zoomRegionDraft.changes } : region)
+    ? project.zoomRegions.map((region) => region.id === zoomRegionDraft.id ? applyZoomChanges(region, zoomRegionDraft.changes) : region)
     : project.zoomRegions, [project.zoomRegions, zoomRegionDraft])
   const visibleBlurRegions = useMemo(() => blurRegionDraft
     ? project.blurRegions.map((region) => region.id === blurRegionDraft.id ? { ...region, ...blurRegionDraft.changes } : region)
@@ -242,6 +244,11 @@ export default function App() {
   const clipBase = selection?.kind === 'clip' ? project.clips.find((clip) => clip.id === selection.id) ?? null : null
   const selectedClip = clipBase && clipDraft?.id === clipBase.id ? clipDraft : clipBase
   const selectedZoomRegion = selection?.kind === 'zoomRegion' ? visibleZoomRegions.find((region) => region.id === selection.id) ?? null : null
+  // A pan region's gizmo edits whichever framing the inspector's Start/End switch selected.
+  const zoomRectKey: 'rect' | 'fromRect' = panFraming === 'start' && selectedZoomRegion?.fromRect ? 'fromRect' : 'rect'
+  const activeZoomRegion = visibleZoomRegions.find((region) => currentUs >= region.startUs && currentUs < region.endUs) ?? null
+  const stageZoomRegion = activeZoomRegion && activeZoomRegion.id === selectedZoomRegion?.id && zoomRectKey === 'fromRect' && activeZoomRegion.fromRect
+    ? { ...activeZoomRegion, rect: activeZoomRegion.fromRect } : activeZoomRegion
   const selectedBlurRegion = selection?.kind === 'blur' ? visibleBlurRegions.find((region) => region.id === selection.id) ?? null : null
   const selectedEffect = selection?.kind === 'effect' ? visibleEffects.find((effect) => effect.id === selection.id) ?? null : null
   const captionVideo = useMemo(() => captionClips(project.tracks, project.clips), [project.tracks, project.clips])
@@ -945,8 +952,13 @@ export default function App() {
     && !project.tracks.find((track) => track.id === clip.trackId)?.locked)
   const moveClip = (clipId: string, trackId: string, startUs: number) => runCommand({ type: 'clip-move', clipId, trackId, startUs, mode: editMode, idPrefix: crypto.randomUUID() })
   const trimClip = (clipId: string, edge: ClipEdge, deltaUs: number) => runCommand({ type: 'clip-trim', clipId, edge, deltaUs, mode: editMode })
-  const addZoomRegion = (preset: 'zoom-in' | 'zoom-out', atUs = currentUs) => {
+  const addZoomRegion = (preset: 'zoom-in' | 'zoom-out' | 'pan' | 'ken-burns', atUs = currentUs) => {
     const startUs = Math.max(0, Math.round(atUs))
+    if (preset === 'pan' || preset === 'ken-burns') {
+      const { fromRect, rect } = defaultPanRects(preset, captionComposition)
+      setPanFraming('end')
+      return runCommand({ type: 'zoom-region-add', region: { id: crypto.randomUUID(), startUs, endUs: startUs + DEFAULT_PAN_REGION_US, fromRect, rect, easeInUs: 0, easeOutUs: 0, enabled: true } })
+    }
     const region: ZoomRegion = {
       id: crypto.randomUUID(), startUs, endUs: startUs + DEFAULT_ZOOM_REGION_US,
       rect: defaultZoomRect(captionComposition),
@@ -1004,8 +1016,8 @@ export default function App() {
   const trimEffect = (effectId: string, edge: 'start' | 'end', deltaUs: number) => runCommand({ type: 'effect-trim', effectId, edge, deltaUs: Math.round(deltaUs) })
   const draftEffect = (effectId: string, changes: EffectChanges) => setEffectDraft({ id: effectId, changes })
   const commitEffect = (effectId: string, changes: EffectChanges) => { setEffectDraft(null); return runCommand({ type: 'effect-update', effectId, changes }) }
-  const addEffectPreset = (preset: 'zoom-in' | 'zoom-out' | 'blur-area' | 'blur-frame' | 'vignette' | 'letterbox-239' | 'letterbox-185' | 'fade-in' | 'fade-out' | 'fade-dip' | 'flash', atUs = currentUs) =>
-    preset === 'zoom-in' || preset === 'zoom-out' ? addZoomRegion(preset, atUs)
+  const addEffectPreset = (preset: 'zoom-in' | 'zoom-out' | 'pan' | 'ken-burns' | 'blur-area' | 'blur-frame' | 'vignette' | 'letterbox-239' | 'letterbox-185' | 'fade-in' | 'fade-out' | 'fade-dip' | 'flash', atUs = currentUs) =>
+    preset === 'zoom-in' || preset === 'zoom-out' || preset === 'pan' || preset === 'ken-burns' ? addZoomRegion(preset, atUs)
       : preset === 'blur-area' || preset === 'blur-frame' ? addBlurRegion(preset, atUs)
       : addFrameEffect(preset, atUs)
   const trackActions = {
@@ -1457,11 +1469,11 @@ export default function App() {
               onRectDraft={(rect) => draftClip({ rect })} onRectCommit={(rect) => commitClip({ rect })}
               onCloneDraft={setCloneDraft} onCloneCommit={(clip) => { setCloneDraft(null); placeCopy(clip) }} />
             <RectStageEditor label="Zoom target" hitClassName="zoom-hit" keepAspect
-              region={visibleZoomRegions.find((region) => currentUs >= region.startUs && currentUs < region.endUs) ?? null}
+              region={stageZoomRegion}
               composition={captionComposition} selected={selection?.kind === 'zoomRegion' && visibleZoomRegions.some((region) => region.id === selection.id && currentUs >= region.startUs && currentUs < region.endUs)}
               onSelect={(id) => setSelection({ kind: 'zoomRegion', id })}
-              onDraft={(rect) => selection?.kind === 'zoomRegion' && (rect ? draftZoomRegion(selection.id, { rect }) : setZoomRegionDraft(null))}
-              onCommit={(rect) => selection?.kind === 'zoomRegion' && commitZoomRegion(selection.id, { rect })} />
+              onDraft={(rect) => selection?.kind === 'zoomRegion' && (rect ? draftZoomRegion(selection.id, { [zoomRectKey]: rect }) : setZoomRegionDraft(null))}
+              onCommit={(rect) => selection?.kind === 'zoomRegion' && commitZoomRegion(selection.id, { [zoomRectKey]: rect })} />
             <RectStageEditor label="Blur area" hitClassName="blur-hit" keepAspect={false}
               region={visibleBlurRegions.find((region) => currentUs >= region.startUs && currentUs < region.endUs) ?? null}
               composition={captionComposition} selected={selection?.kind === 'blur' && visibleBlurRegions.some((region) => region.id === selection.id && currentUs >= region.startUs && currentUs < region.endUs)}
@@ -1522,6 +1534,8 @@ export default function App() {
               onDraft={(changes) => draftZoomRegion(selectedZoomRegion.id, changes)}
               onCommit={(changes) => commitZoomRegion(selectedZoomRegion.id, changes)}
               onReset={() => commitZoomRegion(selectedZoomRegion.id, { rect: defaultZoomRect(captionComposition) })}
+              framing={zoomRectKey === 'fromRect' ? 'start' : 'end'}
+              onFramingChange={(framing) => { setPanFraming(framing); seekTo(framing === 'start' ? selectedZoomRegion.startUs : selectedZoomRegion.endUs - 1000) }}
               onDelete={() => runCommand({ type: 'zoom-region-delete', zoomId: selectedZoomRegion.id })}
               onInvalid={(text) => setNotice({ tone: 'error', text })}
             /> : selectedBlurRegion ? <BlurInspector

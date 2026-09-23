@@ -1,6 +1,6 @@
 import type { DragEvent } from 'react'
 import { clearDragPayload, PRESET_DRAG_TYPE, setDragPayload, type PresetDragPayload } from './core/dragPayload'
-import { BlurAreaIcon, BlurFrameIcon, FadeIcon, FlashIcon, LetterboxIcon, VignetteIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
+import { BlurAreaIcon, BlurFrameIcon, FadeIcon, FlashIcon, KenBurnsIcon, LetterboxIcon, PanIcon, VignetteIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
 
 type PresetTile = { preset: PresetDragPayload['preset']; label: string; detail: string; icon: typeof ZoomInIcon }
 type Section = { heading: string; tileClass: string; tiles: PresetTile[] }
@@ -9,6 +9,8 @@ const SECTIONS: Section[] = [
   { heading: 'Zoom', tileClass: 'zoom-tile', tiles: [
     { preset: 'zoom-in', label: 'Zoom in', detail: 'Punch in, hold, then release', icon: ZoomInIcon },
     { preset: 'zoom-out', label: 'Zoom out', detail: 'Start tight, then pull out', icon: ZoomOutIcon },
+    { preset: 'pan', label: 'Pan', detail: 'Slide across the frame, left to right', icon: PanIcon },
+    { preset: 'ken-burns', label: 'Ken Burns', detail: 'Slow push in from the full frame', icon: KenBurnsIcon },
   ] },
   { heading: 'Blur', tileClass: 'blur-tile', tiles: [
     { preset: 'blur-area', label: 'Blur area', detail: 'A masked rectangle you move and resize', icon: BlurAreaIcon },

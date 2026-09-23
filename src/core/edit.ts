@@ -177,6 +177,9 @@ export const zoomRegionSchema = z.strictObject({
   id: itemId,
   ...timeRange,
   rect: compositionRectSchema,
+  /** Schema 11 pan / Ken Burns: when present the picture moves `fromRect → rect` across the whole
+   * region (no hold, no return to the full frame). Absent means the plain zoom above. */
+  fromRect: compositionRectSchema.optional(),
   easeInUs: z.number().int().nonnegative().max(5_000_000).default(500_000),
   easeOutUs: z.number().int().nonnegative().max(5_000_000).default(500_000),
   enabled: z.boolean().default(true),

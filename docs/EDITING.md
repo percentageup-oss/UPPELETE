@@ -694,6 +694,31 @@ on `blurRegionSchema`/`zoomRegionSchema`, so parsing a schema-7 file through the
 `projectSchemaV7` already back-fills it before the migration function ever runs — the same
 "parsing already did the work" shape as schema 6 → 7's empty zoom lane.
 
+## Pan / Ken Burns (schema 11)
+
+A zoom region may carry an optional `fromRect`. When present the region is a **pan**: the picture
+eases `fromRect → rect` (one smoothstep) across the region's whole length, with no hold and no
+return to the full frame, and `easeInUs`/`easeOutUs` are ignored. Without `fromRect` the region is
+exactly the schema-8 zoom above. It stays in the one zoom lane (labeled **Pan** when it has
+`fromRect`) and reuses the same commands: `zoom-region-update` sets `fromRect`, and `fromRect: null`
+clears it back to a plain zoom (`applyZoomChanges` in `zoomRegionCommands.ts`, shared by the live
+draft preview and the commit so they can never disagree).
+
+Both evaluators branch on `fromRect` in the same file: `zoomRectAt` for preview and
+`zoomScaleCropExpressions` for FFmpeg, so a pan uses the same dynamic-`scale` + fixed-crop chain as
+zoom and needs no new filter. `zoomFor` (`plan.ts`) carries `fromRect` in output pixels and, unlike
+a plain zoom, does **not** truncate a pan's end to the sequence end — a pan's progress depends on
+its whole length, so truncating would make export move faster than preview.
+
+Presets (`defaultPanRects`): *Pan* slides a 1.5x window from the left edge to the right edge;
+*Ken Burns* pushes from the full frame to a 1.25x window offset toward the upper-left third. Both
+default to 5 s. `ZoomInspector` shows a **Start / End framing** switch for pan regions; the stage
+gizmo, the Zoom-amount slider and Swap follow the selected framing, and switching seeks the
+playhead to the region's start or end so the picture shows what is being framed. *Remove pan* keeps
+the end framing as a plain zoom.
+
+Schema 10 → 11 (`src/core/migrateV10.ts`) only bumps the version: `fromRect` is optional.
+
 ## Blur regions (V4)
 
 `project.blurRegions` predates zoom (schema 5) and already had `id`/timing/`rect`/`radius`/`enabled`

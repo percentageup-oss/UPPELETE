@@ -68,7 +68,7 @@ function blurPictureChain(input: string, blurRegions: readonly ManifestBlurRegio
  * crop remains output-sized, so downstream overlay and encoder dimensions never change. */
 function zoomPictureChain(input: string, manifest: ExportManifestV3, output: string, chains: string[]): string {
   const expressions = zoomScaleCropExpressions(manifest.zoomRegions.map((region) => ({
-    startUs: region.sequence.startUs, endUs: region.sequence.endUs, rect: region.rect,
+    startUs: region.sequence.startUs, endUs: region.sequence.endUs, rect: region.rect, fromRect: region.fromRect,
     easeInUs: region.easeInUs, easeOutUs: region.easeOutUs,
   })), manifest.format)
   if (!expressions) return input

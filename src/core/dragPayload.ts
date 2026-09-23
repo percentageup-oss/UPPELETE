@@ -17,7 +17,7 @@ export type AssetDragPayload = {
   durationUs: number | null
 }
 
-export type EffectPreset = 'zoom-in' | 'zoom-out' | 'blur-area' | 'blur-frame'
+export type EffectPreset = 'zoom-in' | 'zoom-out' | 'pan' | 'ken-burns' | 'blur-area' | 'blur-frame'
   | 'vignette' | 'letterbox-239' | 'letterbox-185' | 'fade-in' | 'fade-out' | 'fade-dip' | 'flash'
 export type PresetDragPayload = { source: 'preset'; preset: EffectPreset }
 

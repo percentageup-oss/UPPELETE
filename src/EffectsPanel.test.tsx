@@ -19,9 +19,11 @@ describe('EffectsPanel', () => {
 
   it('offers click-and-drag for every preset tile', () => {
     const html = renderToStaticMarkup(<EffectsPanel onAddAtPlayhead={() => {}} />)
-    expect([...html.matchAll(/draggable="true"/g)]).toHaveLength(11)
+    expect([...html.matchAll(/draggable="true"/g)]).toHaveLength(13)
     expect(html).toContain('Add zoom in at the playhead')
     expect(html).toContain('Add zoom out at the playhead')
+    expect(html).toContain('Add pan at the playhead')
+    expect(html).toContain('Add ken burns at the playhead')
     expect(html).toContain('Add blur area at the playhead')
     expect(html).toContain('Add blur frame at the playhead')
     expect(html).toContain('Add vignette at the playhead')

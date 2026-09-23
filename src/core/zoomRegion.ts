@@ -3,7 +3,7 @@ import type { Size } from './composition'
 import { dragRangeBy, itemDragBounds, type CueDragMode } from './timeline'
 
 /** Pixel-space shape carried by export manifest v3. It intentionally has no asset/track identity. */
-export type ExportZoomRegion = { startUs: number; endUs: number; rect: { x: number; y: number; width: number; height: number }; easeInUs: number; easeOutUs: number }
+export type ExportZoomRegion = { startUs: number; endUs: number; rect: { x: number; y: number; width: number; height: number }; fromRect?: { x: number; y: number; width: number; height: number }; easeInUs: number; easeOutUs: number }
 
 /**
  * Pure math for zoom regions (docs/EDITING.md "Zoom regions"): the same shared-evaluator contract
@@ -56,6 +56,8 @@ function lerpRect(from: CompositionRect, to: CompositionRect, t: number): Compos
 export function zoomRectAt(regions: readonly ZoomRegion[], sequenceUs: number, composition: Size): CompositionRect | null {
   const region = regions.find((candidate) => sequenceUs >= candidate.startUs && sequenceUs < candidate.endUs)
   if (!region) return null
+  // Pan / Ken Burns: one smoothstep across the whole region, no hold and no return to full frame.
+  if (region.fromRect) return lerpRect(region.fromRect, region.rect, smoothstep((sequenceUs - region.startUs) / (region.endUs - region.startUs)))
   const half = (region.endUs - region.startUs) / 2
   const easeInUs = Math.min(region.easeInUs, half)
   const easeOutUs = Math.min(region.easeOutUs, half)
@@ -92,6 +94,23 @@ export function rectAtZoomFactor(rect: CompositionRect, factor: number, composit
   const x = Math.min(Math.max(0, centerX - width / 2), COMPOSITION_WIDTH - width)
   const y = Math.min(Math.max(0, centerY - height / 2), composition.height - height)
   return { x, y, width, height }
+}
+
+/** Pan / Ken Burns read better over a longer, slower move than a punch-in zoom. */
+export const DEFAULT_PAN_REGION_US = 5_000_000
+
+/**
+ * Starting framings for the Pan and Ken Burns presets, at the output aspect (so the crop never
+ * distorts). Pan: a 1.5x window slides from the left edge to the right edge at mid-height. Ken
+ * Burns: the full frame pushes in to a 1.25x window offset toward the upper-left third.
+ */
+export function defaultPanRects(preset: 'pan' | 'ken-burns', composition: Size): { fromRect: CompositionRect; rect: CompositionRect } {
+  if (preset === 'ken-burns') {
+    const to = rectAtZoomFactor(fullFrameRect(composition), 1.25, composition)
+    return { fromRect: fullFrameRect(composition), rect: { ...to, x: (COMPOSITION_WIDTH - to.width) * 0.35, y: (composition.height - to.height) * 0.35 } }
+  }
+  const window = rectAtZoomFactor(fullFrameRect(composition), 1.5, composition)
+  return { fromRect: { ...window, x: 0 }, rect: { ...window, x: COMPOSITION_WIDTH - window.width } }
 }
 
 /** Below this, a region is too thin to be a usable gesture target or a meaningful FFmpeg crop window. */
@@ -187,6 +206,13 @@ export function zoomScaleCropExpressions(regions: readonly ExportZoomRegion[], o
     for (let index = sorted.length - 1; index >= 0; index--) {
       const region = sorted[index]
       const durationUs = region.endUs - region.startUs
+      if (region.fromRect) {
+        const startS = region.startUs / 1_000_000
+        const endS = region.endUs / 1_000_000
+        const pan = lerpExpression(region.fromRect[key], region.rect[key], `(t-${decimal(startS)})/${decimal(durationUs / 1_000_000)}`)
+        expression = `if(gte(t,${decimal(startS)})*lt(t,${decimal(endS)}),${pan},${expression})`
+        continue
+      }
       const easeInUs = Math.min(region.easeInUs, durationUs / 2)
       const easeOutUs = Math.min(region.easeOutUs, durationUs / 2)
       const start = region.startUs / 1_000_000

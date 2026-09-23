@@ -1,11 +1,14 @@
-import type { ZoomRegion } from './edit'
+import type { CompositionRect, ZoomRegion } from './edit'
 import type { CaptionProject } from './model'
 import { clampZoomRegion, MIN_ZOOM_REGION_US } from './zoomRegion'
 import { failItem, replaceById, type ItemFailure, type ItemStep } from './itemStep'
 
 /** Inspector edits: the target framing, the ease durations and the bypass flag. Never the timing —
  * that goes through `zoom-region-move`/`zoom-region-trim`, the same split clips use. */
-export type ZoomRegionChanges = Partial<Pick<ZoomRegion, 'rect' | 'easeInUs' | 'easeOutUs' | 'enabled'>>
+export type ZoomRegionChanges = Partial<Pick<ZoomRegion, 'rect' | 'easeInUs' | 'easeOutUs' | 'enabled'>> & {
+  /** Pan start framing: a rect sets/replaces it, `null` clears it (back to a plain zoom). */
+  fromRect?: CompositionRect | null
+}
 
 export type ZoomRegionCommand =
   // Dropped from the Zoom panel or added at the playhead. Clamped into the free gap around every
@@ -15,6 +18,15 @@ export type ZoomRegionCommand =
   | { type: 'zoom-region-trim'; zoomId: string; edge: 'start' | 'end'; deltaUs: number }
   | { type: 'zoom-region-update'; zoomId: string; changes: ZoomRegionChanges }
   | { type: 'zoom-region-delete'; zoomId: string }
+
+/** Merges inspector changes into a region; `fromRect: null` drops the pan start framing. Shared with
+ * the live draft preview (`App.tsx`) so a draft and its commit always produce the same region. */
+export function applyZoomChanges(region: ZoomRegion, changes: ZoomRegionChanges): ZoomRegion {
+  const { fromRect, ...rest } = changes
+  const { fromRect: previous, ...base } = region
+  const next = fromRect === undefined ? previous : fromRect
+  return { ...base, ...rest, ...(next ? { fromRect: next } : {}) }
+}
 
 function sortRegions(regions: readonly ZoomRegion[]): ZoomRegion[] {
   return [...regions].sort((a, b) => a.startUs - b.startUs || a.id.localeCompare(b.id))
@@ -48,7 +60,7 @@ export function applyZoomRegionCommand(project: CaptionProject, command: ZoomReg
     return { project: { ...project, zoomRegions: sortRegions([...others, trimmed]) }, selection: { kind: 'zoomRegion', id: trimmed.id } }
   }
   if (command.type === 'zoom-region-update') {
-    const zoomRegions = replaceById(project.zoomRegions, command.zoomId, (region) => ({ ...region, ...command.changes }))
+    const zoomRegions = replaceById(project.zoomRegions, command.zoomId, (region) => applyZoomChanges(region, command.changes))
     if (!zoomRegions) return failItem('asset-missing', [command.zoomId], 'That zoom region no longer exists.')
     return { project: { ...project, zoomRegions }, selection: { kind: 'zoomRegion', id: command.zoomId } }
   }

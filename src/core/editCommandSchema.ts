@@ -160,6 +160,8 @@ const blurDelete = z.strictObject({ type: z.literal('blur-delete'), blurId: item
  * is spelled out; timing changes go through `zoom-region-move`/`zoom-region-trim` instead. */
 const zoomRegionChanges = z.strictObject({
   rect: compositionRectSchema.optional(),
+  /** `null` clears the pan start framing. */
+  fromRect: compositionRectSchema.nullable().optional(),
   easeInUs: z.number().int().nonnegative().max(5_000_000).optional(),
   easeOutUs: z.number().int().nonnegative().max(5_000_000).optional(),
   enabled: z.boolean().optional(),

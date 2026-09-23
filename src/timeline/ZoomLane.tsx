@@ -32,7 +32,7 @@ export function ZoomLane({ regions, durationUs, selectedZoomId, draggingId, onBe
       onKeyDown={(event) => onKeyboardSelect(event, region)}
     >
       <span className="cue-handle start" data-handle="start" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, region, 'start')} />
-      <span className="zoom-block-label" aria-hidden="true">Effects</span>
+      <span className="zoom-block-label" aria-hidden="true">{region.fromRect ? 'Pan' : 'Effects'}</span>
       <span className="cue-handle end" data-handle="end" aria-hidden="true" onPointerDown={(event) => onBeginDrag(event, region, 'end')} />
     </div>)}
   </div>

@@ -110,6 +110,19 @@ describe('manifest v3 routes', () => {
     expect(plain).toContain('fps=fps=25/1:start_time=0[v]')
   })
 
+  it('emits a whole-region lerp for a pan (no ease branches), and leaves a plain zoom graph unchanged', () => {
+    const rect = { x: 320, y: 90, width: 640, height: 360 }
+    const plainZoom = { id: 'z', sequence: { startUs: US, endUs: 3 * US }, rect, easeInUs: 0, easeOutUs: 0 }
+    const pan = { ...plainZoom, fromRect: { x: 0, y: 0, width: 1280, height: 720 } }
+    const zoomGraph = exportFilterGraphV3({ ...backToBack, zoomRegions: [plainZoom] }, [true, true]).filterComplex
+    const panGraph = exportFilterGraphV3({ ...backToBack, zoomRegions: [pan] }, [true, true]).filterComplex
+    expect(panGraph).toContain('scale=w=')
+    expect(panGraph).toContain('(t-1.000000)/2.000000')
+    expect(panGraph).not.toBe(zoomGraph)
+    // Removing `fromRect` returns to byte-identical plain-zoom output.
+    expect(exportFilterGraphV3({ ...backToBack, zoomRegions: [{ ...pan, fromRect: undefined }] }, [true, true]).filterComplex).toBe(zoomGraph)
+  })
+
   it('blurs the already-rgba stacked canvas with no extra format conversion (V4)', () => {
     const region = { id: 'b', sequence: { startUs: 0, endUs: 4 * US }, rect: { x: 0, y: 0, width: 20, height: 20 }, sigmaPx: 6 }
     const plain = exportFilterGraphV3(stacked, [true, false, true, false, true]).filterComplex

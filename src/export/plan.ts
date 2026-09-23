@@ -56,6 +56,8 @@ export const manifestZoomRegionSchema = z.strictObject({
   id: z.string().min(1).max(128),
   sequence: z.strictObject({ startUs: manifestUs, endUs: manifestUs }).refine((range) => range.endUs > range.startUs, 'Zoom window end must follow its start'),
   rect: z.strictObject({ x: pixel, y: pixel, width: pixel.min(1), height: pixel.min(1) }),
+  /** Pan / Ken Burns start framing (schema 11); when present the region eases `fromRect → rect`. */
+  fromRect: z.strictObject({ x: pixel, y: pixel, width: pixel.min(1), height: pixel.min(1) }).optional(),
   easeInUs: z.number().int().nonnegative().max(5_000_000),
   easeOutUs: z.number().int().nonnegative().max(5_000_000),
 })
@@ -386,8 +388,11 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   }))
   const zoomFor = (endUs: number) => project.zoomRegions.filter((region) => region.enabled && region.startUs < endUs).map((region) => ({
     id: region.id,
-    sequence: { startUs: region.startUs, endUs: Math.min(region.endUs, endUs) },
+    // A pan's progress is a function of the region's whole length, so it keeps its true end even
+    // past the sequence end (frames simply stop first); truncating would speed the pan up vs preview.
+    sequence: { startUs: region.startUs, endUs: region.fromRect ? region.endUs : Math.min(region.endUs, endUs) },
     rect: compositionToPixels(region.rect, output),
+    ...(region.fromRect ? { fromRect: compositionToPixels(region.fromRect, output) } : {}),
     easeInUs: region.easeInUs,
     easeOutUs: region.easeOutUs,
   })).filter((region) => region.sequence.endUs > region.sequence.startUs)

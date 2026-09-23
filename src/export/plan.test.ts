@@ -213,7 +213,7 @@ describe('buildExportManifest', () => {
     ({ kind: 'audio', id, trackId, assetId: 'snd', timelineStartUs, sourceStartUs, sourceEndUs, gain: 0.8 })
   const cue = (id: string, mediaAssetId: string): Cue => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'manual', needsReview: false, textSource: 'user', words: [] })
   const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-    schemaVersion: 10, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
+    schemaVersion: 11, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
     tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
   })
@@ -277,6 +277,17 @@ describe('buildExportManifest', () => {
     if (built.manifest.version === 3) expect(built.manifest.zoomRegions).toEqual([{
       id: 'z1', sequence: { startUs: US, endUs: 3 * US }, rect: { x: 480, y: 270, width: 960, height: 540 }, easeInUs: 500_000, easeOutUs: 500_000,
     }])
+  })
+
+  it('carries a pan start framing into the manifest in output pixels and keeps its full length past the sequence end', () => {
+    const rect = { x: 270, y: 151.875, width: 540, height: 303.75 }
+    const zoomRegions = [{ id: 'z1', startUs: 8 * US, endUs: 14 * US, rect, fromRect: { x: 0, y: 0, width: 1080, height: 607.5 }, easeInUs: 0, easeOutUs: 0, enabled: true }]
+    const built = buildExportManifest(project({ zoomRegions }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version === 3) {
+      expect(built.manifest.zoomRegions[0]).toMatchObject({ fromRect: { x: 0, y: 0, width: 1920, height: 1080 }, sequence: { startUs: 8 * US, endUs: 14 * US } })
+      expect(exportManifestSchema.safeParse(built.manifest).success).toBe(true)
+    }
   })
 
   it('forces authored text onto v3 and emits only active text actors in deterministic layer order', () => {

@@ -1,5 +1,17 @@
 # Status
 
+## 2026-09-23 — Pan / Ken Burns (schema 11)
+
+Slice 5 of the effects plan (`~/.claude/plans/we-just-started-implementing-starry-pizza.md`). Zoom regions gain an optional `fromRect`; when present the picture moves `fromRect → rect` over the whole region (smoothstep, no hold, no return to full frame). Schema 11 with a version-only `migrateV10`; the schema-10 validator is frozen as `projectSchemaV10`. Both evaluators (`zoomRectAt`, `zoomScaleCropExpressions`) branch on `fromRect`, so export reuses the existing `scale=eval=frame` + crop chain with no new FFmpeg filter. The manifest carries `fromRect` in output pixels and keeps a pan's true length past the sequence end so export speed matches preview.
+
+UI: Pan and Ken Burns tiles in the Effects panel's Zoom section (draggable or click-to-add), a Pan label on the zoom lane, and in `ZoomInspector` a Start/End framing switch, Swap and Remove pan; the stage gizmo and Zoom-amount slider follow the selected framing and switching seeks the playhead to that end. `zoom-region-update` accepts `fromRect` (null clears), including through the agent command schema.
+
+Verification: `npm run typecheck`, `npm test` (1142 tests across 118 files) and `npm run build` pass; `npm run parity:export` passes (200 caption cases, 0 mismatches — it does not exercise zoom/pan or frame-paint effects). New cases cover pan endpoints/midpoint, seek-direction independence, TS-vs-FFmpeg-expression agreement at sampled times, the 10→11 migration, command set/clear, manifest pixel conversion, graph output and the inspector. A real FFmpeg 9.0.1 encode of the generated expressions on a synthetic clip showed the top-left quarter at 0 s panning to the bottom-right quarter at 3.96 s.
+
+Not verified: no manual Electron pass (adding by click/drag, gizmo on each framing, Swap, Remove pan, undo/redo, opening a schema-10 project), no full-app export compared against preview, and Windows is unvalidated. Vignette/letterbox/fade from the previous slice still have no real export parity run. Committed the prior effects/text work first as `60f853e`.
+
+Next: Slice 6 (VHS / Film grain, schema 12) per the plan; grain is rendered by FFmpeg from a shared seeded noise tile, not the host, to avoid repainting every frame.
+
 ## 2026-09-23 — Direct text-layer creation and clearer animation controls
 
 Preview double-click now creates a selected three-second text item at the clicked composition position and enters direct preview editing; double-clicking an existing title enters edit mode instead. Caption/effect controls and handles are excluded from the add gesture. Titles and the Text lane both expose playhead-add actions. Title style/preset application keeps the item's placement and word animation; the Titles panel labels decorative word motion separately from the inspector's whole-layer In/Out transitions. The preview editor uses the existing text item and undoable update command, so the schema and export protocol are unchanged.

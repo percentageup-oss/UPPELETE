@@ -149,3 +149,54 @@ describe('zoomScaleCropExpressions', () => {
     expect(zoomScaleCropExpressions([], { width: 320, height: 180 })).toBeNull()
   })
 })
+
+describe('pan / Ken Burns (fromRect)', () => {
+  const from = { x: 0, y: 0, width: 1080, height: 607.5 }
+  const to = { x: 200, y: 100, width: 720, height: 405 }
+  const pan = (extra: Partial<ZoomRegion> = {}) => region({ fromRect: from, rect: to, easeInUs: 0, easeOutUs: 0, ...extra })
+
+  it('starts at fromRect, ends at rect, with no hold and no return to the full frame', () => {
+    const r = pan()
+    expect(zoomRectAt([r], r.startUs, composition)).toEqual(from)
+    const nearEnd = zoomRectAt([r], r.endUs - 1, composition)!
+    expect(nearEnd.x).toBeCloseTo(to.x, 3)
+    expect(nearEnd.width).toBeCloseTo(to.width, 3)
+    expect(zoomRectAt([r], r.endUs, composition)).toBeNull()
+  })
+
+  it('ignores the ease fields and is halfway (smoothstep 0.5) at the midpoint', () => {
+    const mid = (r: ZoomRegion) => zoomRectAt([r], (r.startUs + r.endUs) / 2, composition)!
+    expect(mid(pan({ easeInUs: 900_000, easeOutUs: 900_000 }))).toEqual(mid(pan()))
+    expect(mid(pan()).x).toBeCloseTo(100, 6)
+  })
+
+  it('is a pure function of absolute time', () => {
+    const r = pan()
+    const times = [1.2, 1.9, 1.5, 2.7, 1.2].map((s) => s * US)
+    const forward = times.map((t) => zoomRectAt([r], t, composition))
+    const backward = [...times].reverse().map((t) => zoomRectAt([r], t, composition)).reverse()
+    expect(forward).toEqual(backward)
+  })
+
+  it('FFmpeg expressions agree with zoomRectAt at sampled timestamps', () => {
+    const output = { width: 1080, height: 607.5 }
+    const r = pan()
+    const exp = zoomScaleCropExpressions([{ startUs: r.startUs, endUs: r.endUs, rect: to, fromRect: from, easeInUs: 0, easeOutUs: 0 }], output)!
+    const evalAt = (source: string, t: number) => new Function('t', 'iff', 'gte', 'lt', `return ${source.replace(/\bif\(/g, 'iff(')}`)(t, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a >= b ? 1 : 0), (a: number, b: number) => (a < b ? 1 : 0)) as number
+    for (const us of [r.startUs, r.startUs + 400_000, 2 * US, 2.6 * US, r.endUs - 1_000]) {
+      const expected = zoomRectAt([r], us, composition)!
+      const scale = evalAt(exp.scale, us / US)
+      expect(scale).toBeCloseTo(output.width / expected.width, 4)
+      expect(evalAt(exp.x, us / US)).toBeCloseTo(expected.x * scale, 3)
+      expect(evalAt(exp.y, us / US)).toBeCloseTo(expected.y * scale, 3)
+    }
+  })
+
+  it('outside the region the expression is the full frame (scale 1, origin 0)', () => {
+    const r = pan()
+    const exp = zoomScaleCropExpressions([{ startUs: r.startUs, endUs: r.endUs, rect: to, fromRect: from, easeInUs: 0, easeOutUs: 0 }], { width: 1080, height: 607.5 })!
+    const evalAt = (source: string, t: number) => new Function('t', 'iff', 'gte', 'lt', `return ${source.replace(/\bif\(/g, 'iff(')}`)(t, (c: number, a: number, b: number) => (c ? a : b), (a: number, b: number) => (a >= b ? 1 : 0), (a: number, b: number) => (a < b ? 1 : 0)) as number
+    expect(evalAt(exp.scale, 0.2)).toBeCloseTo(1, 6)
+    expect(evalAt(exp.x, 0.2)).toBeCloseTo(0, 6)
+  })
+})
