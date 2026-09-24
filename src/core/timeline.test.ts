@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { commitHistory, createHistory, redoHistory, undoHistory } from './history'
 import type { CaptionProject, Cue } from './model'
-import { anchoredScrollLeft, cueDragBounds, dragCueBy, dragRangeBy, itemDragBounds, pixelToTime, rulerStep, snapDelta, timeToPixel, trimToPlayhead } from './timeline'
+import { anchoredScrollLeft, timelineViewSpanUs, TIMELINE_TAIL_MIN_US, cueDragBounds, dragCueBy, dragRangeBy, itemDragBounds, pixelToTime, rulerStep, snapDelta, timeToPixel, trimToPlayhead } from './timeline'
 import type { CueDragMode } from './timeline'
 import { applyCaptionCommand } from './captionCommands'
 
@@ -18,11 +18,11 @@ const cue = (extra: Partial<Cue> = {}): Cue => ({
 })
 
 const project = (item: Cue): CaptionProject => ({
-  schemaVersion: 5,
+  schemaVersion: 16,
   tracks: [],
   clips: [],
   assets: [],
-  blurRegions: [], markers: [],
+  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
   id: 'project',
   title: 'Test',
   cues: [item],
@@ -208,5 +208,18 @@ describe('generic range dragging', () => {
     const bounds = itemDragBounds({ startUs: 2_000_000, endUs: 4_000_000 }, null, 500_000)
     expect(dragRangeBy({ startUs: 2_000_000, endUs: 4_000_000 }, 'start', 9_000_000, bounds).startUs).toBe(3_500_000)
     expect(dragRangeBy({ startUs: 2_000_000, endUs: 4_000_000 }, 'end', -9_000_000, bounds).endUs).toBe(2_500_000)
+  })
+})
+
+describe('timeline view span', () => {
+  it('adds at least the minimum tail to a short program', () => {
+    expect(timelineViewSpanUs(10_000_000)).toBe(10_000_000 + TIMELINE_TAIL_MIN_US)
+  })
+  it('adds a quarter of a long program', () => {
+    expect(timelineViewSpanUs(400_000_000)).toBe(500_000_000)
+  })
+  it('never shrinks below the program', () => {
+    expect(timelineViewSpanUs(0)).toBe(TIMELINE_TAIL_MIN_US)
+    expect(timelineViewSpanUs(-5)).toBe(TIMELINE_TAIL_MIN_US)
   })
 })

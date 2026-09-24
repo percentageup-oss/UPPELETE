@@ -4,10 +4,26 @@ import type { RecognizedWord } from '../src/core/alignment'
 
 export const GEMINI_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe'
 export type GeminiUsage = { inputTokens?: number; outputTokens?: number }
-export type GeminiRecognition = { words: RecognizedWord[]; usage: GeminiUsage }
-/** BCP-47 hints passed to Gemini; both are sent for code-switched Malayalam/English speech. */
+/** `droppedAnnotations` counts model output that could not become a timed word (wrong annotation
+ * type, missing text, or an invalid/non-positive offset) — visible instead of silently vanishing. */
+export type GeminiRecognition = { words: RecognizedWord[]; usage: GeminiUsage; droppedAnnotations: number }
+/** BCP-47 hints passed to Gemini. */
 export type GeminiLocale = 'ml-IN' | 'en-IN'
-export type GeminiRecognizer = (audioPath: string, locales: readonly GeminiLocale[], signal: AbortSignal) => Promise<GeminiRecognition>
+/**
+ * `locales`: empty lets Gemini detect the language and switch between languages mid-sentence, rather
+ * than biasing it toward a fixed set. The transcription docs document `language_codes` as "If omitted
+ * or empty ([]), the model automatically detects the language and handles code-switching", and the
+ * production default is now empty for mixed speech (see `geminiLocales`).
+ * `systemInstruction`/`customVocabulary` are unmeasured knobs, wired here only so
+ * `scripts/gemini-recognition-probe.ts` can measure them against a real code-switched clip before
+ * either becomes a production default (see docs/decisions/evidence/).
+ */
+export type GeminiRecognitionOptions = {
+  locales: readonly GeminiLocale[]
+  systemInstruction?: string
+  customVocabulary?: readonly string[]
+}
+export type GeminiRecognizer = (audioPath: string, options: GeminiRecognitionOptions, signal: AbortSignal) => Promise<GeminiRecognition>
 
 function offsetUs(value: unknown): number | null {
   if (typeof value !== 'string' || !/^\d+(?:\.\d+)?s$/.test(value)) return null
@@ -20,7 +36,7 @@ function offsetUs(value: unknown): number | null {
  * upload. Returns only timed word annotations (audio-relative microseconds), sorted; untimed text is ignored.
  */
 export function geminiRecognizer(apiKey: string, action: 'align' | 'transcribe'): GeminiRecognizer {
-  return async (audioPath, locales, signal) => {
+  return async (audioPath, options, signal) => {
     const ai = new GoogleGenAI({ apiKey })
     let uploadedName: string | undefined
     try {
@@ -31,25 +47,31 @@ export function geminiRecognizer(apiKey: string, action: 'align' | 'transcribe')
         model: GEMINI_TRANSCRIBE_MODEL,
         input: [{ type: 'audio', uri: uploaded.uri, mime_type: 'audio/wav' }],
         generation_config: { transcription_config: {
-          language_codes: [...locales],
+          // Sending an empty list is not the same as omitting the key: the SDK only auto-detects
+          // when the key itself is absent.
+          ...(options.locales.length ? { language_codes: [...options.locales] } : {}),
+          ...(options.customVocabulary?.length ? { custom_vocabulary: [...options.customVocabulary] } : {}),
           mode: { type: 'verbatim', timestamp_granularities: ['word'] },
         } },
+        ...(options.systemInstruction ? { system_instruction: options.systemInstruction } : {}),
         store: false,
       }, { signal })
       const words: RecognizedWord[] = []
+      let droppedAnnotations = 0
       for (const step of response.steps ?? []) {
         if (step.type !== 'model_output') continue
         for (const content of step.content ?? []) {
           if (content.type !== 'text') continue
           for (const annotation of content.annotations ?? []) {
-            if (annotation.type !== 'word_info' || !annotation.text) continue
+            if (annotation.type !== 'word_info' || !annotation.text) { droppedAnnotations += 1; continue }
             const startUs = offsetUs(annotation.start_offset), endUs = offsetUs(annotation.end_offset)
             if (startUs !== null && endUs !== null && endUs > startUs) words.push({ text: annotation.text, startUs, endUs })
+            else droppedAnnotations += 1
           }
         }
       }
       words.sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
-      return { words, usage: { inputTokens: response.usage?.total_input_tokens, outputTokens: response.usage?.total_output_tokens } }
+      return { words, usage: { inputTokens: response.usage?.total_input_tokens, outputTokens: response.usage?.total_output_tokens }, droppedAnnotations }
     } catch (error) {
       const verb = action === 'align' ? 'Alignment' : 'Transcription'
       if (signal.aborted) throw jobFailure('CANCELLED', `${verb} was cancelled.`)

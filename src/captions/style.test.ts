@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { createProject, projectSchema } from '../core/model'
-import { captionAppearanceSchema, captionStyleInputs, captionStyleSchema, DEFAULT_CAPTION_STYLE, savedCaptionPresetSchema, type CaptionStyle } from './style'
+import { applyCaptionTemplateToText, captionAppearanceSchema, captionStyleInputs, captionStyleSchema, DEFAULT_CAPTION_STYLE, savedCaptionPresetSchema, type CaptionStyle } from './style'
 
 describe('caption style schema', () => {
+  it('applies templates to authored text without replacing its position or rotation', () => {
+    const current: CaptionStyle = { ...DEFAULT_CAPTION_STYLE, motion: 'phrase-fade', motionSpeed: 2.25, appearance: { ...DEFAULT_CAPTION_STYLE.appearance, horizontal: .18, vertical: .74, rotation: 23, fontSize: 51 } }
+    const template: CaptionStyle = { ...DEFAULT_CAPTION_STYLE, motion: 'word-pop', appearance: { ...DEFAULT_CAPTION_STYLE.appearance, horizontal: .5, vertical: .5, rotation: 0, fontSize: 80, backgroundEnabled: true } }
+    const applied = applyCaptionTemplateToText(template, current)
+    expect(applied).toMatchObject({ motion: 'phrase-fade', motionSpeed: 2.25 })
+    expect(applied.appearance).toMatchObject({ horizontal: .18, vertical: .74, rotation: 23, fontSize: 80, backgroundEnabled: true })
+  })
+
   it('accepts the default style', () => {
     expect(captionStyleSchema.parse(DEFAULT_CAPTION_STYLE)).toEqual(DEFAULT_CAPTION_STYLE)
   })

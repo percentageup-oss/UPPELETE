@@ -1,5 +1,17 @@
 import { describe, expect, it } from 'vitest'
-import { parsePercent } from './controls'
+import { parseNumber, parsePercent } from './controls'
+
+describe('parseNumber', () => {
+  it('parses a plain number', () => {
+    expect(parseNumber('0.76')).toBe(.76)
+    expect(parseNumber('-180')).toBe(-180)
+    expect(parseNumber('42')).toBe(42)
+  })
+
+  it('returns null for half-typed or invalid text, never a coerced number', () => {
+    for (const text of ['', '  ', '-', '.', 'abc']) expect(parseNumber(text)).toBeNull()
+  })
+})
 
 describe('parsePercent', () => {
   it('turns a typed percentage into a fraction', () => {

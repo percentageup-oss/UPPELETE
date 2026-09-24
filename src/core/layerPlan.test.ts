@@ -107,4 +107,34 @@ describe('frame signatures', () => {
     expect(plan.frameAt(15).signature).not.toBe(plan.frameAt(25).signature)
     expect(plan.frameAt(15).signature).toBe(plan.frameAt(19).signature)
   })
+
+  it('starts a new span at a frame-paint effect boundary', () => {
+    const effects = [{ id: 'e1', kind: 'vignette' as const, startUs: 1_500_000, endUs: 2_500_000, enabled: true, amount: .5, softness: .5 }]
+    const plan = createLayerPlan({ cues: [], frameRate: { numerator: 10, denominator: 1 }, effects, output })
+    expect(plan.frameAt(14).signature).not.toBe(plan.frameAt(15).signature)
+    expect(plan.frameAt(24).signature).not.toBe(plan.frameAt(25).signature)
+  })
+
+  it('changes signature every frame during a letterbox slide, so ramp frames are never wrongly deduplicated', () => {
+    const effects = [{ id: 'e1', kind: 'letterbox' as const, startUs: 0, endUs: 2_000_000, enabled: true, aspect: 2.39, color: '#000000', easeInUs: 500_000, easeOutUs: 500_000 }]
+    // 10ms frames inside the 500ms slide-in ramp.
+    const plan = createLayerPlan({ cues: [], frameRate: { numerator: 100, denominator: 1 }, effects, output })
+    const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+    expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
+    // Held at the full inset in the middle: static.
+    expect(signatureAt(900_000)).toBe(signatureAt(1_000_000))
+    // Bypassed effects never join the signature at all.
+    const bypassed = createLayerPlan({ cues: [], frameRate: { numerator: 10, denominator: 1 }, effects: [{ ...effects[0], enabled: false }], output })
+    expect(bypassed.frameAt(14).signature).toBe(bypassed.frameAt(15).signature)
+  })
+
+  it('changes signature while authored text animates, and only then', () => {
+    const text = [{ id: 't1', text: 'Hi', startUs: 0, endUs: 2_000_000, style: DEFAULT_CAPTION_STYLE, layerOrder: 1,
+      enter: { kind: 'slide' as const, direction: 'left' as const, durationUs: 500_000 }, exit: { kind: 'none' as const, durationUs: 0 } }]
+    const plan = createLayerPlan({ cues: [], frameRate: { numerator: 100, denominator: 1 }, textOverlays: text, output })
+    const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+    expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
+    expect(signatureAt(900_000)).toBe(signatureAt(1_000_000))
+    expect(signatureAt(900_000)).not.toBe(signatureAt(2_500_000))
+  })
 })

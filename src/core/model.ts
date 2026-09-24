@@ -2,14 +2,25 @@ import { z } from 'zod'
 import { projectMediaSchema } from './media'
 import { captionTokens, locateWordSpans } from './captionText'
 import { languageCodeSchema, sourceTimedTranscriptSchema } from './transcription'
-import { captionStyleSchema, motionSchema, motionSpeedSchema, savedCaptionPresetSchema } from '../captions/style'
+import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema, savedCaptionPresetSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import {
-  blurRegionSchema, clipSchema, legacyAudioClipSchema, legacyBlurRegionSchema, legacyClipSchema, legacyImageOverlaySchema,
-  markerSchema, mediaAssetIdSchema, projectAssetSchema, segmentSchema, sequenceFormatSchema, trackSchema, type ProjectAsset, type Track,
+  blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, legacyAudioClipSchema, legacyBlurRegionSchema, legacyClipSchema, legacyImageOverlaySchema,
+  markerSchema, mediaAssetIdSchema, projectAssetSchema, segmentSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, textOverlaySchema, type ProjectAsset, type Track,
 } from './edit'
 import { clipEndUs, compareClips, trackIndexMap } from './timelineModel'
 import { migrateV4, type MigrationNote } from './migrateV4'
+import { migrateV5 } from './migrateV5'
+import { migrateV6 } from './migrateV6'
+import { migrateV7 } from './migrateV7'
+import { migrateV8 } from './migrateV8'
+import { migrateV9 } from './migrateV9'
+import { migrateV10 } from './migrateV10'
+import { migrateV11 } from './migrateV11'
+import { migrateV12 } from './migrateV12'
+import { migrateV13 } from './migrateV13'
+import { migrateV14 } from './migrateV14'
+import { migrateV15 } from './migrateV15'
 
 export const wordSchema = z.object({
   id: z.string().min(1),
@@ -30,6 +41,10 @@ export const cueSchema = z.object({
   id: z.string().min(1),
   // The video asset this cue's source time belongs to; required by `projectSchema` once clips exist.
   mediaAssetId: mediaAssetIdSchema,
+  // The caption track (schema 6) this cue is on; required by `projectSchema` once the project has
+  // one. A new or migrated project always has a default caption track, so in practice every cue
+  // ends up stamped — see `bindUnboundItems`, the same mechanism that stamps `mediaAssetId`.
+  captionTrackId: z.string().min(1).max(128).optional(),
   startUs: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
   endUs: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   text: z.string(),
@@ -43,6 +58,17 @@ export const cueSchema = z.object({
   // A cue may override either project-level motion field; absent values inherit it.
   motionOverride: z.object({ motion: motionSchema.optional(), motionSpeed: motionSpeedSchema.optional() })
     .refine((value) => value.motion !== undefined || value.motionSpeed !== undefined, 'Caption override must change motion or speed.')
+    .optional(),
+  // A cue may override any of the project-level style's placement fields (an Alt-drag/resize/rotate
+  // on the stage, or an explicit "place this caption differently"); absent values inherit the
+  // project style. Bounds are the appearance schema's own, so a placement override can never exceed
+  // what the style panel itself allows.
+  placementOverride: z.object({
+    horizontal: captionAppearanceSchema.shape.horizontal.optional(),
+    vertical: captionAppearanceSchema.shape.vertical.optional(),
+    fontSize: captionAppearanceSchema.shape.fontSize.optional(),
+    rotation: captionAppearanceSchema.shape.rotation.optional(),
+  }).refine((value) => Object.values(value).some((entry) => entry !== undefined), 'Placement override must change something.')
     .optional(),
 }).refine((cue) => cue.endUs > cue.startUs, { message: 'Cue end must follow its start' })
   .superRefine((cue, context) => {
@@ -126,6 +152,10 @@ export const geminiTranscriptionRunSchema = z.strictObject({
   adjustedSegmentCount: count,
   wordCount: count,
   droppedWordCount: count,
+  // Optional (schema-2-compatible, older runs never recorded it): model output that could not become a
+  // timed word — text Gemini produced that never reached the transcript, surfaced instead of silently
+  // vanishing. See `GeminiRecognition.droppedAnnotations`.
+  droppedAnnotationCount: count.optional(),
   inputTokens: count.optional(),
   outputTokens: count.optional(),
   recognition: sourceTimedTranscriptSchema.optional(),
@@ -300,9 +330,10 @@ export const projectSchemaV4 = z.object({
  * Schema 5: a stacked multi-track timeline (docs/EDITING.md "Schema 5"). Named `tracks`, clips at
  * absolute sequence positions (gaps allowed), upper video tracks compositing over lower ones.
  * Captions stay in the source time of the video they belong to; clips, blur and audio are sequence
- * time. `clips` is always sorted by `(track index, timelineStartUs, id)`.
+ * time. `clips` is always sorted by `(track index, timelineStartUs, id)`. Retained so a schema-5
+ * file still parses and can migrate (`src/core/migrateV5.ts`); schema 6 is now current.
  */
-export const projectSchema = z.object({
+export const projectSchemaV5 = z.object({
   schemaVersion: z.literal(5),
   ...projectCommonShape,
   assets: z.array(projectAssetSchema).max(1000).default([]),
@@ -335,8 +366,10 @@ export const projectSchema = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -361,12 +394,502 @@ export const projectSchema = z.object({
   }
 })
 
+/**
+ * Schema 6: captions gain tracks (docs/EDITING.md "Schema 6"). `project.captionTracks` is a second,
+ * independent set of lanes alongside `project.tracks` — cues reference one by `captionTrackId`, the
+ * same way a clip references a video/audio track by `trackId`. There is deliberately no per-track
+ * simultaneous rendering yet: `activeCueAt` (src/core/timelineModel.ts) picks one cue at a time from
+ * the topmost visible, unlocked caption track that has one, exactly the rule stacked video already
+ * uses for picking one visual layer. Everything else about schema 5 is unchanged. Retained so a
+ * schema-6 file still parses and can migrate (`src/core/migrateV6.ts`); schema 7 is now current.
+ */
+export const projectSchemaV6 = z.object({
+  schemaVersion: z.literal(6),
+  ...projectCommonShape,
+  assets: z.array(projectAssetSchema).max(1000).default([]),
+  tracks: z.array(trackSchema).max(64).default([]),
+  clips: z.array(clipSchema).max(4000).default([]),
+  captionTracks: z.array(captionTrackSchema).max(64).default([]),
+  blurRegions: z.array(blurRegionSchema).max(1000).default([]),
+  markers: z.array(markerSchema).max(1000).default([]),
+  format: sequenceFormatSchema.optional(),
+}).superRefine((project, context) => {
+  uniquePresetIds(project, context)
+  const claim = idClaimer(context)
+  for (const [index, cue] of project.cues.entries()) {
+    claim(cue.id, ['cues', index], 'a caption')
+    for (const [wordIndex, word] of cue.words.entries()) claim(word.id, ['cues', index, 'words', wordIndex], 'a word')
+  }
+  for (const [index, asset] of project.assets.entries()) claim(asset.id, ['assets', index], 'an asset')
+  for (const [index, track] of project.tracks.entries()) claim(track.id, ['tracks', index], 'a track')
+  for (const [index, track] of project.captionTracks.entries()) claim(track.id, ['captionTracks', index], 'a caption track')
+  for (const [index, clip] of project.clips.entries()) claim(clip.id, ['clips', index], 'a clip')
+  for (const [index, region] of project.blurRegions.entries()) claim(region.id, ['blurRegions', index], 'a blur region')
+  for (const [index, marker] of project.markers.entries()) claim(marker.id, ['markers', index], 'a marker')
+
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  const tracks = new Map(project.tracks.map((track) => [track.id, track]))
+  const captionTracks = new Map(project.captionTracks.map((track) => [track.id, track]))
+  const order = trackIndexMap(project.tracks)
+  const compare = compareClips(order)
+  for (const [index, clip] of project.clips.entries()) {
+    const path = ['clips', index]
+    const track = tracks.get(clip.trackId)
+    if (!track) context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: 'A clip must sit on a track that exists.' })
+    else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
+      context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
+    }
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    else if (clip.kind !== 'image') {
+      const durationUs = asset.metadata?.durationUs ?? null
+      if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
+    }
+    const previous = project.clips[index - 1]
+    if (previous) {
+      if (compare(previous, clip) > 0) context.addIssue({ code: 'custom', path, message: 'Clips must be sorted by track, then start time.' })
+      else if (previous.trackId === clip.trackId && clip.timelineStartUs < clipEndUs(previous)) {
+        context.addIssue({ code: 'custom', path, message: 'Clips on one track must not overlap.' })
+      }
+    }
+  }
+  // Captions name the video their source time belongs to. Required once the sequence has video;
+  // when present it must always be a real video asset.
+  const hasVideo = project.clips.some((clip) => clip.kind === 'video')
+  // Captions name their caption track the same way. Required once the project has one; a project
+  // always has a default caption track once anything has stamped it (`bindUnboundItems`), so in
+  // practice this only stays optional for a project with no captionTracks at all.
+  const hasCaptionTracks = project.captionTracks.length > 0
+  for (const [index, cue] of project.cues.entries()) {
+    if (cue.mediaAssetId === undefined) {
+      if (hasVideo) context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'Once the sequence has video, every caption must name the video it belongs to.' })
+    } else if (assets.get(cue.mediaAssetId)?.kind !== 'video') {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'mediaAssetId must reference a video asset.' })
+    }
+    if (cue.captionTrackId === undefined) {
+      if (hasCaptionTracks) context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'Once the project has a caption track, every caption must name the one it belongs to.' })
+    } else if (!captionTracks.has(cue.captionTrackId)) {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'captionTrackId must reference a caption track that exists.' })
+    }
+  }
+})
+
+/**
+ * Schema 7: zoom regions (docs/EDITING.md "Zoom regions"). `project.zoomRegions` is one lane over
+ * the whole composited program — sequence-timed, no asset, no track of its own — the same shape as
+ * `blurRegions`. Only one region can be active at a time, so, like `clips` and schema 3's `segments`,
+ * the array is kept ascending and non-overlapping by every command that touches it; `superRefine`
+ * checks that invariant rather than re-sorting silently. Everything else about schema 6 is unchanged.
+ * Retained so a schema-7 file still parses and can migrate (`src/core/migrateV7.ts`); schema 8 is
+ * now current.
+ */
+export const projectSchemaV7 = z.object({
+  schemaVersion: z.literal(7),
+  ...projectCommonShape,
+  assets: z.array(projectAssetSchema).max(1000).default([]),
+  tracks: z.array(trackSchema).max(64).default([]),
+  clips: z.array(clipSchema).max(4000).default([]),
+  captionTracks: z.array(captionTrackSchema).max(64).default([]),
+  blurRegions: z.array(blurRegionSchema).max(1000).default([]),
+  zoomRegions: z.array(zoomRegionSchema).max(200).default([]),
+  markers: z.array(markerSchema).max(1000).default([]),
+  format: sequenceFormatSchema.optional(),
+}).superRefine((project, context) => {
+  uniquePresetIds(project, context)
+  const claim = idClaimer(context)
+  for (const [index, cue] of project.cues.entries()) {
+    claim(cue.id, ['cues', index], 'a caption')
+    for (const [wordIndex, word] of cue.words.entries()) claim(word.id, ['cues', index, 'words', wordIndex], 'a word')
+  }
+  for (const [index, asset] of project.assets.entries()) claim(asset.id, ['assets', index], 'an asset')
+  for (const [index, track] of project.tracks.entries()) claim(track.id, ['tracks', index], 'a track')
+  for (const [index, track] of project.captionTracks.entries()) claim(track.id, ['captionTracks', index], 'a caption track')
+  for (const [index, clip] of project.clips.entries()) claim(clip.id, ['clips', index], 'a clip')
+  for (const [index, region] of project.blurRegions.entries()) claim(region.id, ['blurRegions', index], 'a blur region')
+  for (const [index, region] of project.zoomRegions.entries()) claim(region.id, ['zoomRegions', index], 'a zoom region')
+  for (const [index, marker] of project.markers.entries()) claim(marker.id, ['markers', index], 'a marker')
+
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  const tracks = new Map(project.tracks.map((track) => [track.id, track]))
+  const captionTracks = new Map(project.captionTracks.map((track) => [track.id, track]))
+  const order = trackIndexMap(project.tracks)
+  const compare = compareClips(order)
+  for (const [index, clip] of project.clips.entries()) {
+    const path = ['clips', index]
+    const track = tracks.get(clip.trackId)
+    if (!track) context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: 'A clip must sit on a track that exists.' })
+    else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
+      context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
+    }
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    else if (clip.kind !== 'image') {
+      const durationUs = asset.metadata?.durationUs ?? null
+      if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
+    }
+    const previous = project.clips[index - 1]
+    if (previous) {
+      if (compare(previous, clip) > 0) context.addIssue({ code: 'custom', path, message: 'Clips must be sorted by track, then start time.' })
+      else if (previous.trackId === clip.trackId && clip.timelineStartUs < clipEndUs(previous)) {
+        context.addIssue({ code: 'custom', path, message: 'Clips on one track must not overlap.' })
+      }
+    }
+  }
+  // Zoom regions share one lane over the whole program, so — like clips on a track — they must be
+  // kept ascending and never overlap; every zoom command maintains this rather than the schema
+  // silently re-sorting.
+  for (const [index, region] of project.zoomRegions.entries()) {
+    const previous = project.zoomRegions[index - 1]
+    if (previous && region.startUs < previous.endUs) {
+      context.addIssue({ code: 'custom', path: ['zoomRegions', index], message: 'Zoom regions must be ascending and non-overlapping.' })
+    }
+  }
+  // Captions name the video their source time belongs to. Required once the sequence has video;
+  // when present it must always be a real video asset.
+  const hasVideo = project.clips.some((clip) => clip.kind === 'video')
+  // Captions name their caption track the same way. Required once the project has one; a project
+  // always has a default caption track once anything has stamped it (`bindUnboundItems`), so in
+  // practice this only stays optional for a project with no captionTracks at all.
+  const hasCaptionTracks = project.captionTracks.length > 0
+  for (const [index, cue] of project.cues.entries()) {
+    if (cue.mediaAssetId === undefined) {
+      if (hasVideo) context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'Once the sequence has video, every caption must name the video it belongs to.' })
+    } else if (assets.get(cue.mediaAssetId)?.kind !== 'video') {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'mediaAssetId must reference a video asset.' })
+    }
+    if (cue.captionTrackId === undefined) {
+      if (hasCaptionTracks) context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'Once the project has a caption track, every caption must name the one it belongs to.' })
+    } else if (!captionTracks.has(cue.captionTrackId)) {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'captionTrackId must reference a caption track that exists.' })
+    }
+  }
+})
+
+/**
+ * Schema 8: effect bypass. `blurRegionSchema` and `zoomRegionSchema` both gained `enabled`, so a
+ * region can be switched off without deleting it — preview and export skip a disabled region, but
+ * it keeps its place in the lane and still counts toward the non-overlap rule below. `enabled`
+ * defaults to `true`, so parsing an older project through it (schema 7 and back) back-fills the
+ * flag rather than needing an explicit migration step. Everything else about schema 7 is unchanged.
+ */
+export const projectSchemaV8 = z.object({
+  schemaVersion: z.literal(8),
+  ...projectCommonShape,
+  assets: z.array(projectAssetSchema).max(1000).default([]),
+  tracks: z.array(trackSchema).max(64).default([]),
+  clips: z.array(clipSchema).max(4000).default([]),
+  captionTracks: z.array(captionTrackSchema).max(64).default([]),
+  blurRegions: z.array(blurRegionSchema).max(1000).default([]),
+  zoomRegions: z.array(zoomRegionSchema).max(200).default([]),
+  markers: z.array(markerSchema).max(1000).default([]),
+  format: sequenceFormatSchema.optional(),
+}).superRefine((project, context) => {
+  uniquePresetIds(project, context)
+  const claim = idClaimer(context)
+  for (const [index, cue] of project.cues.entries()) {
+    claim(cue.id, ['cues', index], 'a caption')
+    for (const [wordIndex, word] of cue.words.entries()) claim(word.id, ['cues', index, 'words', wordIndex], 'a word')
+  }
+  for (const [index, asset] of project.assets.entries()) claim(asset.id, ['assets', index], 'an asset')
+  for (const [index, track] of project.tracks.entries()) claim(track.id, ['tracks', index], 'a track')
+  for (const [index, track] of project.captionTracks.entries()) claim(track.id, ['captionTracks', index], 'a caption track')
+  for (const [index, clip] of project.clips.entries()) claim(clip.id, ['clips', index], 'a clip')
+  for (const [index, region] of project.blurRegions.entries()) claim(region.id, ['blurRegions', index], 'a blur region')
+  for (const [index, region] of project.zoomRegions.entries()) claim(region.id, ['zoomRegions', index], 'a zoom region')
+  for (const [index, marker] of project.markers.entries()) claim(marker.id, ['markers', index], 'a marker')
+
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  const tracks = new Map(project.tracks.map((track) => [track.id, track]))
+  const captionTracks = new Map(project.captionTracks.map((track) => [track.id, track]))
+  const order = trackIndexMap(project.tracks)
+  const compare = compareClips(order)
+  for (const [index, clip] of project.clips.entries()) {
+    const path = ['clips', index]
+    const track = tracks.get(clip.trackId)
+    if (!track) context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: 'A clip must sit on a track that exists.' })
+    else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
+      context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
+    }
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    else if (clip.kind !== 'image') {
+      const durationUs = asset.metadata?.durationUs ?? null
+      if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
+    }
+    const previous = project.clips[index - 1]
+    if (previous) {
+      if (compare(previous, clip) > 0) context.addIssue({ code: 'custom', path, message: 'Clips must be sorted by track, then start time.' })
+      else if (previous.trackId === clip.trackId && clip.timelineStartUs < clipEndUs(previous)) {
+        context.addIssue({ code: 'custom', path, message: 'Clips on one track must not overlap.' })
+      }
+    }
+  }
+  // Zoom regions share one lane over the whole program, so — like clips on a track — they must be
+  // kept ascending and never overlap; every zoom command maintains this rather than the schema
+  // silently re-sorting. A disabled region still claims its place in the lane, so bypassing one
+  // never opens a gap another region could be dropped into and then have re-enabled overlap it.
+  for (const [index, region] of project.zoomRegions.entries()) {
+    const previous = project.zoomRegions[index - 1]
+    if (previous && region.startUs < previous.endUs) {
+      context.addIssue({ code: 'custom', path: ['zoomRegions', index], message: 'Zoom regions must be ascending and non-overlapping.' })
+    }
+  }
+  // Captions name the video their source time belongs to. Required once the sequence has video;
+  // when present it must always be a real video asset.
+  const hasVideo = project.clips.some((clip) => clip.kind === 'video')
+  // Captions name their caption track the same way. Required once the project has one; a project
+  // always has a default caption track once anything has stamped it (`bindUnboundItems`), so in
+  // practice this only stays optional for a project with no captionTracks at all.
+  const hasCaptionTracks = project.captionTracks.length > 0
+  for (const [index, cue] of project.cues.entries()) {
+    if (cue.mediaAssetId === undefined) {
+      if (hasVideo) context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'Once the sequence has video, every caption must name the video it belongs to.' })
+    } else if (assets.get(cue.mediaAssetId)?.kind !== 'video') {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'mediaAssetId must reference a video asset.' })
+    }
+    if (cue.captionTrackId === undefined) {
+      if (hasCaptionTracks) context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'Once the project has a caption track, every caption must name the one it belongs to.' })
+    } else if (!captionTracks.has(cue.captionTrackId)) {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'captionTrackId must reference a caption track that exists.' })
+    }
+  }
+})
+
+/**
+ * Schema 9: frame-paint effects (docs/EDITING.md "Frame-paint effects"). `project.effects` holds
+ * vignette, letterbox and fade regions — sequence-timed like blur and zoom, painted by the shared
+ * caption/overlay host layer rather than an FFmpeg filter (`src/core/frameEffects.ts`). Unlike
+ * zoom's one lane, each effect *kind* has its own non-overlap rule below: two vignettes may not
+ * overlap, but a vignette and a letterbox may. `effects` defaults to `[]`, so parsing a schema-8
+ * file through it back-fills an empty list — `migrateV8.ts` only bumps the version.
+ */
+export const projectSchemaV9 = z.object({
+  schemaVersion: z.literal(9),
+  ...projectCommonShape,
+  assets: z.array(projectAssetSchema).max(1000).default([]),
+  tracks: z.array(trackSchema).max(64).default([]),
+  clips: z.array(clipSchema).max(4000).default([]),
+  captionTracks: z.array(captionTrackSchema).max(64).default([]),
+  blurRegions: z.array(blurRegionSchema).max(1000).default([]),
+  zoomRegions: z.array(zoomRegionSchema).max(200).default([]),
+  effects: z.array(effectRegionSchema).max(500).default([]),
+  markers: z.array(markerSchema).max(1000).default([]),
+  format: sequenceFormatSchema.optional(),
+}).superRefine((project, context) => {
+  uniquePresetIds(project, context)
+  const claim = idClaimer(context)
+  for (const [index, cue] of project.cues.entries()) {
+    claim(cue.id, ['cues', index], 'a caption')
+    for (const [wordIndex, word] of cue.words.entries()) claim(word.id, ['cues', index, 'words', wordIndex], 'a word')
+  }
+  for (const [index, asset] of project.assets.entries()) claim(asset.id, ['assets', index], 'an asset')
+  for (const [index, track] of project.tracks.entries()) claim(track.id, ['tracks', index], 'a track')
+  for (const [index, track] of project.captionTracks.entries()) claim(track.id, ['captionTracks', index], 'a caption track')
+  for (const [index, clip] of project.clips.entries()) claim(clip.id, ['clips', index], 'a clip')
+  for (const [index, region] of project.blurRegions.entries()) claim(region.id, ['blurRegions', index], 'a blur region')
+  for (const [index, region] of project.zoomRegions.entries()) claim(region.id, ['zoomRegions', index], 'a zoom region')
+  for (const [index, effect] of project.effects.entries()) claim(effect.id, ['effects', index], 'an effect')
+  for (const [index, marker] of project.markers.entries()) claim(marker.id, ['markers', index], 'a marker')
+
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  const tracks = new Map(project.tracks.map((track) => [track.id, track]))
+  const captionTracks = new Map(project.captionTracks.map((track) => [track.id, track]))
+  const order = trackIndexMap(project.tracks)
+  const compare = compareClips(order)
+  for (const [index, clip] of project.clips.entries()) {
+    const path = ['clips', index]
+    const track = tracks.get(clip.trackId)
+    if (!track) context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: 'A clip must sit on a track that exists.' })
+    else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
+      context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
+    }
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    else if (clip.kind !== 'image') {
+      const durationUs = asset.metadata?.durationUs ?? null
+      if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
+    }
+    const previous = project.clips[index - 1]
+    if (previous) {
+      if (compare(previous, clip) > 0) context.addIssue({ code: 'custom', path, message: 'Clips must be sorted by track, then start time.' })
+      else if (previous.trackId === clip.trackId && clip.timelineStartUs < clipEndUs(previous)) {
+        context.addIssue({ code: 'custom', path, message: 'Clips on one track must not overlap.' })
+      }
+    }
+  }
+  // Zoom regions share one lane over the whole program, so — like clips on a track — they must be
+  // kept ascending and never overlap; every zoom command maintains this rather than the schema
+  // silently re-sorting. A disabled region still claims its place in the lane, so bypassing one
+  // never opens a gap another region could be dropped into and then have re-enabled overlap it.
+  for (const [index, region] of project.zoomRegions.entries()) {
+    const previous = project.zoomRegions[index - 1]
+    if (previous && region.startUs < previous.endUs) {
+      context.addIssue({ code: 'custom', path: ['zoomRegions', index], message: 'Zoom regions must be ascending and non-overlapping.' })
+    }
+  }
+  // Each effect *kind* has its own lane: two vignettes must be ascending and non-overlapping, the
+  // same rule zoom regions follow, but a vignette and a letterbox (different kinds) may freely
+  // overlap in time — `effectCommands.ts` only ever compares a region against others of its kind.
+  const lastEndByKind = new Map<string, number>()
+  for (const [index, effect] of project.effects.entries()) {
+    const previousEnd = lastEndByKind.get(effect.kind)
+    if (previousEnd !== undefined && effect.startUs < previousEnd) {
+      context.addIssue({ code: 'custom', path: ['effects', index], message: 'Effects of the same kind must be ascending and non-overlapping.' })
+    }
+    lastEndByKind.set(effect.kind, Math.max(previousEnd ?? 0, effect.endUs))
+  }
+  // Captions name the video their source time belongs to. Required once the sequence has video;
+  // when present it must always be a real video asset.
+  const hasVideo = project.clips.some((clip) => clip.kind === 'video')
+  // Captions name their caption track the same way. Required once the project has one; a project
+  // always has a default caption track once anything has stamped it (`bindUnboundItems`), so in
+  // practice this only stays optional for a project with no captionTracks at all.
+  const hasCaptionTracks = project.captionTracks.length > 0
+  for (const [index, cue] of project.cues.entries()) {
+    if (cue.mediaAssetId === undefined) {
+      if (hasVideo) context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'Once the sequence has video, every caption must name the video it belongs to.' })
+    } else if (assets.get(cue.mediaAssetId)?.kind !== 'video') {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'mediaAssetId'], message: 'mediaAssetId must reference a video asset.' })
+    }
+    if (cue.captionTrackId === undefined) {
+      if (hasCaptionTracks) context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'Once the project has a caption track, every caption must name the one it belongs to.' })
+    } else if (!captionTracks.has(cue.captionTrackId)) {
+      context.addIssue({ code: 'custom', path: ['cues', index, 'captionTrackId'], message: 'captionTrackId must reference a caption track that exists.' })
+    }
+  }
+})
+
+/** Schema 10 adds independent sequence-timed authored text layers. The schema-9 validator is
+ * retained as the base validation contract; then text IDs are checked against its full namespace. */
+export const projectSchemaV10 = z.object({
+  ...projectSchemaV9.shape,
+  schemaVersion: z.literal(10),
+  textOverlays: z.array(textOverlaySchema).max(1000).default([]),
+}).superRefine((project, context) => {
+  const old = projectSchemaV9.safeParse({ ...project, schemaVersion: 9 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  const ids = new Set<string>()
+  for (const cue of project.cues) { ids.add(cue.id); for (const word of cue.words) ids.add(word.id) }
+  for (const asset of project.assets) ids.add(asset.id)
+  for (const track of project.tracks) ids.add(track.id)
+  for (const track of project.captionTracks) ids.add(track.id)
+  for (const clip of project.clips) ids.add(clip.id)
+  for (const region of project.blurRegions) ids.add(region.id)
+  for (const region of project.zoomRegions) ids.add(region.id)
+  for (const effect of project.effects) ids.add(effect.id)
+  for (const marker of project.markers) ids.add(marker.id)
+  for (const [index, overlay] of project.textOverlays.entries()) {
+    if (ids.has(overlay.id)) context.addIssue({ code: 'custom', path: ['textOverlays', index, 'id'], message: `IDs must be unique across the project; “${overlay.id}” is already in use.` })
+    ids.add(overlay.id)
+  }
+})
+
+/** Schema 11 adds the optional pan start rect (`zoomRegionSchema.fromRect`). No structural change
+ * beyond that field, so validation delegates to the frozen schema-10 contract. */
+export const projectSchemaV11 = z.object({
+  ...projectSchemaV10.shape,
+  schemaVersion: z.literal(11),
+}).superRefine((project, context) => {
+  const old = projectSchemaV10.safeParse({ ...project, schemaVersion: 10 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 12 adds the optional `mask` on clips, text, caption tracks, blur and frame-paint effects.
+ * Optional, so there is no structural change; validation delegates to the frozen schema-11 contract. */
+export const projectSchemaV12 = z.object({
+  ...projectSchemaV11.shape,
+  schemaVersion: z.literal(12),
+}).superRefine((project, context) => {
+  const old = projectSchemaV11.safeParse({ ...project, schemaVersion: 11 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 13 adds the `color` clip kind (solid/gradient backgrounds with optional preset motion). It
+ * needs no asset, so it is exempt from the asset checks the inherited contract applies, and may only
+ * sit on a video track (enforced by the shared track-kind rule). No data transform from 12. */
+export const projectSchemaV13 = z.object({
+  ...projectSchemaV12.shape,
+  schemaVersion: z.literal(13),
+}).superRefine((project, context) => {
+  const old = projectSchemaV12.safeParse({ ...project, schemaVersion: 12 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 14 adds the optional `speed` curve on video and audio clips (docs/EDITING.md "Clip speed").
+ * Optional, so there is no data transform from 13; the clip schema itself carries the new field. */
+export const projectSchemaV14 = z.object({
+  ...projectSchemaV13.shape,
+  schemaVersion: z.literal(14),
+}).superRefine((project, context) => {
+  const old = projectSchemaV13.safeParse({ ...project, schemaVersion: 13 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 15 adds linked audio (docs/EDITING.md "Linked audio"): `linkId`/`detachedAudio` on clips,
+ * `enabled` on every clip, `solo`/`volume` on tracks, and audio clips may play a video asset's sound.
+ * All optional, so there is no data transform from 14. A link group holds at most one video clip. */
+export const projectSchemaV15 = z.object({
+  ...projectSchemaV14.shape,
+  schemaVersion: z.literal(15),
+}).superRefine((project, context) => {
+  const old = projectSchemaV14.safeParse({ ...project, schemaVersion: 14 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  const videosByLink = new Map<string, number>()
+  for (const [index, clip] of project.clips.entries()) {
+    if (clip.kind !== 'video' && clip.kind !== 'audio') continue
+    if (!clip.linkId) continue
+    if (clip.kind === 'video') {
+      if (videosByLink.has(clip.linkId)) context.addIssue({ code: 'custom', path: ['clips', index, 'linkId'], message: 'A link group holds at most one video clip.' })
+      videosByLink.set(clip.linkId, index)
+    }
+  }
+})
+
+/** Schema 16 adds the `adjustment` clip kind and the `lut` asset kind (docs/EDITING.md "Color:
+ * adjustment layers"). Both are additive to the shapes schema 15 already declares — `clipSchema` and
+ * `projectAssetSchema` (`src/core/edit.ts`) already carry the new variants — so there is no data
+ * transform from 15; only an adjustment clip whose grade names a `lut` asset needs a fresh check, since
+ * that reference can't be expressed in the zod shape alone. */
+export const projectSchema = z.object({
+  ...projectSchemaV15.shape,
+  schemaVersion: z.literal(16),
+}).superRefine((project, context) => {
+  const old = projectSchemaV15.safeParse({ ...project, schemaVersion: 15 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  for (const [index, clip] of project.clips.entries()) {
+    if (clip.kind !== 'adjustment' || clip.grade.input.type !== 'lut') continue
+    if (assets.get(clip.grade.input.assetId)?.kind !== 'lut') {
+      context.addIssue({ code: 'custom', path: ['clips', index, 'grade', 'input', 'assetId'], message: 'A LUT input must reference a lut asset.' })
+    }
+  }
+})
+
 export type Cue = z.infer<typeof cueSchema>
 export type CaptionWord = z.infer<typeof wordSchema>
 export type CaptionProject = z.infer<typeof projectSchema>
+export type CaptionProjectV15 = z.infer<typeof projectSchemaV15>
+export type CaptionProjectV12 = z.infer<typeof projectSchemaV12>
+export type CaptionProjectV13 = z.infer<typeof projectSchemaV13>
+export type CaptionProjectV14 = z.infer<typeof projectSchemaV14>
 export type CaptionProjectV2 = z.infer<typeof projectSchemaV2>
 export type CaptionProjectV3 = z.infer<typeof projectSchemaV3>
 export type CaptionProjectV4 = z.infer<typeof projectSchemaV4>
+export type CaptionProjectV5 = z.infer<typeof projectSchemaV5>
+export type CaptionProjectV6 = z.infer<typeof projectSchemaV6>
+export type CaptionProjectV7 = z.infer<typeof projectSchemaV7>
+export type CaptionProjectV8 = z.infer<typeof projectSchemaV8>
+export type CaptionProjectV9 = z.infer<typeof projectSchemaV9>
+export type CaptionProjectV10 = z.infer<typeof projectSchemaV10>
+export type CaptionProjectV11 = z.infer<typeof projectSchemaV11>
 export type TranscriptionRun = z.infer<typeof transcriptionRunSchema>
 export type AlignmentRun = z.infer<typeof alignmentRunSchema>
 export type { MigrationNote }
@@ -383,7 +906,7 @@ const legacyProjectSchema = z.object({
 
 export type ProjectLoadResult = {
   project: CaptionProject
-  migratedFrom: 1 | 2 | 3 | 4 | null
+  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | null
   /** What the 4 → 5 migration could not carry over exactly, surfaced as a notice (never silent loss). */
   migrationNotes: MigrationNote[]
 }
@@ -421,9 +944,81 @@ export function migrateV3(project: CaptionProjectV3, newId: () => string): Capti
   })
 }
 
-function toV5(project: CaptionProjectV4, newId: () => string): { project: CaptionProject; notes: MigrationNote[] } {
+/** Schema 5 → 6, on top of an already-migrated (or already-parsed) schema-5 project. Its own notes
+ * are always empty: adding one default caption track and stamping every cue with it is lossless. */
+function toV6FromV5(project: CaptionProjectV5, newId: () => string): CaptionProjectV6 {
+  return projectSchemaV6.parse(migrateV5(project, newId).project)
+}
+
+function toV6(project: CaptionProjectV4, newId: () => string): { project: CaptionProjectV6; notes: MigrationNote[] } {
   const migrated = migrateV4(project, newId)
-  return { project: projectSchema.parse(migrated.project), notes: migrated.notes }
+  return { project: toV6FromV5(projectSchemaV5.parse(migrated.project), newId), notes: migrated.notes }
+}
+
+/** Schema 6 → 7, on top of an already-migrated (or already-parsed) schema-6 project. Its own notes
+ * are always empty: an empty zoom-region list is lossless by construction — schema 6 had no zoom
+ * concept to carry over (docs/EDITING.md "Zoom regions"). */
+function toV7FromV6(project: CaptionProjectV6): CaptionProjectV7 {
+  return projectSchemaV7.parse(migrateV6(project).project)
+}
+
+function toV7(project: CaptionProjectV4, newId: () => string): { project: CaptionProjectV7; notes: MigrationNote[] } {
+  const migrated = toV6(project, newId)
+  return { project: toV7FromV6(migrated.project), notes: migrated.notes }
+}
+
+/** Schema 7 → 8, on top of an already-migrated (or already-parsed) schema-7 project. Its own notes
+ * are always empty: `enabled` defaults to `true` on `blurRegionSchema`/`zoomRegionSchema`, so
+ * parsing through `projectSchemaV7` already back-fills every region — `migrateV7` only bumps the
+ * version number. */
+function toV8FromV7(project: CaptionProjectV7): CaptionProjectV8 {
+  return projectSchemaV8.parse(migrateV7(project).project)
+}
+
+/** Schema 8 → 9, on top of an already-migrated (or already-parsed) schema-8 project. `effects`
+ * defaults to `[]` on `projectSchema`, so `migrateV8` only bumps the version number. */
+function toV9FromV8(project: CaptionProjectV8): CaptionProjectV9 {
+  return projectSchemaV9.parse(migrateV8(project).project)
+}
+
+function toV9(project: CaptionProjectV4, newId: () => string): { project: CaptionProjectV9; notes: MigrationNote[] } {
+  const migrated = toV7(project, newId)
+  return { project: toV9FromV8(toV8FromV7(migrated.project)), notes: migrated.notes }
+}
+
+function toV10FromV9(project: CaptionProjectV9): CaptionProjectV10 {
+  return projectSchemaV10.parse(migrateV9(project).project)
+}
+
+/** Schema 10 → 11: `fromRect` is optional, so only the version number changes. */
+function toV11FromV10(project: CaptionProjectV10): CaptionProjectV11 {
+  return projectSchemaV11.parse(migrateV10(project).project)
+}
+
+/** Schema 11 → 12: `mask` is optional, so only the version number changes. */
+function toV12FromV11(project: CaptionProjectV11): CaptionProjectV12 {
+  return projectSchemaV12.parse(migrateV11(project).project)
+}
+
+/** Schema 12 → 13: the `color` clip kind is additive, so only the version number changes. */
+function toV13FromV12(project: CaptionProjectV12): CaptionProjectV13 {
+  return projectSchemaV13.parse(migrateV12(project).project)
+}
+
+/** Schema 13 → 14: `speed` is optional, so only the version number changes. */
+function toV14FromV13(project: CaptionProjectV13): CaptionProjectV14 {
+  return projectSchemaV14.parse(migrateV13(project).project)
+}
+
+/** Schema 14 → 15: every new field is optional, so only the version number changes. */
+function toV15FromV14(project: CaptionProjectV14): CaptionProjectV15 {
+  return projectSchemaV15.parse(migrateV14(project).project)
+}
+const toV15FromV13 = (project: CaptionProjectV13): CaptionProjectV15 => toV15FromV14(toV14FromV13(project))
+
+/** Schema 15 → 16: the new clip/asset kinds are additive, so only the version number changes. */
+function toV16FromV15(project: CaptionProjectV15): CaptionProject {
+  return projectSchema.parse(migrateV15(project).project)
 }
 
 /** `newId` mints the ids a migration needs (assets, clips, tracks); injectable for tests. */
@@ -431,17 +1026,51 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   const current = projectSchema.safeParse(value)
   if (current.success) return { project: current.data, migratedFrom: null, migrationNotes: [] }
   const from = (migratedFrom: 1 | 2 | 3 | 4, v4: CaptionProjectV4): ProjectLoadResult => {
-    const { project, notes } = toV5(v4, newId)
-    return { project, migratedFrom, migrationNotes: notes }
+    const { project, notes } = toV9(v4, newId)
+    return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project)))))), migratedFrom, migrationNotes: notes }
   }
+  const v15 = projectSchemaV15.safeParse(value)
+  if (v15.success) return { project: toV16FromV15(v15.data), migratedFrom: 15, migrationNotes: [] }
+  const v14 = projectSchemaV14.safeParse(value)
+  if (v14.success) return { project: toV16FromV15(toV15FromV14(v14.data)), migratedFrom: 14, migrationNotes: [] }
+  const v13 = projectSchemaV13.safeParse(value)
+  if (v13.success) return { project: toV16FromV15(toV15FromV13(v13.data)), migratedFrom: 13, migrationNotes: [] }
+  const v12 = projectSchemaV12.safeParse(value)
+  if (v12.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(v12.data))), migratedFrom: 12, migrationNotes: [] }
+  const v11 = projectSchemaV11.safeParse(value)
+  if (v11.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data)))), migratedFrom: 11, migrationNotes: [] }
+  const v10 = projectSchemaV10.safeParse(value)
+  if (v10.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data))))), migratedFrom: 10, migrationNotes: [] }
+  const v9 = projectSchemaV9.safeParse(value)
+  if (v9.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data)))))), migratedFrom: 9, migrationNotes: [] }
+  const v8 = projectSchemaV8.safeParse(value)
+  if (v8.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data))))))), migratedFrom: 8, migrationNotes: [] }
+  const v7 = projectSchemaV7.safeParse(value)
+  if (v7.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data)))))))), migratedFrom: 7, migrationNotes: [] }
+  const v6 = projectSchemaV6.safeParse(value)
+  if (v6.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data))))))))), migratedFrom: 6, migrationNotes: [] }
+  const v5 = projectSchemaV5.safeParse(value)
+  if (v5.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId)))))))))), migratedFrom: 5, migrationNotes: [] }
   const v4 = projectSchemaV4.safeParse(value)
   if (v4.success) return from(4, v4.data)
   const v3 = projectSchemaV3.safeParse(value)
   if (v3.success) return from(3, migrateV3(v3.data, newId))
   const v2 = projectSchemaV2.safeParse(value)
   if (v2.success) return from(2, migrateV3(migrateV2(v2.data), newId))
-  // A file that claims the current schema but fails it reports *that* failure, not schema 1's.
-  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 5) projectSchema.parse(value)
+  // A file that claims the current (or a previous, still-named) schema but fails it reports
+  // *that* failure, not schema 1's.
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 16) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 15) projectSchemaV15.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 14) projectSchemaV14.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 13) projectSchemaV13.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 12) projectSchemaV12.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 11) projectSchemaV11.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 10) projectSchemaV10.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 9) projectSchemaV9.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 8) projectSchemaV8.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 7) projectSchemaV7.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 6) projectSchemaV6.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 5) projectSchemaV5.parse(value)
   const legacy = legacyProjectSchema.parse(value)
   return from(1, migrateV3(migrateV2(projectSchemaV2.parse({
     ...legacy,
@@ -467,17 +1096,27 @@ export function defaultTracks(newId: () => string = () => crypto.randomUUID()): 
   ]
 }
 
+/** A new project's default caption lane: one caption track, exactly what every project had
+ * (implicitly, as the one hardcoded captions row) before schema 6. */
+export function defaultCaptionTracks(newId: () => string = () => crypto.randomUUID()) {
+  return [{ id: newId(), name: '', locked: false }]
+}
+
 export function createProject(): CaptionProject {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 5,
+    schemaVersion: 16,
     id: crypto.randomUUID(),
     title: 'Untitled project',
     cues: [],
     assets: [],
     tracks: defaultTracks(),
     clips: [],
+    captionTracks: defaultCaptionTracks(),
     blurRegions: [],
+    zoomRegions: [],
+    effects: [],
+    textOverlays: [],
     markers: [],
     createdAt: now,
     updatedAt: now,

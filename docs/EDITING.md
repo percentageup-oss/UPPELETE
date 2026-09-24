@@ -98,7 +98,7 @@ Implemented 2026-09-19. Schema 4 stored `assets[] + clips[]` but as a **flat lis
 was the position** — clips always touched, gaps were impossible and there was exactly one video
 lane. Schema 5 is a true NLE model: named tracks, clips at **absolute** sequence positions, gaps
 allowed, upper video tracks compositing over lower ones, audio in sequence time, and delivery all
-the way through export. Importing a second video **adds a clip** (appended to V1); nothing replaces
+the way through export. Importing a second video **adds a clip** (appended after the last clip on V1; the timeline draws headroom past the program end so drops and drags can go beyond it); nothing replaces
 the first video any more.
 
 ### Model (`src/core/edit.ts`, `src/core/model.ts`)
@@ -117,9 +117,9 @@ project      { schemaVersion: 5, ...common, assets, tracks, clips, blurRegions, 
 - **Stacking order is array order, back to front** (the convention `overlays` used). The timeline
   draws video tracks in reverse array order (V2 above V1) and audio tracks in array order. Empty
   track names derive V1/V2…/A1… from position (`trackLabel`).
-- **A clip's length is always `sourceEndUs - sourceStartUs`.** There is deliberately no rate/speed
-  field: keeping timeline length ≡ source length is what makes every mapping a pure translation. An
-  image has no source time, so its source range is synthetic and kept anchored at 0 — one length
+- **A clip's length is `sourceEndUs - sourceStartUs` unless it has a `speed` curve** (schema 14, video
+  and audio clips only — see "Clip speed" below). Without one, every mapping is a pure translation.
+  An image has no source time, so its source range is synthetic and kept anchored at 0 — one length
   formula, one trim gesture and one split for every kind.
 - **`format` is load-bearing.** The caption composition is derived from it, not from the video under
   the playhead, so captions never re-layout when playback crosses into a video of another aspect. It
@@ -179,8 +179,8 @@ the cut instant" is gone, since with gaps there is no well-defined collapse.
    An open-ended `durationUs: null` becomes an explicit out point at the end of the file
    (`duration-resolved`), or a one-second placeholder when the file's length was never probed
    (`duration-placeholder`); both are reported.
-5. **Blur regions** take the same span rule and drop `mediaAssetId`. In practice this never fires:
-   export still refuses blur and there is no UI entry point.
+5. **Blur regions** take the same span rule and drop `mediaAssetId`. In practice this rarely fires
+   against a real file: schema 4 predates the blur UI (V4).
 6. **Cues** are untouched. 7. **`format`** is byte for byte what `planFromMedia` produced.
 
 **Park, never drop**: an overlay or sound effect schema 4 no longer played (anchored inside a removed
@@ -210,7 +210,13 @@ position are identical before and after.
   the edit **on the same track** (cross-track ripple is deferred). A ripple insert never splits a clip:
   a point inside one moves to its nearer edge. Trims clamp to the source (`sourceStartUs ≥ 0`,
   `sourceEndUs ≤` the file's duration; images unbounded), to a 1 ms minimum and, in overwrite, to the
-  neighbour. Locked tracks refuse every edit.
+  neighbour — except a neighbour that merely **continues** the clip (same file, same source↔sequence
+  mapping, identical settings: the piece an overwrite carved off), which the trim passes over and
+  carves away. So a clip cut by something dropped inside it heals back to full length by dragging its
+  edge once that clip is removed (`continuesClip`, `clipEdits.ts`). An overwrite that splits a linked
+  pair regroups the right-hand pieces into their own pair. An overwrite trim of a linked clip carries
+  only partners whose same edge is in sync with it (`trimPartners`); ripple trims carry every partner.
+  Locked tracks refuse every edit.
 
 ### Timeline (`src/Timeline.tsx`, `src/timeline/*`, `src/core/timelineLayout.ts`, `src/core/clipDrag.ts`)
 
@@ -272,6 +278,18 @@ The boundary gap between different files has not been measured on real media yet
 `<video>`; audio clips carry their sequence start, so its mapping and the "anchored inside a removed
 range" drop are gone, and a muted track gives its clips gain 0. Mute and hide are read on every
 evaluation, so toggles take effect while playing. Solo is deferred.
+
+**Playback proxies** (`src/app/usePlaybackProxies.ts`, `electron/playbackProxyService.ts`) are the fix
+for a large source (a 4K import edited for a 1080p delivery): `videoPool` above always decodes some
+*real* file, and neither `project.format` nor the export target changes that — only a genuinely
+smaller preview file does. `urlOf` passed into `useProjectPlayback` is `usePlaybackProxies`'s wrapped
+version, not `useAssetUrls`'s own; every other media consumer (export, transcription, waveform,
+thumbnails, parity) keeps calling `useAssetUrls`'s `urlOf` directly and so never sees a proxy — proxy
+substitution happens at exactly this one call site, nowhere else. A proxy is requested at most once
+per fingerprint per session, generated in the background (queued on the same job scheduler as
+transcription/export, so it never competes with either), cached outside Git by fingerprint, and only
+ever used once re-probed and confirmed to match the source's duration. See docs/ARCHITECTURE.md
+"Playback performance" for the full pipeline.
 
 ### Preview compositing (`CompositionLayers.tsx`, `ClipStageEditor.tsx`)
 
@@ -337,7 +355,7 @@ Both routes are kept permanently. (The plan also proposed promoting v1/v2 to v3 
   all of them); the renderer sends only `{ requestId, project }` and main resolves **every** asset the
   timeline plays through its fingerprint registry, refusing by name before the job starts; the plan
   comes from `project.format`, falling back to the first video's probe. `PROTOCOL_VERSION` stays 1
-  (nothing is persisted). Blur is still refused by both routes until V4.
+  (nothing is persisted). Blur reaches FFmpeg on both routes as of V4 (`blurPictureChain`).
 
 **Verified with real FFmpeg 9.0.1** (h264_videotoolbox, this machine, 2026-09-19), using the builder's
 own argv: Route A two different files back to back → 5.000 s / 125 frames, and with a per-frame
@@ -364,7 +382,7 @@ over the black canvas, correct opacity.
 
 ### Deferred, to keep this shippable
 
-Transitions and crossfades (overlapping clips on one track); speed/retime (hence the length rule);
+Transitions and crossfades (overlapping clips on one track); freeze frame, reverse and smooth slow motion;
 blur in export (V4); preview gain above 1; solo, track colours, nested sequences, ducking; cross-track
 ripple; measuring the cross-file boundary gap on real media.
 
@@ -472,8 +490,8 @@ Encoder: X2 selected `h264_videotoolbox` on macOS; a Windows encoder within the 
 | --- | --- |
 | V1 | ✅ Schema 3, `sequence.ts`, generic timeline items/tracks/selection, item commands, manifest v2 + builder refactor, cut-skipping playback on `playbackClock` |
 | V2 | ✅ Image overlays: asset import/resolve/relink IPC, `CompositionLayers`, overlay track and inspector, layer export via frame request v2 |
-| V3 | Sound effects: `SfxScheduler`, SFX track/inspector, audio filtergraph branch |
-| V4 | Blur regions: stage rect tool, blur inspector, video filtergraph branch, measured parity tolerance |
+| V3 | ✅ Sound effects: `SfxScheduler`, SFX track/inspector, audio filtergraph branch |
+| V4 | ✅ Blur regions: Effects-panel tiles, timeline lane, blur inspector, stage rect gizmo, `split/crop/gblur/overlay` filtergraph branch (v2 and v3) — parity tolerance not yet measured (2026-09-23) |
 | V5 | Trim in/out: I/O commands and shortcuts, sequence ruler, SRT in sequence time, single-segment export |
 | V6 | Cuts: cut/delete/join segments, per-segment strips, multi-segment concat, straddling-caption behaviour |
 
@@ -492,17 +510,19 @@ encoding a video without the edit:
 | Manifest carries | Behaviour | Implemented by |
 | --- | --- | --- |
 | `segments` that are not the whole range | trim/concat filtergraph, sequence-time frame count | Remove Silence (2026-09-18), ahead of V6's manual UI |
-| `blurRegions` | throws | V4 |
-| `audioClips` | throws | V3 |
+| `blurRegions` | `split/crop/gblur/overlay`, `enable` in sequence time, before the zoom crop | ✅ V4 (2026-09-23) |
+| `audioClips` | `amix` onto a fixed-duration base, exact sample delays, per-clip gain | ✅ V3 |
 | `overlays` | frame request v2 to the export host; FFmpeg's filtergraph is unchanged | ✅ V2 (2026-09-18) |
 
-V4/V3 each remove their line from `assertExportableManifest` and add the corresponding filtergraph
-branch from the skeleton above, with their own measured smoke evidence. Cuts reached
+`assertExportableManifest` is gone from `workers/media/exportArguments.ts` — every manifest field
+this table lists now has a filtergraph branch, so there was nothing left for it to refuse. Cuts reached
 `assertExportableManifest`/`exportFilterGraph` early, driven by the Remove Silence feature rather than
 V6's own cut/delete/join UI — see `docs/STATUS.md`'s 2026-09-18 entry for exactly what landed and what
 of V6 (the manual tools, and a real-media smoke test) is still open.
 
-**The trim and segment commands exist but have no manual UI.** `trim-set`, `trim-clear`,
+**Trim to playhead and the In/Out range (V5, 2026-09-24).** `Q`/`W` run `clip-trim-to` (trim one edge of the selected clip, or of every clip under the playhead, to the playhead). `I`/`O` set an In/Out range that is view state only: it dims the timeline outside it, stops playback at Out and limits MP4/SRT export through `projectInRange` (`src/core/sequenceRange.ts`), which crops clips and every sequence-time item and shifts them to start at 0 before the normal manifest builder runs. See `docs/STATUS.md` for limitations.
+
+**The legacy segment commands (superseded by clips) exist but have no manual UI.** `trim-set`, `trim-clear`,
 `segment-split`, `segment-delete`, `segment-join-next` and `segment-resize` are implemented and
 unit-tested in `itemCommands.ts`; V5 and V6 add the shortcuts, toolbar actions and track rendering
 that reach them. One entry point does exist ahead of either ticket: Remove Silence
@@ -598,10 +618,16 @@ than one, instead of the constant "Image overlay".
 The fixed transcript column became a CapCut-style icon rail (`src/LeftRail.tsx`, roving-tabindex
 tablist copied from `InspectorTabs.tsx`) that switches a `.side-panel` between Media
 (`src/MediaBin.tsx`), Captions (`src/CaptionsPanel.tsx` — `TranscriptCue`/`CaptionTools` moved out of
-`App.tsx` unchanged), Overlays (`src/OverlaysPanel.tsx`) and Transitions (`src/TransitionsPanel.tsx`,
-a thin wrapper around the unchanged `TemplatesPanel.tsx`, which the inspector's Templates tab
-dropped — `InspectorTabs` is now Edit/Style only). Settings stays a button, opening the existing
+`App.tsx` unchanged), Overlays (`src/OverlaysPanel.tsx`), Titles (`src/TitlesPanel.tsx`, a thin
+wrapper around the unchanged `TemplatesPanel.tsx`, which the inspector's Templates tab dropped —
+`InspectorTabs` is now Edit/Style only) and Effects (`src/EffectsPanel.tsx`, a library of picture
+effects grouped by section — Zoom is the first). Settings stays a button, opening the existing
 dialog; it was never a panel and still isn't.
+
+Titles and Effects were named Transitions and Zoom respectively until the effects library grew
+past zoom; only the rail labels, icons and the two panel/test files were renamed (`git mv` from
+`TransitionsPanel`/`ZoomPanel` — see "Zoom regions", below, for the data model, which keeps its
+`project.zoomRegions` name).
 
 **Classification stays real, not extension-based.** `src/core/assetKind.ts`'s `classifyMedia`
 extends the existing `classifyAsset` (image/audio) with a `'video'` outcome for any non-image-codec
@@ -639,3 +665,529 @@ import (from any of these paths, or the File menu) never silently replaces exist
 **`Timeline.tsx`** gained `onDropAsset`/`onDropFiles` on `.timeline-content`, driven by the same
 `dropContent`; a `.drop-indicator` previews the drop point (and, for an image, its 3s placeholder
 width) during `dragover` and is cleared on `dragleave`/`drop`.
+
+## Zoom regions (schema 8)
+
+`project.zoomRegions` is one sequence-timed, non-overlapping lane over the whole program. A region
+stores `{ id, startUs, endUs, rect, easeInUs, easeOutUs, enabled }`: the picture eases from the full
+output frame into one static composition-space target rectangle, holds, then eases back out. It is
+not a keyframe or tracking system. Zoom in defaults to 500 ms in/out; Zoom out starts tight
+(`easeInUs: 0`) and defaults to a 700 ms release. The timeline has one permanent lane for it,
+labeled **Effects** to match the rail tab (`TimelineTrackHeaders.tsx`'s `zoomLane` row, and
+`ZoomLane.tsx`'s own block label and aria-labels — the component and its props stay zoom-specific
+internally); regions move and trim like clips, but do not belong to tracks or assets.
+
+`zoomRectAt` is the absolute-time evaluator used by preview. The preview transforms the picture
+below host-painted images; captions and host-painted overlays remain pinned. Any project with at
+least one *enabled* zoom region uses export manifest v3, where target rectangles become output
+pixels and FFmpeg runs dynamic `scale=…:eval=frame` plus a fixed output-sized crop **after** the
+flat/stacked picture chain and **before** the transparent caption/overlay layer. Slow ramps can
+differ by an integer pixel from browser resampling; this is measured tolerance, not byte parity.
+Zoom enlarges the already-composed canvas, so it does not recover extra source detail from
+higher-resolution footage.
+
+**Settings and bypass (schema 8).** Selecting a zoom region on the timeline shows `ZoomInspector`
+(`src/ZoomInspector.tsx`) in the right inspector's Edit tab — the same slot `ClipInspector` fills
+for a selected clip, and the pattern every later effect follows. It exposes start/length (move/trim,
+committing immediately), ease in/out (a slider showing the *effective*, half-length-clamped value
+when the raw one is longer than the region can use), a "Zoom amount" slider (rescales the target
+rect around its own center at the composition's aspect ratio — `rectAtZoomFactor`/`zoomFactorOf` in
+`src/core/zoomRegion.ts`), Reset framing and Delete. Rect and ease edits draft into the live preview
+through one shared `{ id, changes: ZoomRegionChanges }` draft (`App.tsx`'s `zoomRegionDraft`, folded
+into `visibleZoomRegions`) and commit as a single `zoom-region-update`, mirroring `ClipInspector`'s
+rect-drag contract.
+
+`enabled` (default `true`) bypasses a region without deleting it: the picture stays full-frame in
+preview (`CaptionStage` filters `zoomRegions`/`blurRegions` to the enabled ones before calling
+`zoomRectAt` or building the blur layer) and the region is left out of the export manifest
+(`blurFor`/`zoomFor` in `src/export/plan.ts`). A disabled region still claims its place in the one
+lane — the non-overlap check does not exempt it, so re-enabling it can never surprise-overlap
+another region — and still renders in the Zoom lane, dashed and dimmed (`.zoom-block.disabled`,
+`ZoomLane.tsx`), so it stays selectable. A project whose zoom regions are *all* disabled is treated
+as zoom-free for the v2/v3 export routing decision (`flatSequence`), the same as a project with none.
+
+Blur regions (`project.blurRegions`) gained the same `enabled` flag in the same schema bump — see
+"Blur regions (V4)" below for its own lane and inspector, added later.
+
+Schema 7 → 8 (`src/core/migrateV7.ts`) only bumps the version number: `enabled` defaults to `true`
+on `blurRegionSchema`/`zoomRegionSchema`, so parsing a schema-7 file through the frozen
+`projectSchemaV7` already back-fills it before the migration function ever runs — the same
+"parsing already did the work" shape as schema 6 → 7's empty zoom lane.
+
+## Pan / Ken Burns (schema 11)
+
+A zoom region may carry an optional `fromRect`. When present the region is a **pan**: the picture
+eases `fromRect → rect` (one smoothstep) across the region's whole length, with no hold and no
+return to the full frame, and `easeInUs`/`easeOutUs` are ignored. Without `fromRect` the region is
+exactly the schema-8 zoom above. It stays in the one zoom lane (labeled **Pan** when it has
+`fromRect`) and reuses the same commands: `zoom-region-update` sets `fromRect`, and `fromRect: null`
+clears it back to a plain zoom (`applyZoomChanges` in `zoomRegionCommands.ts`, shared by the live
+draft preview and the commit so they can never disagree).
+
+Both evaluators branch on `fromRect` in the same file: `zoomRectAt` for preview and
+`zoomScaleCropExpressions` for FFmpeg, so a pan uses the same dynamic-`scale` + fixed-crop chain as
+zoom and needs no new filter. `zoomFor` (`plan.ts`) carries `fromRect` in output pixels and, unlike
+a plain zoom, does **not** truncate a pan's end to the sequence end — a pan's progress depends on
+its whole length, so truncating would make export move faster than preview.
+
+Presets (`defaultPanRects`): *Pan* slides a 1.5x window from the left edge to the right edge;
+*Ken Burns* pushes from the full frame to a 1.25x window offset toward the upper-left third. Both
+default to 5 s. `ZoomInspector` shows a **Start / End framing** switch for pan regions; the stage
+gizmo, the Zoom-amount slider and Swap follow the selected framing, and switching seeks the
+playhead to the region's start or end so the picture shows what is being framed. *Remove pan* keeps
+the end framing as a plain zoom.
+
+Schema 10 → 11 (`src/core/migrateV10.ts`) only bumps the version: `fromRect` is optional.
+
+## Blur regions (V4)
+
+`project.blurRegions` predates zoom (schema 5) and already had `id`/timing/`rect`/`radius`/`enabled`
+and its own `blur-add`/`blur-update`/`blur-delete` commands, MCP access and a preview layer
+(`CompositionLayers`'s `backdrop-filter` blur, under the captions). What V4 added is everything a
+user needs to reach it without MCP, plus the FFmpeg branch that had refused it until now — no schema
+change. Unlike zoom, **blur regions may overlap**: `blur-update` never checks for overlap, and
+neither does the UI, so several blurred areas can be live at the same timestamp. This is also why
+blur has no `clampZoomRegion`-style gap-fitting: `src/core/blurRegion.ts`'s `previewBlurDrag` clamps
+a drag only against zero and the region's own `MIN_BLUR_REGION_US`, never against other regions.
+
+**Timeline lane.** Unlike the always-shown Zoom lane, the blur lane (`blurLane` in
+`timelineLayout.ts`, `BlurLane.tsx`) is shown only when `project.blurRegions` is non-empty — the
+pattern every later effect kind follows; a first blur region is created from the Effects panel tile,
+not an empty permanent row. Overlapping regions currently stack in DOM order rather than packing
+into sub-rows (a stated limitation, not yet built).
+
+**Effects panel and stage editor.** `EffectsPanel.tsx`'s "Blur" section offers two tiles — *Blur
+area* (`defaultBlurAreaRect`, a third of the frame, centered) and *Blur frame*
+(`defaultBlurFrameRect`, the whole output) — both draggable to the timeline or clickable to add at
+the playhead, reusing the same `PresetDragPayload` the Zoom tiles use (`preset: 'blur-area' |
+'blur-frame'`). The stage rect gizmo was generalized: `ZoomStageEditor.tsx` became
+`RectStageEditor.tsx`, taking `keepAspect` and a `label`/`hitClassName` so zoom (aspect-locked, lime)
+and blur (free aspect, cyan `.blur-hit`) share one gesture implementation. `BlurInspector.tsx`
+mirrors `ZoomInspector.tsx` minus ease and zoom-amount (blur has neither ramps nor an aspect-locked
+target) plus a radius slider (1–100 composition units, `blurRegionSchema`'s own bounds).
+
+**Export.** `workers/media/exportArguments.ts`'s `blurPictureChain` chains FFmpeg's
+`split/crop/gblur/overlay` per enabled region, each `enable`d over its own sequence-time window,
+before the zoom crop (matching preview's paint order: blur is inside the zoomed picture) and before
+the transparent caption/host-overlay layer. `crop=…:exact=1` on a `format=rgba` input keeps
+arbitrary (possibly odd) pixel offsets exact — a chroma-subsampled format would round them to even
+boundaries. The normalize/concat step's own label and `,format=rgba` only appear when a manifest
+actually carries a blur region, so a blur-free export's filtergraph string is provably unchanged
+(`exportArguments.test.ts`, `exportArgumentsV3.test.ts`). `assertExportableManifest` — the guard that
+refused any manifest carrying `blurRegions` — is gone; there is nothing left for it to refuse.
+`flatSequence` needed no change: `blurFor` already resolved blur regions into both v2 and v3
+manifests before V4, so blur reaches FFmpeg on whichever route the rest of the project already takes.
+
+**Verified**: `split/crop/gblur/overlay/format` (and, for later effects, `colorchannelmixer`,
+`lutrgb`, `rgbashift`) are present in this project's pinned LGPL-only FFmpeg 9.0.1 build (`--disable-
+gpl`); `eq`/`boxblur` are absent, confirming the doc's `gblur`-over-`boxblur` choice was necessary,
+not stylistic. The exact filter-graph fragments `blurPictureChain` generates — single and two
+chained, time-overlapping regions — were run against that real binary and produced valid RGBA output
+with no filter errors. Not yet run: `scripts/export-parity.mjs`'s full Electron smoke encode, so
+there is no measured pixel tolerance yet (docs/STATUS.md).
+
+## Frame-paint effects (schema 9)
+
+`project.effects` holds vignette, letterbox and fade/dip regions — a new discriminated-union item
+kind (`effectRegionSchema`, `src/core/edit.ts`), sequence-timed like blur and zoom. Unlike blur/zoom,
+this family is never touched by FFmpeg: it is painted by the exact same React layer the caption and
+host-painted-overlay pipeline already uses (`CompositionLayers.tsx`), once in the live preview and
+once by the export host — so preview/export parity is exact by construction, not a measured
+tolerance the way blur and zoom's pixel-grid differences are. This is the "frame paint" family from
+the effects shortlist (blur, fade/flash, color adjust, vignette/letterbox/pan); color adjust and pan
+are not part of this slice.
+
+**Data model.** Each kind shares `{ id, startUs, endUs, enabled }` plus its own fields:
+`vignette` (`amount`, `softness`, both 0–1), `letterbox` (`aspect`, `color`, `easeInUs`/`easeOutUs`
+for the bars sliding in/out) and `fade` (`shape: 'in' | 'out' | 'dip'`, `color`,
+`easeInUs`/`easeOutUs` — only `dip` uses both; `in`/`out` ramp once across the whole region). Flash
+is a UI preset, not its own kind: a brief white `dip` (`defaultFlash`, `src/core/effectCommands.ts`).
+Unlike zoom's single lane, **each kind has its own non-overlap lane**: two vignettes must be
+ascending and non-overlapping (the schema-9 `superRefine` in `model.ts` tracks the last end per
+kind), but a vignette and a letterbox may freely overlap in time — a fade held over a vignette is a
+normal composition, not a conflict. `src/core/migrateV8.ts` only bumps the version: `effects`
+defaults to `[]`, so parsing a schema-8 file through the schema-9 object already back-fills it.
+
+**Evaluator (`src/core/frameEffects.ts`).** `frameEffectsAt(effects, sequenceUs, composition)` is
+the one closed-form-in-absolute-time function both preview and export call — the same contract
+`zoomRectAt` established, so seeking to the same timestamp from either direction gives the same
+result. `rampAmount` reuses `zoomRectAt`'s own ease-in/hold/ease-out shape (now exported from
+`zoomRegion.ts` as `smoothstep`/`lerp` so every effect ramps on the identical curve) for letterbox's
+slide and fade's `dip`; `in`/`out` are a single ramp across the region's length. Letterbox bars land
+top/bottom when the target aspect is *wider* than the composition's own aspect (shrinking the
+visible height to `width / aspect`) and left/right when it is *narrower* (shrinking the visible
+width to `height * aspect`) — so a "Letterbox 2.39" preset bars top/bottom on both a 16:9 and a 9:16
+vertical export, since 2.39 is wider than either. All effect data stays in **composition units**
+(never resolved to output pixels the way blur/zoom's manifest fields are), because
+`CompositionLayers` already does that scaling itself for every layer kind.
+
+**Preview (`App.tsx`'s `CaptionStage`).** Vignette and letterbox are pinned to the output frame like
+a host-painted image overlay — never zoomed with the picture — so they join the same
+`CompositionLayers` call `pinnedLayers` already used for host-painted images, under the captions.
+Fade must cover the captions too, so `CaptionPreview.tsx` gained a new `overCaption` slot, rendered
+after `CaptionView` inside the same scaled composition wrapper `layers` renders below it in.
+
+**Commands (`src/core/effectCommands.ts`).** `effect-add/move/trim/update/delete` mirror
+`zoomRegionCommands.ts` exactly, reusing its `clampZoomRegion`/`MIN_ZOOM_REGION_US` (both already
+generic over any `{startUs,endUs}` item) with one change: the "others" an add/move/trim clamps
+against are only effects of the *same kind* (`sameKindOthers`), never the whole `project.effects`
+array. `EffectChanges` is a plain (non-discriminated) union of each kind's own partial change shape,
+since a caller's inspector already knows which kind it is editing. `TimelineItemKind`/`Selection`
+gained `'effect'`; the MCP `select` tool and `agentProtocol.ts`'s `select` request schema follow.
+
+**Timeline.** `timelineRows` (`timelineLayout.ts`) takes an `effectKinds` list and emits one
+`effectLane` row per kind actually present (`EFFECT_KIND_ORDER`: vignette, letterbox, fade), shown
+only when used — the same "each lane names its own kind" convention blur set. `EffectLane.tsx` is
+one generic component parameterized by kind (label, CSS class), rather than three near-duplicate
+files, since — unlike blur's one-off addition — three new lane kinds arriving at once justified the
+shared component. `Timeline.tsx`'s drag state machine gained one `EffectDrag` kind mirroring `zoom`'s
+branch (`previewEffectDrag`, filtering "others" to the dragged region's own kind); blur's branch was
+left untouched as the precedent for "no lane, may overlap" items, which frame-paint effects are not.
+
+**Effects panel.** Two new sections: **Look** (Vignette, Letterbox 2.39, Letterbox 1.85) and
+**Transitions** (Fade in, Fade out, Dip to black, Flash), same `PresetDragPayload`/tile pattern as
+Zoom and Blur (`PresetDragPayload['preset']` extended with the seven new preset ids).
+`App.tsx`'s `addEffectPreset` dispatcher now routes zoom/blur/frame-paint presets to their own
+default-builder (`defaultVignette`/`defaultLetterbox`/`defaultFade`/`defaultFlash`).
+
+**Inspector (`src/EffectInspector.tsx`).** One shared shell (enabled/bypass, start/length, Delete)
+across all three kinds, plus a per-kind section below it — the same settings-view shape
+`ZoomInspector`/`BlurInspector` established, generalized instead of duplicated a third time.
+
+**Export.** `flatSequence` (`src/export/plan.ts`) forces v3 whenever any effect is enabled, the same
+reason zoom does — v2's `frameRequestAt` never evaluates frame-paint effects. `buildExportManifest`'s
+v3 branch adds `effects: effectsFor(sequenceDurationUs)` (clipped to the sequence end, composition
+units untouched); `manifestEffectSchema` is `effectRegionSchema` reused directly, since — unlike
+blur/zoom, which need FFmpeg pixel coordinates — the manifest's effect data is exactly what the
+project already stores. `frameRequestAtSequence` evaluates `frameEffectsAt` at each requested
+sequence timestamp (in `compositionFor(formatAspect(manifest.format))`, never the manifest's own
+output-pixel `format`) and, only when something is actually visible, emits a new `frameRequestV3`
+(base shape plus `overlays` plus `frameEffects`) instead of v1/v2 — an effect-free v3 project's frame
+requests are therefore still v1/v2, unaffected. `frameHarness.tsx` paints `frameEffects` with the
+exact same `CompositionLayers`/`overCaption` split preview uses. `layerPlan.ts`'s frame signature
+folds in `frameEffectsAt`'s result (sequence-timed, like `timeline` overlays already are) so ramp
+frames are never wrongly deduplicated as identical to their neighbors.
+
+**Verified**: `npx tsc --noEmit` and `npx vitest run` are clean (1112 tests, 115 files, including new
+`frameEffects.test.ts`, effect-command and per-kind-overlap cases in `itemCommands.test.ts`, schema-9
+migration/validation cases in `model.test.ts`, v3-forcing/frame-request cases in `plan.test.ts`, and
+signature/ramp-dedup cases in `layerPlan.test.ts`). `npm run build` (Vite renderer, Electron
+main/preload, worker) succeeds.
+
+**Not verified.** No FFmpeg work was needed or run for this slice — there is nothing to check against
+a real binary, unlike blur. `scripts/export-parity.mjs`'s full Electron smoke encode was not run, so
+there is no real rendered frame confirming a vignette, sliding letterbox bars or a fade actually
+paint correctly pixel-for-pixel between preview and export, only that both sides call the same pure
+evaluator and the same paint component. Not exercised in the running app (`/run`): add each preset
+by click and drag, the new lanes appear only when used, drag/trim/select on each lane, the inspector
+sliders move the live preview, Undo/redo, Bypass, a saved schema-8 project opening and re-saving as
+schema 9. Only macOS (this machine) was touched; Windows is unvalidated.
+
+### Texture effects: Film grain and VHS (still schema 11)
+
+Two more `project.effects` kinds, `grain` (`amount`, `size`) and `vhs` (`amount`, `scanlines`,
+`tracking`), on the same frame-paint path: own lane per kind, evaluated by `frameEffectsAt`, painted by
+`CompositionLayers` in preview and the export host, no FFmpeg filter. They add union members to the
+current effect list rather than a new schema version; a project using them will not open in a build
+that predates them.
+
+**Time-driven, deterministic.** Both re-seed at a fixed 24 Hz "film rate" in absolute sequence time
+(`TEXTURE_TICKS_PER_SECOND`), independent of the project frame rate. `frameEffectsAt` resolves the seed,
+the VHS band position (rolls down the frame every ~7 s), horizontal jitter and flicker from a stateless
+integer hash of the tick, so seeking in any direction, preview and export all agree, and `layerPlan`'s
+signature (which folds in the evaluator result) only repaints when a tick changes. A 30 fps export
+therefore reuses the painted frame across ticks it shares.
+
+**Painting.** Noise is signed and painted with plain alpha (a white and a black `feTurbulence` rect,
+each keeping half the noise above/below mid-gray), because the export layer is transparent and a blend
+mode would have nothing to blend with. Grain size is applied through the SVG `viewBox`, so it scales
+with the composition (4K grain looks like 1080p grain). VHS is scanlines + left/right color bleed +
+flicker + a rolling tracking band + head-switching noise at the bottom. Both paint in the pinned layer
+under captions (order: vignette, VHS, grain, particles, letterbox), so caption text stays clean.
+
+**Honest limits.** VHS is an *overlay* look: it cannot displace or channel-split the picture itself,
+because FFmpeg composes the picture before the host layer exists. A true chroma-shift/wobble would need
+an FFmpeg branch and a measured preview/export tolerance, and is not implemented. Grain and VHS are not
+applied to still frames of the caption-only path (`frameRequestAt` v1/v2); like other frame-paint
+effects they force manifest v3.
+
+### Light particles (schema 16)
+
+`particles` is a masked frame-paint effect with `amount`, `size`, `speed` and `color`; it uses the
+normal per-kind timeline lane, inspector, bypass and undo commands. The default is a three-second
+warm dust field (55% amount, size 4, speed 1×, `#FFD6A0`). Amount selects up to 72 particles; size is
+in composition units and speed is a 0–2× multiplier.
+
+The painter draws one transparent SVG layer with soft radial dots and occasional bright cores. It
+derives its field from the effect ID and the absolute sequence timestamp quantized to 60 Hz, so a seek
+to the same timestamp produces the same image. A fixed 200 ms eased fade at each region edge avoids
+a hard appearance or disappearance. The evaluator carries the tick in the frame request and layer
+signature, so export repaints as the dots move. Preview and export use the same painter; no FFmpeg
+filter or external particle asset is involved. Particles are pinned below captions and titles and can
+be limited with the existing effect mask.
+
+There is no project version bump for this additive effect variant. Projects containing it require a
+build that understands the `particles` effect kind. GUI interaction and export parity remain for the
+user's manual acceptance pass.
+
+## Authored text (schema 10)
+
+`project.textOverlays` stores authored sequence-timed text independently of speech cues. Items carry stable project-wide IDs, non-empty text, a full `CaptionStyle` snapshot, item-specific enter/exit motion, and layer order relative to the caption plane. Schema 9→10 only adds an empty array; text is not a transcript, does not participate in alignment, and is never included in SRT. Text may overlap other text and captions. The always-visible Text lane packs overlapping blocks into stable subrows; new items start at the playhead with a three-second default, clamped to sequence duration. Users can add from Titles or the Text lane, or double-click empty video-frame space to create a title at that normalized composition location. The new item is selected and opens for direct preview editing; double-clicking an existing title edits it instead.
+
+The selected text item is the target for Titles styles, saved presets, word-animation choices and style controls; with no selected text, existing global caption-style behavior is unchanged. Applying a style/template updates appearance while preserving position, rotation, word animation and item-specific In/Out transitions. `TextInspector` exposes text, timing, whole-layer transition kinds/directions/durations, layer controls, duplicate and delete. Its stage editor shares caption move/resize/rotation behavior. Text items can move above or below the caption plane and are pinned to the output frame.
+
+`textMotionAt` evaluates enter/exit animation from absolute sequence time (fade, pop and four slide directions), proportionally shortening ramps on short items. Template word motion uses deterministic runtime-only timing distributed across whole `captionTokens`; it is decorative, not estimated/aligned audio timing. Preview and the export host share `TextOverlayActor` and the same shaped caption painter. Text forces manifest v3; frame request v4 carries already-ordered active text actors, and the host waits for each actor's font/layout readiness before frame commit. Text render order is below-captions items, caption plane, above-captions items, then fade.
+
+Six refined title treatments add an optional `titleMotion` entrance to `CaptionStyle` and authored text: Focus Reveal, Soft Lift, Word Cascade, Line Wipe, Violet Accent and Quiet Scale. These are additive schema-13 fields; older captions and titles without them keep their original appearance and motion. All previous caption templates and the six treatments remain visible in the Titles library. A template click updates the selected authored text layer, or applies to captions when no text layer is selected. The Title motion inspector edits an authored text item's kind and duration, while its existing whole-layer In/Out transitions remain independent. Applying a treatment to text preserves its words, sequence timing, stage placement, rotation and layer order. Applying one to captions preserves cue text and timestamps.
+
+`titleMotionAt` derives progress from an authored item's sequence time or a caption cue's canonical source time. Word Cascade and Violet Accent paint crops of complete shaped lines using measured word regions from the shared caption renderer; for captions, those regions use runtime-only decorative token timing and do not change aligned or imported words. Line Wipe clips complete lines. No treatment creates per-code-unit or per-letter spans. Gallery previews, the live stage and export all use the same `CaptionPreview`/`CaptionView` paint path. Title font choice uses installed Helvetica Neue when available and the existing Malayalam/system fallback stack; no font is bundled.
+
+When a cue has manual emphasis, title word regions are measured against the complete shaped line with those emphasized runs. Word Cascade and Violet Accent crop copies of that same emphasized line, and Line Wipe clips it. Emphasis does not turn off the title treatment or change cue timing.
+
+Verification for the initial implementation: `npm test` and `npm run typecheck` pass. `npm run build` builds the Vite, Electron and media worker bundles. GUI interaction and pixel-level export parity have not yet been manually exercised; Windows remains unvalidated.
+
+## Picture effects: Dreamy glow (still schema 11)
+
+`project.effects` gains a `glow` kind (`amount`, `radius` in composition units, `threshold`), a union
+member like grain/VHS, so no schema bump. Unlike the frame-paint kinds it is **not** painted by the
+host layer: it needs the picture's own pixels (bright areas are isolated, blurred and screened back),
+so it follows blur's model instead. `pictureEffectsAt` (`frameEffects.ts`) evaluates it and keeps it out
+of `FrameEffects`, so the export host's frame request never sees it.
+
+**One recipe, two renderers** (all in sRGB): highlight pass `clip((v-t)/(1-t))` → Gaussian blur σ → screen
+at `amount` (`a + k·b·(1-a)`).
+
+| Step | Preview (`glowFilterStyle`) | Export (`pictureEffectChain`) |
+| --- | --- | --- |
+| Highlights | `feComponentTransfer` linear slope/intercept | `lutrgb` |
+| Blur | `feGaussianBlur` (`edgeMode=duplicate`) | `gblur=sigma:steps=2` |
+| Screen | `feComposite arithmetic k1=-k k2=1 k3=k` | `blend=all_mode=screen:all_opacity=k` |
+
+**Placement.** After zoom (the glow radius does not scale with the camera) and before the transparent
+caption/host layer, so captions, text layers and host-painted images stay crisp. Preview wraps the zoomed
+picture in a filtered div; pinned layers and captions sit outside it. The manifest carries
+`pictureEffects` with `sigmaPx` already resolved to output pixels (like blur); a glow-free graph is
+byte-identical to before.
+
+**Limits.** No ease in/out (hard on/off at the region edges, like blur). Blur kernels and 8-bit rounding
+differ slightly between Chromium and FFmpeg, so preview/export parity is close, not exact; no tolerance
+has been measured. Glow forces manifest v3.
+
+## Layer masks (schema 12)
+
+Any painted layer can carry one optional, static **mask**: `mask?: LayerMask` on video/image clips, text
+overlays, caption tracks (the whole caption plane — every cue on that track), blur regions and the
+frame-paint effects (vignette, letterbox, fade, grain, VHS, light particles). Not maskable: audio, markers, zoom regions,
+and glow (it reads the picture's own pixels). The shape is a `rect` (with corner radius), an `ellipse`, or
+a closed bezier `path` (3–256 anchors with optional absolute in/out handles), in composition units, and may
+overhang the frame. `invert`, `feather` (Gaussian σ = feather/2), `density` (0–1) and `enabled` complete it.
+Schema 11 → 12 (`migrateV11.ts`) only bumps the version. One command, `mask-set { target, mask | null }`
+(`maskCommands.ts`, zod-mirrored for MCP), is one undo step. Moving a picture-in-picture clip on the stage
+carries its mask with it (`clip-update` translates it when the rect only moved); resizing does not, and a
+title's mask is fixed in the frame while the title moves under it.
+
+**One generator.** `layerMask.ts` turns a mask into an SVG whose *alpha* is the mask — a pure function, so
+the worker and tests run it too. Preview and the export host apply it as a CSS `mask-image`
+(`maskStyle.ts`) on the layer's own element (never a wrapper: an ancestor mask creates a backdrop root and
+would break `backdrop-filter` blur). Enter/exit motion of a title moves inside a fixed mask.
+
+**Export.** *Host-painted* layers (captions, text, images above every video, frame-paint effects) are
+masked by the same components in the export host, so parity is exact by construction — the frame request
+carries `captionMask` and per-item `mask` (optional fields; no version bump). *FFmpeg-composited* layers
+(video clips, images under a video, blur) take a mask image: the worker sends the host a **v5 frame
+request** (`maskFill`), which paints an opaque white fill through the mask, and stores the PNG per distinct
+mask. The mask files are extra `-loop 1 -framerate R -t <len>` inputs **after** the caption pipe (so a
+mask-free export's arguments are unchanged), in `maskTargets(manifest)` order. Per layer the graph does
+`split → alphaextract` of the fitted picture, `[mask]format=rgba,alphaextract,crop=box` for the matte,
+`blend=all_mode=multiply:shortest=1`, then `alphamerge` — multiplying keeps `contain` letterbox
+transparency; opacity and the start `tpad` come after. A masked blur masks its blurred copy before the
+`overlay`, so blur shows only inside the mask. Any active mask forces manifest v3 (`flatSequence`) and the
+stacked route (`v3Route`). The host runs first so the mask images exist before the encoder opens them.
+
+**Layers tab** (left rail, after Effects; `LayersPanel.tsx`, `layerStack.ts`). Lists what is painted at
+the playhead, front to back in the stage's paint order: fade, text above captions, the caption plane, text
+below, pinned effects, host-painted images, blur, then clips from the top track down. Clicking a row selects
+the item on the timeline (a caption plane selects its active cue) and focuses its **Mask** section: add a
+rectangle/ellipse/pen; enable, shape (converting keeps the footprint), invert, feather, density, corner
+radius; *Edit on preview*, *Reset to layer*, *Delete mask*. Sliders draft live and commit once. On the
+preview (`MaskStageEditor.tsx`): the outside of the mask is tinted red; a rect/ellipse is moved and resized
+by its box; a pen path is drawn by clicking corners and click-dragging smooth points (click the first point
+or Enter closes, Backspace removes the last, Esc cancels), then edited by dragging anchors and handles,
+Alt-click (corner/smooth), double-click the outline (add a point) and Delete (remove one). `penPath.ts`
+holds the geometry.
+
+**Fix that shipped with it.** `layerPlan`'s frame signature ignored authored text, so a title animating
+over otherwise-static frames could re-send a stale PNG; text actors' motion is now part of the signature.
+
+**Limits.** Masks are static (no keyframes) and one per item. Rect/ellipse gizmo edits stay inside the
+frame (paths may overhang). A mask on a FFmpeg-composited layer differs from preview only by
+Chromium-vs-FFmpeg edge rasterization; no pixel tolerance has been measured for it.
+
+## Backgrounds (schema 13)
+
+A background is a solid color or a two-stop gradient that lives on a **video track** as a `color` clip, so it stacks, moves, trims, splits, fades (opacity), masks and undoes exactly like other clips. It has no media file. Fill is `{ type: 'solid', color }` or `{ type: 'gradient', from, to, angle }` (CSS angle: 0° up, 90° right). Optional `motion`, all looping smoothly and never jumping:
+
+- **shift** — blends toward a second fill and back;
+- **pulse** — blends toward black or white by `depth` and back;
+- **drift** — pans an oversized gradient in `direction` (a solid has nothing to pan, so it stays still).
+
+`periodUs` (1–20 s) is one full there-and-back. The phase counts from the clip's source start, so moving a clip keeps its loop and the right half of a split continues the left half's.
+
+**Adding one.** Effects tab → Backgrounds: ten presets and a Custom block (Solid/Gradient, angle, motion, loop length). Drag a swatch onto the timeline or click to add at the playhead. It is 2 s long by default (trim or stretch it) and lands on the lowest free video track *below* every track holding video or images, else on a new track at the bottom. Drop it on a specific free video track to override. The Edit tab's clip inspector changes the fill and motion afterwards; `clip-update` accepts `fill` and `motion` (`null` stops the motion) and `clip-add` accepts `trackIndex`.
+
+**Trim.** Like video, the start can only be dragged back as far as it has been trimmed in; the end extends freely. To grow a background earlier, move it or extend its end.
+
+**Export.** FFmpeg makes the picture (see ARCHITECTURE.md "Backgrounds"). Solids are exact; gradients follow the same line as the preview to within rounding (±1–2 levels measured against the shared math with the pinned FFmpeg build), and shift/pulse on frames ≥480 px are within ~4 levels of an exact blend. Preview (Chromium CSS) versus export has **not** been compared pixel-for-pixel in the running app. A timeline with only backgrounds cannot export until a video sets the output size.
+
+## Clip speed (schema 14)
+
+A video or audio clip may carry `speed: { points: [{ sourceUs, rate }] }` — a piecewise-linear rate
+over the asset's **source** time (rate 0.1×–10×, 1–32 points in strictly increasing order, the rate
+held before the first and after the last point). One point, or all rates equal, is a constant speed;
+anything else is a ramp. Because points live in source time, split and trim never rewrite the curve
+and both halves of a split keep evaluating it. The field is optional: a project without it is
+byte-for-byte what it was (schema 13 → 14 only bumps the version).
+
+**One mapping.** `src/core/clipTime.ts` owns source↔sequence time. The sequence time to reach source
+offset `s` is `∫ ds / v(s)`; on a constant piece that is `L/v`, on a linear piece `L/(vb−va)·ln(vb/va)`,
+so the mapping and its inverse are closed-form, not numerically integrated. `timelineModel.ts`
+(`clipLengthUs`, `sequenceUsOf`, `sourceUsAt`, `spansInSequence`) delegate to it; preview, captions,
+edits and export all read time through those. Floats inside, one `Math.round` out.
+
+**Edits.** A trim or drag delta is timeline time; `trimClip` maps it to the source edge with
+`sourceUsAt`. `clip-update { speed }` changes the clip's timeline length and ripples later clips on
+its track by the difference (a locked track refuses); `speed: null` returns to 1×. Silence removal and
+"restore removed ranges" lay clips out by retimed length.
+
+**Captions** stay stored and evaluated in source time, so word timing follows the retimed speech;
+their animation durations therefore scale with the clip (a 2× clip plays a 200 ms fade in 100 ms).
+
+**Audio.** A constant speed keeps pitch (`<video>`'s default `preservesPitch` in preview, `atempo` in
+export; `atempo` accepts 0.5–100 so slow-downs below 0.5× are split into equal stages). A ramp is
+**muted** in preview and export. Known limitation: an *audio-track* clip in preview goes through Web
+Audio (`AudioBufferSourceNode`), which cannot preserve pitch, so it sounds pitch-shifted in preview
+but not in export.
+
+**Preview.** `transport.ts` sets each element's `playbackRate` to the clock rate × the curve's rate at
+the current source time (clamped to Chromium's 0.0625–16), re-evaluated every tick so a ramp follows
+the curve; the master clock discipline maps the presented frame's media time through `sequenceUsOf`.
+
+**Export.** A clip with `speed` forces manifest v3 (`flatSequence` returns null). The graph keeps
+`trim=duration` and the input `-t` in *source* length and retimes after `setpts=PTS-STARTPTS`:
+constant `setpts=PTS/rate`, ramps a nested `if(lt(…))` closed-form expression built from the same
+pieces (`retimeFilter`, tested against `clipTime` at sample points). `fps` then makes constant frame
+rate, so slow motion repeats frames (no interpolation) and fast motion drops them. `sequenceDurationUs`
+and the flat/stacked route use the retimed length.
+
+**Timeline.** A `2×`/`Ramp` badge on the clip; ramp filmstrips sample evenly along timeline width and
+ramp waveforms are resampled per column (`clipPeaks`); caption word blocks are laid out in sequence time.
+
+**UI.** Inspector → Speed: Constant (0.25/0.5/1/2/4× chips, log slider, exact field) or Curve (Montage,
+Hero, Bullet, Flash in/out, Jump cut presets and an editable curve: drag points, double-click to add,
+Delete to remove, arrow keys nudge). Presets are position/rate lists laid over the clip's source range.
+
+## Linked audio (schema 15)
+
+Implemented 2026-09-24. A video's sound is its own **audio clip on an audio lane**, linked to the picture, as in DaVinci Resolve — not a band inside the thumbnail.
+
+```ts
+videoClip { …, detachedAudio?: true, linkId?: id }   // detachedAudio: the video is silent; its sound is the linked audio clip
+audioClip { …, linkId?: id }                          // may reference a *video* asset (first audio stream)
+every clip { enabled?: false }                        // disabled: kept on the timeline, skipped by preview and export
+audio track { solo?: boolean, volume?: 0..4 }         // solo silences unsoloed audio tracks (and legacy embedded video sound)
+```
+
+- **Placement.** `clip-add` of a video whose asset has an audio stream also places a mirror audio clip (same start, source range, speed, gain) on the audio lane with the same ordinal (V2 → A2), or the lowest free unlocked lane, or a new lane, in the same undo step. `detachedAudio: false` keeps the legacy embedded sound; a clone (a `linkId` already in use) gets a fresh pair. **Existing projects are not migrated to separate audio**; `clip-detach-audio` converts one legacy video on request.
+- **Groups.** Clips sharing a `linkId` (at most one video) are moved by one shared delta, trimmed by the smallest achievable common delta, split together (right halves form a new group), deleted, disabled and re-speeded together. `unlinked: true` on the command (Alt-click in the UI) acts on one clip; a half whose partner was not split leaves the group. `clips-link` / `clips-unlink` edit membership; a group of one is dissolved. Silence removal cuts audio of the same asset by the same kept ranges and regroups each piece pairwise; restore collapses linked audio runs like video runs.
+- **Gain.** `effectiveGain(clip, tracks)` (`clipLinks.ts`) = clip gain × track fader, and 0 when disabled, on a muted or unsoloed track, or for a detached video. Preview (pooled elements, `SfxScheduler`) and export both use it.
+- **Preview.** Audio clips of a video asset play through the transport's pooled elements (keyed track/asset, never the clock master); `videoAssetIds` tells `wantedElements` which audio clips those are. Audio-file clips still use Web Audio.
+- **Export.** `contributing()` drops disabled and silent clips. `flatSequence` (manifest v2) accepts a detached video only when its linked audio is an exact unity mirror (same file, position, range, audible) — v2's own `[0:a:0]` then already plays it; every other case is v3, where the audio clip is a separate input and the detached video has gain 0.
+- **Timeline.** Waveform only in audio lanes (a legacy embedded video still draws its band); link glyph, dashed partner highlight, disabled clips greyed; audio headers carry M / S / L and a fader; D toggles a clip, Cmd/Ctrl+Alt+L links or unlinks.
+
+## Color: adjustment layers (schema 16)
+
+> Pooled `<video>` ownership: the same element moves between `VideoSlot` and `GradedVideo`, so every mounter applies the full `pooledVideoStyle` (including `opacity`) — never a partial style, or a leftover `opacity: 0` blanks the preview once the grade goes away.
+
+A **DaVinci-style adjustment layer**: a clip with no asset that grades every video/image clip on
+the tracks below it, for its own time range, instead of carrying a picture of its own — a new
+**Color** rail tab, after Effects. Preview and export share the baked 3D LUT and trilinear sampling;
+video decode, half-float upload, `.cube` serialization and H.264 encoding still create measured
+pixel differences (see the evidence below).
+
+```ts
+grade = { input: {type:'none'} | {type:'log', profile} | {type:'lut', assetId}, primaries, look: {id, strength} | null, intensity: 0..1 }
+adjustmentClip { kind: 'adjustment', ...clipTiming, grade }   // video-track only, synthetic source range like `color`
+projectAsset { kind: 'lut', ... }                             // a user-imported `.cube`, referenced/relinked like media
+```
+
+- **Pipeline** (`src/color/`): input transform (`transfer.ts`+`gamut.ts` for the six built-in camera
+  log curves — F-Log, F-Log2, S-Log3, Apple Log, V-Log, C-Log3 — or a user `.cube`) → primaries
+  (`primaries.ts`: exposure, white balance, contrast, highlights/shadows, lift/gamma/gain, saturation)
+  → an optional bundled film look (`looks.ts`, 17 original procedural looks, no camera/film brand
+  or creator name anywhere; six are hue-selective — `hues` bands in OkLCh via `oklab.ts`, plus an
+  optional matte `fade` — so teal-and-orange or neon grades can move skin and sky in opposite
+  directions) → an intensity mix back toward the untouched input. `bakeGrade` (`bake.ts`) evaluates
+  that pipeline at every point of a 33³ lattice; `composeLuts` folds two baked LUTs into one for a
+  stack of adjustment layers, bottom-up by track order. A `color` (generated background) clip is
+  never graded.
+- **Look thumbnails and reference matching** (Color tab). Film-look tiles show the frame under the
+  playhead (captured from the pooled `<video>` once the playhead has been still 250 ms, only while
+  the Color tab is open) graded through each look's own baked 17³ lattice (`lookThumbnail.ts`), or a
+  drawn sample scene with no clip. "Match reference image…" (My LUTs) picks a still and derives a
+  grade from the playhead frame (`referenceMatch.ts`: Oklab quantile-matched, slope-limited tone
+  curve plus per-shadow/mid/highlight chroma shift and gain), previews before/after with a strength
+  slider, and saves a `.cube` through `lut:save-generated` (native save dialog, defaulting to the
+  project folder; main re-validates with `parseCube`), which then joins the project as a normal `lut`
+  asset. It is a statistical transfer, not scene understanding.
+- **Grade resolution** (`src/core/gradeStack.ts`): `adjustmentsOver`/`gradeStackFor` pick the
+  enabled adjustment clips on a track above a picture clip that overlap it — shared verbatim by the
+  export plan (which splits a clip into constant-stack segments before baking, `src/export/plan.ts`)
+  and the live preview, so the two can never disagree about which layers apply.
+- **Preview** (WebGL2, `src/captions/GradedVideo.tsx` + `src/color/webglLut.ts`): the preview's own
+  bake-and-cache step is `src/color/previewGrade.ts` (`bakedGradeStack`, memoized by the stack's own
+  content, mirroring the export worker's `bakeStackLut`). `GradedVideo` takes over mounting the
+  pooled `<video>` element from `VideoSlot` for a graded layer — it stays decoding at `opacity: 0`
+  under a canvas that draws it each presented frame (`requestVideoFrameCallback`) through the LUT,
+  uploaded as an `RGBA16F` `TEXTURE_3D` (core-filterable in WebGL2, unlike `FLOAT`) and sampled with
+  the texel-center remap that matches `sampleLut`'s manual trilinear math. A lost WebGL context, or
+  no WebGL2 at all, falls back to the plain ungraded element with a visible "Grade unavailable"
+  badge — never a silently wrong picture. Images go through the same component, redrawn only when
+  their grade changes.
+- **Export** (`src/export/plan.ts`, `workers/media/exportArguments.ts`, `export.ts`): a graded
+  segment gets a `lutId` naming a manifest-level baked LUT (deduped by content); the export worker
+  writes each into its job's temp directory as a real `.cube` file (`src/color/cube.ts`) and inserts
+  `lut3d=interp=trilinear` into the FFmpeg filtergraph, right after retiming, with an explicit
+  `in_color_matrix=bt709:in_range=tv` for video YUV→RGB. Images remain full-range RGB and pass
+  through FFmpeg when adjustment layers are present, so they can receive the same per-layer LUT.
+- **Placement** (`src/core/clipEdits.ts`'s `adjustmentTrackAbove`/`topAdjustmentTrackFor`,
+  `src/ColorPanel.tsx`). A Color tile is a drag payload carrying a starting `grade`
+  (`COLOR_DRAG_TYPE`, `src/core/dragPayload.ts`). Dropped onto an existing clip, the new adjustment
+  layer spans that clip's own range on the free unlocked video track directly above it, creating one
+  there if none is free. Dropped on empty timeline space, it is 5 seconds long on the track under
+  the pointer if that fits, else the topmost free video track. A click adds it at the playhead on
+  the topmost free video track. `src/ColorInspector.tsx` (embedded in `ClipInspector` for a selected
+  adjustment clip) edits the grade's input, primaries, look and intensity; the clip's own
+  Enabled toggle (shared chrome every clip kind has) is its bypass.
+- **`.cube` import.** "My LUTs" → Import .cube opens a native dialog filtered to `.cube`
+  (`lut:import` IPC, `electron/main.ts`'s `inspectLut`), reads, validates (`parseCube`) and
+  fingerprints the file the same way other media is, and creates a new `lut`-kind project asset. A
+  `lut` asset resolves at `project:open` the same way as media (`electron/projectMedia.ts`'s
+  `candidatePaths`), just without ffprobe; its `.cube` text is hydrated into the renderer's
+  `useLutAssets` cache in the same round trip. Until a missing or mismatched LUT is relinked (the
+  same `assets:relink` IPC, a `lut`-specific branch), any grade naming it renders ungraded with a
+  warning in preview; export blocks with a relink message rather than writing an ungraded MP4.
+
+The macOS arm64 synthetic S-Log3 + Cinema Soft parity run (`npm run parity:export -- --only color`,
+2026-09-24) compared 27,648 interior RGB channels from a real WebGL2 `readPixels` preview against
+the production v3/FFmpeg H.264 export. Mean absolute difference was 5.93/255, 95th percentile
+23/255 and observed maximum 43/255. An identity-LUT comparison against the source decode alone
+measured 3.83/255 mean, 12/255 at the 95th percentile and 16/255 maximum. These are observations
+for this fixture and machine, not a general tolerance for all codecs or camera footage. See
+`docs/decisions/evidence/x3-parity-2026-09-24.json`. Windows and a real log-camera file remain
+unmeasured.
+
+- **Out of scope for v1.** Keyframed grades, scopes/waveforms, HSL qualifiers and power windows, 1D
+  LUTs, grading a `color` (background) clip, HDR output. The primaries inspector exposes lift/gamma/
+  gain as one master slider per wheel (all three channels together) rather than per-channel R/G/B —
+  the underlying schema already carries a full RGB triplet, an agent or a future per-channel UI can
+  set it precisely.

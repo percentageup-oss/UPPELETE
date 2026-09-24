@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import type { CaptionWord, Cue } from './core/model'
-import { TemplatesPanel, templatePreviewTimestampUs } from './TemplatesPanel'
+import { TemplatesPanel, templateDemoFor, templatePreviewTimestampUs } from './TemplatesPanel'
 import { DEFAULT_CAPTION_STYLE } from './captions/style'
 import { CAPTION_TEMPLATES } from './captions/templates'
 
@@ -28,6 +28,15 @@ it('disables the three word-dependent motion options and explains why when no cu
   for (const value of ['active-word-highlight', 'word-pop', 'progressive-word-reveal']) expect(motionLabel(html, value)).toContain('disabled')
   expect(motionLabel(html, 'static-clean')).not.toContain('disabled')
   expect(motionLabel(html, 'phrase-fade')).not.toContain('disabled')
+})
+
+it('presents title styles and decorative word animation independently of caption timing', () => {
+  const html = render({ target: 'text', cues: [plainCue], style: { ...DEFAULT_CAPTION_STYLE, motion: 'word-pop' } })
+  expect(html).toContain('Title styles')
+  expect(html).toContain('Word animation')
+  expect(html).toContain('Keynote templates set appearance and animation while keeping title position and timing.')
+  expect(html).toContain('Word animation is decorative and does not use or alter speech caption timing.')
+  expect(motionLabel(html, 'word-pop')).not.toContain('disabled')
 })
 
 it('enables word-dependent motion and shows counts once a cue has complete word timing', () => {
@@ -63,6 +72,17 @@ it('does not prompt to estimate word timing once the selected caption already ha
 it('mint reveal uses a regular (non-bold) base font weight', () => {
   const mintReveal = CAPTION_TEMPLATES.find((template) => template.id === 'mint-reveal')!
   expect(mintReveal.style.appearance.fontWeight).toBe(400)
+})
+
+it('lists Malayalam Gold with its localized two-line gallery sample', () => {
+  const gold = CAPTION_TEMPLATES.find((template) => template.id === 'malayalam-gold')!
+  expect(gold).toMatchObject({
+    name: 'Malayalam Gold',
+    tags: expect.arrayContaining(['Malayalam', 'Gold', 'Outlined', 'Title']),
+    demo: { text: 'മലയാളം ടൈറ്റിൽ\nടെംപ്ലേറ്റ്' },
+  })
+  expect(templateDemoFor(gold)).toEqual(gold.demo)
+  expect(render()).toContain('Apply Malayalam Gold')
 })
 
 it('lists saved presets with apply and delete actions, and disables saving an empty name', () => {

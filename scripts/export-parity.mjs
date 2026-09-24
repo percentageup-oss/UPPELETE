@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir, cpus, totalmem, release } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -46,7 +47,9 @@ await mkdir(scratchRoot, { recursive: true })
 const helpersPath = join(await mkdtemp(join(scratchRoot, 'caption-x3-helpers-')), 'helpers.mjs')
 await build({ entryPoints: ['scripts/export-parity-helpers.ts'], outfile: helpersPath, bundle: true, platform: 'node', format: 'esm' })
 const { frameRequestAt, frameSourceUs, exportFrameCountFor, exportOutputDurationUs, exportPlanSchema,
-  captionTokens, DEFAULT_CAPTION_STYLE, captionFixtures, readLocalToolConfig, resolveToolchain, LOCAL_TOOL_CONFIG_FILE } = await import(helpersPath)
+  captionTokens, DEFAULT_CAPTION_STYLE, captionFixtures, CAPTION_TEMPLATES, titleTemplateChanges, defaultTextOverlay,
+  decorativeTextCue, textMotionAt, frameRequestV4Schema, readLocalToolConfig, resolveToolchain, LOCAL_TOOL_CONFIG_FILE,
+  bakeGrade, NEUTRAL_GRADE, encodeLog, encodeCubeData } = await import(helpersPath)
 
 const tools = resolveToolchain(process.env, readLocalToolConfig(join(repoRoot, LOCAL_TOOL_CONFIG_FILE)), LOCAL_TOOL_CONFIG_FILE)
 if (!tools) throw new Error(`Configure ${LOCAL_TOOL_CONFIG_FILE} (or CAPTION_STUDIO_FFMPEG_PATH/CAPTION_STUDIO_FFPROBE_PATH) before running the parity suite`)
@@ -54,6 +57,9 @@ const ffmpeg = (args) => run(tools.ffmpegPath, ['-v', 'error', '-y', ...args])
 const ffprobeJson = async (args) => JSON.parse((await run(tools.ffprobePath, ['-v', 'error', '-of', 'json', ...args])).stdout)
 
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
+// `main`'s `finally` destroys its windows before the rejection handler below runs; Electron's
+// default `window-all-closed` quit would otherwise exit 0 first, silently dropping the error.
+app.on('window-all-closed', () => {})
 
 // ---------------------------------------------------------------------------------------------
 // Source synthesis. `smptebars` is a static pattern (unlike `testsrc2`, which animates), so every
@@ -215,6 +221,82 @@ async function captionLayerParity(preview, exported, plan, manifest, cases) {
   }
 }
 
+/** Real Chromium preview/export bitmap equality for each built-in keynote title at fixed times. */
+async function keynoteLayerParity(preview, exported, cases) {
+  let marker = 0x400000
+  for (const template of CAPTION_TEMPLATES.filter((entry) => entry.id.startsWith('keynote-'))) {
+    for (const composition of [{ width: 1080, height: 1920 }, { width: 1920, height: 1080 }]) {
+      preview.setContentSize(composition.width, composition.height)
+      exported.setContentSize(composition.width, composition.height)
+      const original = defaultTextOverlay('keynote', 0, 3_000_000, 'മലയാളം and English')
+      const item = { ...original, ...titleTemplateChanges(template, original) }
+      for (const timestampUs of [100_000, 1_500_000, 2_850_000]) {
+        const { visible: _visible, ...motion } = textMotionAt(item, timestampUs)
+        const request = frameRequestV4Schema.parse({ version: 4, composition,
+          cue: { text: ' ', startUs: 0, endUs: 3_000_000 }, style: DEFAULT_CAPTION_STYLE, timestampUs,
+          overlays: [], frameEffects: {}, textActors: [{ item, cue: decorativeTextCue(item), timestampUs, ...motion }] })
+        const a = await renderPreview(preview, request, ++marker)
+        const b = await renderOffscreen(exported, request, ++marker)
+        assert.deepEqual(b.state, a.state, `Keynote state mismatch: ${template.id}, ${composition.width}x${composition.height}, ${timestampUs}`)
+        assert.deepEqual(b.bitmap, a.bitmap, `Keynote pixel mismatch: ${template.id}, ${composition.width}x${composition.height}, ${timestampUs}`)
+        cases.push({ template: template.id, composition, timestampUs, differingBytes: 0 })
+      }
+    }
+  }
+}
+
+/** Frame-paint effects that cover the whole frame (grain, VHS, vignette, horizontal letterbox) also
+ * cover the host's bottom-right marker pixel; this proves the marker still stacks above them, so
+ * both windows see a committed paint instead of timing out. Paint-only check: no pixel parity yet. */
+async function frameEffectsPaint(preview, exported, composition, cases) {
+  const manifest = shortManifest('static-clean')
+  const plan = exportPlanSchema.parse({ ...composition, frameRate: { numerator: 30, denominator: 1 }, range: { startUs: 0, endUs: 20_000_000 } })
+  const { request: v2 } = frameRequestAt(manifest, plan, 60)
+  const frameEffects = {
+    vignette: { amount: 0.8, softness: 0.5 },
+    letterbox: { orientation: 'horizontal', barPx: 120, color: '#000000' },
+    grain: { amount: 0.6, size: 1.5, seed: 7 },
+    vhs: { amount: 0.8, scanlines: 0.6, tracking: 0.7, bandY: 0.95, jitter: 0.3, flicker: 0.5, seed: 11 },
+  }
+  let marker = 0x800000
+  for (const [label, effects] of [...Object.entries(frameEffects).map(([kind, value]) => [kind, { [kind]: value }]), ['all', frameEffects]]) {
+    const request = { ...v2, version: 3, overlays: v2.overlays ?? [], frameEffects: effects }
+    const a = await renderPreview(preview, request, ++marker)
+    const b = await renderOffscreen(exported, request, ++marker)
+    for (const bitmap of [a.bitmap, b.bitmap]) assert.equal(bitmap.length, composition.width * composition.height * 4, `Frame-effects bitmap size (${label})`)
+    cases.push({ effects: label, composition, stalePaints: b.stalePaints })
+  }
+}
+
+/** Layer masks (docs/EDITING.md "Layer masks"): the same masked request must paint byte-identically in
+ * the live-preview window and the export host (host-painted layers), and a v5 mask-fill request must
+ * produce a PNG whose alpha *is* the mask — opaque inside the shape, transparent outside — which is
+ * what FFmpeg multiplies onto a video clip or blur region. */
+async function layerMaskParity(preview, exported, composition, cases) {
+  const manifest = shortManifest('static-clean')
+  const plan = exportPlanSchema.parse({ ...composition, frameRate: { numerator: 30, denominator: 1 }, range: { startUs: 0, endUs: 20_000_000 } })
+  const { request: v2 } = frameRequestAt(manifest, plan, 60)
+  const scale = composition.width / 1080
+  const ellipse = { enabled: true, invert: false, feather: 24, density: 1, shape: { kind: 'ellipse', rect: { x: 240, y: 240, width: 600, height: 400 } } }
+  let marker = 0x900000
+  const masked = { ...v2, version: 3, overlays: v2.overlays ?? [], captionMask: ellipse, frameEffects: { vignette: { amount: 0.8, softness: 0.5, mask: { ...ellipse, invert: true } } } }
+  const a = await renderPreview(preview, masked, ++marker)
+  const b = await renderOffscreen(exported, masked, ++marker)
+  assert.equal(a.bitmap.length, b.bitmap.length, 'Masked layer bitmap size')
+  let differingBytes = 0
+  for (let i = 0; i < a.bitmap.length; i++) if (a.bitmap[i] !== b.bitmap[i]) differingBytes++
+  assert.equal(differingBytes, 0, 'Masked layer pixel mismatch between preview and export host')
+  assert.ok(b.bitmap.some((value, index) => index % 4 === 3 && value > 0), 'The masked vignette painted nothing')
+
+  const fill = await renderOffscreen(exported, { version: 5, composition, cue: { text: ' ', startUs: 0, endUs: 1 }, style: v2.style, timestampUs: 1_000_000, maskFill: ellipse }, ++marker)
+  const alphaAt = (x, y) => fill.bitmap[(Math.round(y * scale) * composition.width + Math.round(x * scale)) * 4 + 3]
+  const inside = alphaAt(540, 440), outside = alphaAt(20, 20), edge = alphaAt(240, 440)
+  assert.equal(inside, 255, 'Mask fill must be opaque inside the shape')
+  assert.equal(outside, 0, 'Mask fill must be transparent outside the shape')
+  assert.ok(edge > 0 && edge < 255, `Feathered edge must be partial, got ${edge}`)
+  cases.push({ composition, differingBytes, maskFill: { inside, outside, edge } })
+}
+
 // ---------------------------------------------------------------------------------------------
 // Stage (b)/(c): real MP4 export through the production path.
 // ---------------------------------------------------------------------------------------------
@@ -257,6 +339,71 @@ async function extractFrameRgba(mp4Path, frameIndex, composition) {
   const size = image.getSize()
   assert.deepEqual(size, composition, `Extracted frame ${frameIndex} has unexpected dimensions`)
   return image.toBitmap() // BGRA on this platform's nativeImage bitmap; consistent for both sides of every comparison below.
+}
+
+/** S-Log3-coded source -> production v3 `lut3d` export vs the production WebGL LUT renderer.
+ * Both decode the same H.264 frame; the comparison is on interior pixels so chroma
+ * subsampling and H.264 edge ringing do not dominate the measurement. */
+async function colorGradeParity(workDir, report) {
+  const size = 128
+  const raw = Buffer.alloc(size * size * 3)
+  const levels = [0.02, 0.18, 0.5, 0.9]
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const col = Math.floor(x / 32), row = Math.floor(y / 32)
+    const linear = [levels[col], levels[row], levels[(col + row) % 4]]
+    for (let channel = 0; channel < 3; channel++) raw[(y * size + x) * 3 + channel] = Math.round(Math.max(0, Math.min(1, encodeLog('s-log3', linear[channel]))) * 255)
+  }
+  const rawPath = join(workDir, 'color-slog3.rgb')
+  const sourcePath = join(workDir, 'color-slog3.mp4')
+  await writeFile(rawPath, raw)
+  await ffmpeg(['-stream_loop', '-1', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', `${size}x${size}`, '-framerate', '30', '-i', rawPath,
+    '-t', '1', '-c:v', 'h264_videotoolbox', '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', sourcePath])
+  const cube = bakeGrade({ ...NEUTRAL_GRADE, input: { type: 'log', profile: 's-log3' }, look: { id: 'cinema-soft', strength: 0.8 } })
+  const manifest = {
+    version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { width: size, height: size, frameRate: { numerator: 30, denominator: 1 } },
+    sequenceDurationUs: 1_000_000, inputs: [{ path: sourcePath, kind: 'video' }],
+    clips: [{ id: 'color', inputIndex: 0, assetId: 'color', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0,
+      sourceEndUs: 1_000_000, opacity: 1, fit: 'contain', gain: 0, lutId: 'slog3-look' }],
+    overlays: [], blurRegions: [], luts: [{ id: 'slog3-look', size: cube.size, data: encodeCubeData(cube.data) }],
+  }
+  const result = await realExport(sourcePath, manifest, workDir, 'color-slog3-look')
+  const exported = await extractFrameRgba(result.outputPath, 15, { width: size, height: size })
+  const sourceDecoded = await extractFrameRgba(sourcePath, 15, { width: size, height: size })
+  const bundlePath = join(workDir, 'color-parity-harness.js')
+  await build({ entryPoints: ['scripts/color-parity-harness.ts'], outfile: bundlePath, bundle: true, platform: 'browser', format: 'esm' })
+  const htmlPath = join(workDir, 'color-parity.html')
+  await writeFile(htmlPath, '<!doctype html><canvas></canvas><script type="module" src="./color-parity-harness.js"></script>')
+  const window = createWindow({ width: size, height: size }, false)
+  try {
+    await window.loadFile(htmlPath)
+    await window.webContents.executeJavaScript('new Promise(resolve => { const check = () => window.renderColorParity ? resolve(true) : setTimeout(check, 10); check() })')
+    const render = (lut) => window.webContents.executeJavaScript(`window.renderColorParity(${JSON.stringify(pathToFileURL(sourcePath).href)}, ${JSON.stringify({ ...lut, data: Array.from(lut.data) })})`)
+    const measure = (preview, reference) => {
+      let total = 0, max = 0, count = 0
+      const signedByChannel = [0, 0, 0], deltas = []
+      for (let y = 4; y < size - 4; y++) for (let x = 4; x < size - 4; x++) {
+        if (x % 32 < 4 || x % 32 > 27 || y % 32 < 4 || y % 32 > 27) continue
+        // WebGL readPixels is bottom-up RGBA; nativeImage.toBitmap is top-down BGRA on macOS.
+        const pi = ((size - 1 - y) * size + x) * 4, ei = (y * size + x) * 4
+        for (let c = 0; c < 3; c++) {
+          const delta = Math.abs(preview[pi + c] - reference[ei + (2 - c)])
+          signedByChannel[c] += preview[pi + c] - reference[ei + (2 - c)]
+          total += delta; max = Math.max(max, delta); count++; deltas.push(delta)
+        }
+      }
+      deltas.sort((a, b) => a - b)
+      return { comparedChannels: count, meanAbsoluteChannelDelta: total / count,
+        p95ChannelDelta: deltas[Math.floor(deltas.length * 0.95)], maxChannelDelta: max,
+        meanSignedByChannel: signedByChannel.map((sum) => sum / (count / 3)) }
+    }
+    const sourceDecode = measure(await render(bakeGrade(NEUTRAL_GRADE)), sourceDecoded)
+    const graded = measure(await render(cube), exported)
+    report.colorGrade = { source: 'S-Log3-coded H.264', look: 'cinema-soft',
+      ...graded, sourceDecode,
+      preview: 'LutRenderer WebGL2 readPixels', export: 'v3 worker + FFmpeg lut3d + H.264 MP4',
+      tolerance: { kind: 'observed bound on this fixture and machine', maxChannelDelta: graded.maxChannelDelta } }
+  } finally { window.destroy() }
 }
 
 function compositeStraightAlpha(caption, backdrop) {
@@ -392,11 +539,11 @@ async function main() {
   const workDir = await mkdtemp(join(scratchRoot, 'caption-x3-'))
   const report = {
     machine: { platform: process.platform, arch: process.arch, osRelease: release(), cpu: cpus()[0].model, logicalCores: cpus().length, ramBytes: totalmem() },
-    versions: process.versions, workDir, captionLayer: [], composited: [], sync: {}, notes: [],
+    versions: process.versions, workDir, captionLayer: [], keynoteLayer: [], composited: [], sync: {}, notes: [],
   }
   const evidenceDir = 'docs/decisions/evidence'
   await mkdir(evidenceDir, { recursive: true })
-  const evidencePath = join(evidenceDir, `x3-parity-${new Date().toISOString().slice(0, 10)}.json`)
+  const evidencePath = join(evidenceDir, `x3-parity-${only?.size === 1 && only.has('keynote') ? 'keynote-' : ''}${new Date().toISOString().slice(0, 10)}.json`)
   // Written after every stage below, not only at the end, so a run that is interrupted (killed,
   // crashed) still leaves the evidence file showing everything completed up to that point instead
   // of an empty or missing file.
@@ -458,7 +605,24 @@ async function main() {
       exported.setContentSize(job.composition.width, job.composition.height)
       await captionLayerParity(preview, exported, approxPlan, job.manifest, report.captionLayer)
     }
+    if (include('keynote')) await keynoteLayerParity(preview, exported, report.keynoteLayer)
+    if (include('frame-effects')) {
+      report.frameEffects = []
+      // The windows' own creation size: a fresh offscreen resize can still paint at the old size.
+      const composition = { width: 1920, height: 1920 }
+      await frameEffectsPaint(preview, exported, composition, report.frameEffects)
+    }
+    if (include('layer-masks')) {
+      report.layerMasks = []
+      await layerMaskParity(preview, exported, { width: 1920, height: 1920 }, report.layerMasks)
+    }
     await saveEvidence()
+
+    if (include('color')) {
+      try { await colorGradeParity(workDir, report) }
+      catch (error) { report.notes.push({ tag: 'color-slog3-look', stage: 'color-parity', error: error?.stack || String(error) }); throw error }
+      await saveEvidence()
+    }
 
     // Stage (e)/(f): real exports. One job's failure is recorded and does not stop the rest —
     // the evidence file should show every case this run could reach, not abort on the first.
@@ -493,6 +657,7 @@ async function main() {
 
     report.summary = {
       captionLayerCases: report.captionLayer.length,
+      keynoteLayerCases: report.keynoteLayer.length,
       captionLayerMismatches: report.captionLayer.filter((c) => c.differingBytes > 0).length,
       compositedCases: report.composited.length,
       worstBoxedMeanDelta: Math.max(0, ...report.composited.map((c) => c.boxed?.meanAbsoluteChannelDelta ?? 0)),

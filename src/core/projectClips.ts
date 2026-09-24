@@ -1,4 +1,5 @@
 import type { Clip, ProjectAsset, Track, VideoClip } from './edit'
+import { assetIdOf } from './edit'
 import type { CaptionProject } from './model'
 import { clipLengthUs } from './timelineModel'
 
@@ -47,20 +48,34 @@ export function hasTrimmedClips(project: Pick<CaptionProject, 'assets' | 'clips'
 }
 
 /**
- * Stamps every unbound caption with `assetId`, the video its source time belongs to. Used by
- * commands and by the App's direct commits, because a project with video requires every caption to
- * be bound. Returns the same object when nothing needed stamping, so history sees no change.
+ * Stamps every unbound caption with `assetId` (the video its source time belongs to, once the
+ * sequence has video) and, independently, with `captionTrackId` (schema 6): always the project's
+ * first caption track — new or freshly migrated captions land there; a command moves one to another
+ * track explicitly (`caption-track-move-cue`). Used by commands and by the App's direct commits.
+ * Returns the same object when nothing needed stamping, so history sees no change.
  */
 export function bindUnboundItems(project: CaptionProject, assetId: string | null | undefined): CaptionProject {
-  if (!assetId || !project.clips.some((clip) => clip.kind === 'video')) return project
-  if (project.cues.every((cue) => cue.mediaAssetId !== undefined)) return project
-  return { ...project, cues: project.cues.map((cue) => cue.mediaAssetId === undefined ? { ...cue, mediaAssetId: assetId } : cue) }
+  const needsAsset = Boolean(assetId) && project.clips.some((clip) => clip.kind === 'video') && project.cues.some((cue) => cue.mediaAssetId === undefined)
+  const defaultCaptionTrackId = project.captionTracks[0]?.id
+  const needsCaptionTrack = defaultCaptionTrackId !== undefined && project.cues.some((cue) => cue.captionTrackId === undefined)
+  if (!needsAsset && !needsCaptionTrack) return project
+  return {
+    ...project,
+    cues: project.cues.map((cue) => {
+      if (cue.mediaAssetId !== undefined && cue.captionTrackId !== undefined) return cue
+      return {
+        ...cue,
+        ...(needsAsset && cue.mediaAssetId === undefined ? { mediaAssetId: assetId! } : {}),
+        ...(needsCaptionTrack && cue.captionTrackId === undefined ? { captionTrackId: defaultCaptionTrackId! } : {}),
+      }
+    }),
+  }
 }
 
 /** Everything that would be orphaned by removing an asset: the clips that play it and the captions bound to it. */
 export function assetUsers(project: Pick<CaptionProject, 'clips' | 'cues'>, assetId: string): string[] {
   return [
-    ...project.clips.filter((clip) => clip.assetId === assetId).map((clip) => clip.id),
+    ...project.clips.filter((clip) => assetIdOf(clip) === assetId).map((clip) => clip.id),
     ...project.cues.filter((cue) => cue.mediaAssetId === assetId).map((cue) => cue.id),
   ]
 }
@@ -82,12 +97,12 @@ export const audioTracks = (project: Pick<CaptionProject, 'tracks'>): Track[] =>
 /** Clip counts per asset, for the media bin's "used N times" badges. */
 export function clipCountByAsset(clips: readonly Clip[]): Map<string, number> {
   const counts = new Map<string, number>()
-  for (const clip of clips) counts.set(clip.assetId, (counts.get(clip.assetId) ?? 0) + 1)
+  for (const clip of clips) { const id = assetIdOf(clip); if (id) counts.set(id, (counts.get(id) ?? 0) + 1) }
   return counts
 }
 
 /** Total sequence time that clips of one asset play. */
 export function playedUsOfAsset(clips: readonly Clip[], assetId: string): number {
-  return clips.filter((clip) => clip.assetId === assetId).reduce((total, clip) => total + clipLengthUs(clip), 0)
+  return clips.filter((clip) => assetIdOf(clip) === assetId).reduce((total, clip) => total + clipLengthUs(clip), 0)
 }
 

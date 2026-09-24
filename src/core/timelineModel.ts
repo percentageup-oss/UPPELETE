@@ -1,5 +1,8 @@
-import type { Clip, Track, VideoClip } from './edit'
+import type { CaptionTrack, Clip, Track, VideoClip } from './edit'
+import { assetIdOf } from './edit'
 import type { Cue } from './model'
+import { sourceToTimelineOffsetUs, timelineLengthUs, timelineToSourceOffsetUs } from './clipTime'
+import type { Retime } from './clipTime'
 
 /**
  * The pure time model of schema 5 (docs/EDITING.md "Schema 5"). **Position is position**: every
@@ -15,10 +18,12 @@ export type TimeRange = { startUs: number; endUs: number }
 
 const round = (us: number) => Math.round(us)
 
-export const clipLengthUs = (clip: Pick<Clip, 'sourceStartUs' | 'sourceEndUs'>): number => clip.sourceEndUs - clip.sourceStartUs
-export const clipEndUs = (clip: Pick<Clip, 'timelineStartUs' | 'sourceStartUs' | 'sourceEndUs'>): number => clip.timelineStartUs + clipLengthUs(clip)
-export const clipRange = (clip: Pick<Clip, 'timelineStartUs' | 'sourceStartUs' | 'sourceEndUs'>): TimeRange =>
-  ({ startUs: clip.timelineStartUs, endUs: clipEndUs(clip) })
+/** The clip's length on the timeline: its source span, retimed by its `speed` curve when it has one. */
+export const clipLengthUs = (clip: Retime): number => timelineLengthUs(clip)
+export const clipEndUs = (clip: Retime): number => clip.timelineStartUs + clipLengthUs(clip)
+export const clipRange = (clip: Retime): TimeRange => ({ startUs: clip.timelineStartUs, endUs: clipEndUs(clip) })
+/** The clip's length in its own source time, ignoring any speed (what a trim or an export `-t` measures). */
+export const clipSourceSpanUs = (clip: Pick<Clip, 'sourceStartUs' | 'sourceEndUs'>): number => clip.sourceEndUs - clip.sourceStartUs
 
 /** Where the last clip on any track ends; 0 for an empty sequence. */
 export function sequenceDurationUs(clips: readonly Clip[]): number {
@@ -28,13 +33,13 @@ export function sequenceDurationUs(clips: readonly Clip[]): number {
 }
 
 /** The sequence time at which `clip` shows source time `sourceUs` (not clamped). */
-export function sequenceUsOf(clip: Pick<Clip, 'timelineStartUs' | 'sourceStartUs'>, sourceUs: number): number {
-  return clip.timelineStartUs + round(sourceUs) - clip.sourceStartUs
+export function sequenceUsOf(clip: Retime, sourceUs: number): number {
+  return clip.timelineStartUs + sourceToTimelineOffsetUs(clip, sourceUs)
 }
 
 /** The source time `clip` shows at `sequenceUs` (not clamped). */
-export function sourceUsAt(clip: Pick<Clip, 'timelineStartUs' | 'sourceStartUs'>, sequenceUs: number): number {
-  return clip.sourceStartUs + round(sequenceUs) - clip.timelineStartUs
+export function sourceUsAt(clip: Retime, sequenceUs: number): number {
+  return timelineToSourceOffsetUs(clip, round(sequenceUs) - clip.timelineStartUs)
 }
 
 export function trackIndexMap(tracks: readonly Track[]): Map<string, number> {
@@ -46,6 +51,11 @@ export function trackLabel(track: Track, tracks: readonly Track[]): string {
   if (track.name) return track.name
   const sameKind = tracks.filter((candidate) => candidate.kind === track.kind)
   return `${track.kind === 'video' ? 'V' : 'A'}${sameKind.indexOf(track) + 1}`
+}
+
+/** `C1`/`C2`… — the same empty-name-derives-a-label convention `trackLabel` uses for video/audio. */
+export function captionTrackLabel(track: CaptionTrack, tracks: readonly CaptionTrack[]): string {
+  return track.name || `C${tracks.indexOf(track) + 1}`
 }
 
 /**
@@ -85,6 +95,8 @@ export function activeClipsAt(sequenceUs: number, tracks: readonly Track[], clip
   const at = round(sequenceUs)
   const byTrack = new Map<string, Clip>()
   for (const clip of clips) {
+    // A disabled clip (schema 15) is on the timeline but plays and paints nothing.
+    if (clip.enabled === false) continue
     if (at >= clip.timelineStartUs && at < clipEndUs(clip) && !byTrack.has(clip.trackId)) byTrack.set(clip.trackId, clip)
   }
   const active: ActiveClip[] = []
@@ -99,11 +111,16 @@ export function activeClipsAt(sequenceUs: number, tracks: readonly Track[], clip
 /** Every clip playing source time `sourceUs` of an asset — plural: one file may appear many times. */
 export function clipsContainingSource(assetId: string, sourceUs: number, clips: readonly Clip[]): Clip[] {
   const at = round(sourceUs)
-  return clips.filter((clip) => clip.assetId === assetId && at >= clip.sourceStartUs && at < clip.sourceEndUs)
+  return clips.filter((clip) => assetIdOf(clip) === assetId && at >= clip.sourceStartUs && at < clip.sourceEndUs)
 }
 
 /** A source range projected into sequence time, carrying the clip it landed in. */
-export type ClipSpan = TimeRange & { sourceStartUs: number; sourceEndUs: number; clipId: string; assetId: string; trackId: string }
+export type ClipSpan = TimeRange & { sourceStartUs: number; sourceEndUs: number; clipId: string; assetId: string; trackId: string; /** The clip the span was cut from, so a source time inside it can be placed on a retimed clip. */ retime?: Retime }
+
+/** The sequence time of `sourceUs` within a span: through the clip's speed curve when it has one, else a translation. */
+export function spanSequenceUs(span: Pick<ClipSpan, 'startUs' | 'sourceStartUs' | 'retime'>, sourceUs: number): number {
+  return span.retime ? sequenceUsOf(span.retime, sourceUs) : span.startUs + Math.round(sourceUs) - span.sourceStartUs
+}
 
 /**
  * Intersects a source range of one asset with each clip of it, in sequence order. A cue straddling
@@ -112,12 +129,11 @@ export type ClipSpan = TimeRange & { sourceStartUs: number; sourceEndUs: number;
 export function spansInSequence(range: TimeRange, assetId: string, clips: readonly Clip[]): ClipSpan[] {
   const spans: ClipSpan[] = []
   for (const clip of clips) {
-    if (clip.assetId !== assetId) continue
+    if (assetIdOf(clip) !== assetId) continue
     const sourceStartUs = Math.max(range.startUs, clip.sourceStartUs)
     const sourceEndUs = Math.min(range.endUs, clip.sourceEndUs)
     if (sourceEndUs <= sourceStartUs) continue
-    const offset = clip.timelineStartUs - clip.sourceStartUs
-    spans.push({ startUs: sourceStartUs + offset, endUs: sourceEndUs + offset, sourceStartUs, sourceEndUs, clipId: clip.id, assetId, trackId: clip.trackId })
+    spans.push({ startUs: sequenceUsOf(clip, sourceStartUs), endUs: sequenceUsOf(clip, sourceEndUs), sourceStartUs, sourceEndUs, clipId: clip.id, assetId, trackId: clip.trackId, ...(clip.kind !== 'image' && clip.kind !== 'color' && clip.kind !== 'adjustment' && clip.speed ? { retime: clip } : {}) })
   }
   return spans.sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs || (a.clipId < b.clipId ? -1 : a.clipId > b.clipId ? 1 : 0))
 }
@@ -194,7 +210,7 @@ export function activeCueAt(sequenceUs: number, tracks: readonly Track[], clips:
   const active = activeClipsAt(at, tracks, videoClips, { skipHidden: true })
   for (let index = active.length - 1; index >= 0; index--) {
     const { clip, sourceUs } = active[index]
-    const cue = cues.find((candidate) => candidate.mediaAssetId === clip.assetId && sourceUs >= candidate.startUs && sourceUs < candidate.endUs)
+    const cue = cues.find((candidate) => candidate.mediaAssetId === assetIdOf(clip) && sourceUs >= candidate.startUs && sourceUs < candidate.endUs)
     if (cue) return { cue, sourceUs, clipId: clip.id }
   }
   return null
@@ -209,7 +225,7 @@ export function videoUnderPlayhead(sequenceUs: number, tracks: readonly Track[],
 
 /** Where the playhead is in one asset's source time: the topmost visible clip of it under the playhead. */
 export function sourceUsOfAssetAt(sequenceUs: number, assetId: string, tracks: readonly Track[], clips: readonly Clip[]): ActiveClip | null {
-  const active = activeClipsAt(sequenceUs, tracks, clips.filter((clip) => clip.assetId === assetId), { skipHidden: true })
+  const active = activeClipsAt(sequenceUs, tracks, clips.filter((clip) => assetIdOf(clip) === assetId), { skipHidden: true })
   return active[active.length - 1] ?? null
 }
 

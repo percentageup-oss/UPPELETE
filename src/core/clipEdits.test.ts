@@ -77,6 +77,26 @@ describe('clip edits', () => {
     expect(layout(trimClip(tracks, base, 'C', 'start', -5 * US, 'overwrite', 60 * US))[2]).toEqual(['C', 'v1', 8 * US, 18 * US, 24 * US])
   })
 
+  it('an overwrite trim heals a cut: it passes over pieces that merely continue the clip', () => {
+    // A 10 s shot cut by N landing inside it, then N removed: A (0–4) … gap … piece (6–10).
+    const cut = deleteClip(tracks, placeClip(tracks, [video('A', 0, 0, 10 * US)], video('N', 4 * US, 50 * US, 52 * US), 'overwrite', ids()), 'N', 'overwrite')
+    expect(layout(cut)).toEqual([['A', 'v1', 0, 0, 4 * US], ['new-1', 'v1', 6 * US, 6 * US, 10 * US]])
+    // Part way in: the piece is carved to start where A now ends (an invisible through edit).
+    expect(layout(trimClip(tracks, cut, 'A', 'end', 3 * US, 'overwrite', 60 * US))).toEqual([['A', 'v1', 0, 0, 7 * US], ['new-1', 'v1', 7 * US, 7 * US, 10 * US]])
+    // All the way: one clip again, and on to the source end.
+    expect(layout(trimClip(tracks, cut, 'A', 'end', 6 * US, 'overwrite', 60 * US))).toEqual([['A', 'v1', 0, 0, 10 * US]])
+    expect(layout(trimClip(tracks, cut, 'A', 'end', 20 * US, 'overwrite', 12 * US))).toEqual([['A', 'v1', 0, 0, 12 * US]])
+    // The right piece heals leftwards the same way.
+    expect(layout(trimClip(tracks, cut, 'new-1', 'start', -6 * US, 'overwrite', 60 * US))).toEqual([['new-1', 'v1', 0, 0, 10 * US]])
+    // Still in overwrite: a different shot, or the same shot at another offset or with other settings, blocks.
+    const blocked = (piece: Clip) => layout(trimClip(tracks, [video('A', 0, 0, 4 * US), piece], 'A', 'end', 6 * US, 'overwrite', 60 * US))[0]
+    expect(blocked(video('P', 6 * US, 6 * US, 10 * US, 'v1', 'y'))).toEqual(['A', 'v1', 0, 0, 6 * US])
+    expect(blocked(video('P', 6 * US, 8 * US, 10 * US))).toEqual(['A', 'v1', 0, 0, 6 * US])
+    expect(blocked({ ...video('P', 6 * US, 6 * US, 10 * US), opacity: 0.5 } as Clip)).toEqual(['A', 'v1', 0, 0, 6 * US])
+    // A blocker beyond the piece still stops the trim.
+    expect(layout(trimClip(tracks, [...cut, video('C', 11 * US, 0, 2 * US, 'v1', 'y')], 'A', 'end', 20 * US, 'overwrite', 60 * US))[0]).toEqual(['A', 'v1', 0, 0, 11 * US])
+  })
+
   it('a ripple trim keeps the clip start fixed and moves everything after it', () => {
     const shorter = trimClip(tracks, base, 'A', 'start', 1 * US, 'ripple', 60 * US)
     expect(layout(shorter)).toEqual([['A', 'v1', 0, 1 * US, 4 * US], ['B', 'v1', 3 * US, 10 * US, 14 * US], ['C', 'v1', 9 * US, 20 * US, 24 * US]])

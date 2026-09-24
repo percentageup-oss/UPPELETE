@@ -51,8 +51,8 @@ export function previewClipDrag(input: {
   try { result = trimClip(tracks, clips, clip.id, mode, wanted, input.editMode, input.assetDurationUs) }
   catch { return { clip, appliedDeltaUs: 0, guideUs: null } }
   const trimmed = result.find((candidate) => candidate.id === clip.id) ?? clip
-  const applied = mode === 'end' ? trimmed.sourceEndUs - clip.sourceEndUs
-    : input.editMode === 'ripple' ? trimmed.sourceStartUs - clip.sourceStartUs : trimmed.timelineStartUs - clip.timelineStartUs
+  const applied = mode === 'end' ? clipEndUs(trimmed) - clipEndUs(clip)
+    : input.editMode === 'ripple' ? clipLengthUs(clip) - clipLengthUs(trimmed) : trimmed.timelineStartUs - clip.timelineStartUs
   const landed = mode === 'end' ? clipEndUs(trimmed) : input.editMode === 'ripple' ? edgeUs : trimmed.timelineStartUs
   return { clip: trimmed, appliedDeltaUs: applied, guideUs: extra && input.snap!.targetsUs.includes(landed) ? landed : null }
 }

@@ -73,7 +73,12 @@ export function applyTranscription(
   const range = transcript.sourceRange
   if (choice === null && captionsOverlappingRange(project.cues, range, assetId).length > 0) throw new TranscriptionChoiceRequired()
   const kept = project.cues.filter((cue) => !sameVideo(cue, assetId) || !overlaps(cue, range) || (choice === 'keep-authored' && !isUntouchedModelCue(cue)))
-  const incoming = transcriptToCues(transcript, run.id, newId, translation).map((cue) => assetId ? { ...cue, mediaAssetId: assetId } : cue)
+  // New cues are stamped directly, the same as `mediaAssetId` just above — this bypasses the normal
+  // command path (`applyTranscript` in App.tsx commits the result straight to history), so nothing
+  // downstream calls `bindUnboundItems` to backfill it.
+  const defaultCaptionTrackId = project.captionTracks[0]?.id
+  const incoming = transcriptToCues(transcript, run.id, newId, translation)
+    .map((cue) => ({ ...cue, ...(assetId ? { mediaAssetId: assetId } : {}), ...(defaultCaptionTrackId ? { captionTrackId: defaultCaptionTrackId } : {}) }))
   const added = incoming.filter((cue) => !kept.some((existing) => sameVideo(existing, assetId) && overlaps(existing, cue)))
   const cues = [...kept, ...added].sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
   return {

@@ -22,6 +22,8 @@ export type SequenceClock = PlaybackClock & {
   setRate(rate: number): void
   /** Sequence length; playback stops (and stays) at the end. `null` means unbounded. */
   setDurationUs(durationUs: number | null): void
+  /** Pause exactly here when playing forward from before it (the Out mark); `null` clears it. */
+  setStopAtUs(stopAtUs: number | null): void
   /** Slews the free-running position toward a measured one (the master video's presented frame). */
   discipline(targetUs: number): void
   getState(): TransportState
@@ -48,6 +50,7 @@ export function createSequenceClock(options: { raf?: typeof requestAnimationFram
   let rate = 1
   let seekEpoch = 0
   let durationUs: number | null = null
+  let stopAtUs: number | null = null
   // While playing, position = anchorUs + (now - anchorMs) × rate.
   let anchorUs = 0
   let anchorMs = 0
@@ -63,18 +66,26 @@ export function createSequenceClock(options: { raf?: typeof requestAnimationFram
     us = clamped
     notify()
   }
+  // Where the running clock must halt: the Out mark when playback began before it, else the sequence end.
+  const limitUs = (): number | null => stopAtUs !== null && anchorUs < stopAtUs ? (durationUs === null ? stopAtUs : Math.min(stopAtUs, durationUs)) : durationUs
+  const projectedUs = () => {
+    const raw = anchorUs + (now() - anchorMs) * 1000 * rate
+    const limit = limitUs()
+    return limit === null ? raw : Math.min(raw, limit)
+  }
   const rebase = () => { anchorUs = us; anchorMs = now() }
   const stopLoop = () => { if (handle !== null) { caf(handle); handle = null } }
   const tick = () => {
     handle = null
     if (!playing) return
-    setPosition(anchorUs + (now() - anchorMs) * 1000 * rate)
-    if (durationUs !== null && us >= durationUs) { pause(); return }
+    setPosition(projectedUs())
+    const limit = limitUs()
+    if (limit !== null && us >= limit) { pause(); return }
     handle = raf(tick)
   }
   function pause() {
     if (!playing) return
-    setPosition(anchorUs + (now() - anchorMs) * 1000 * rate)
+    setPosition(projectedUs())
     playing = false
     stopLoop()
     notifyState()
@@ -107,6 +118,7 @@ export function createSequenceClock(options: { raf?: typeof requestAnimationFram
       rate = next
       notifyState()
     },
+    setStopAtUs(next) { stopAtUs = next },
     setDurationUs(next) {
       durationUs = next
       if (next !== null && us > next) setPosition(next)

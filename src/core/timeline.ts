@@ -13,6 +13,16 @@ export function pixelToTime(pixel: number, durationUs: number, widthPx: number):
   return Math.round(pixel * durationUs / widthPx)
 }
 
+/** Room the timeline keeps past the last clip so media can be dropped or dragged beyond the program end. */
+export const TIMELINE_TAIL_MIN_US = 30_000_000
+export const TIMELINE_TAIL_FRACTION = 0.25
+
+/** The span the ruler and lanes draw: the program plus headroom. The program length itself (playback, export, seek limits) is unchanged. */
+export function timelineViewSpanUs(programUs: number): number {
+  const program = Math.max(0, programUs)
+  return program + Math.max(TIMELINE_TAIL_MIN_US, Math.round(program * TIMELINE_TAIL_FRACTION))
+}
+
 export function anchoredScrollLeft(
   anchorUs: number,
   durationUs: number,

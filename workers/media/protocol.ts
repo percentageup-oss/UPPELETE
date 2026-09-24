@@ -45,7 +45,9 @@ export const taskSchema = z.discriminatedUnion('operation', [
   // version is unchanged.
   z.strictObject({ operation: z.literal('export'), inputPaths: z.array(filePath).min(1).max(256), renderManifestPath: filePath,
     outputPath: filePath, range: exportPlanSchema.shape.range, frameRate: exportPlanSchema.shape.frameRate, width: exportPlanSchema.shape.width, height: exportPlanSchema.shape.height,
-    profile: z.literal('mp4-caption-renderer-v1') }),
+    profile: z.literal('mp4-caption-renderer-v1'),
+    /** One validated number, never flags; absent keeps the automatic bitrate class (argv unchanged). */
+    encoding: z.strictObject({ videoBitrateKbps: z.number().int().min(500).max(100_000) }).optional() }),
 ])
 export type MediaTask = z.infer<typeof taskSchema>
 export type Operation = MediaTask['operation']

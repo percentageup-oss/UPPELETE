@@ -214,7 +214,7 @@ describe('TranscriptionService with Gemini', () => {
     const service = new TranscriptionService({
       worker, scheduler: new JobScheduler(), whisperConfigured: false, temporaryRoot, now: () => new Date('2026-09-17T00:00:00.000Z'),
       installedModelPath: async () => { throw new Error('must not be called') },
-      geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 } }) },
+      geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 }, droppedAnnotations: 0 }) },
     })
     const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: null, apiKey: 'test-key-123' }, () => {}).outcome
     if (outcome.state !== 'succeeded') throw new Error(JSON.stringify(outcome))
@@ -252,7 +252,7 @@ describe('TranscriptionService with Gemini', () => {
     const service = new TranscriptionService({
       worker, scheduler: new JobScheduler(), whisperConfigured: false, temporaryRoot,
       installedModelPath: async () => { throw new Error('must not be called') },
-      geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 } }) },
+      geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 }, droppedAnnotations: 0 }) },
       geminiTranslator: (apiKey) => { keys.push(apiKey); return async (texts) => ({ texts: texts.map(() => 'First sentence'), usage: { inputTokens: 8, outputTokens: 4 } }) },
     })
     const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: 'en', apiKey: 'test-key-123' }, () => {}).outcome

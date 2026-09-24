@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { HexColorField, PercentField, Row, Section, Segmented, SliderWithNumber, Stepper, Toggle } from './style/controls'
+import { HexColorField, NumberField, Row, Section, Segmented, Select, SliderWithNumber, TextField, Toggle } from './style/controls'
 import { AlignCenterIcon, AlignLeftIcon, AlignRightIcon, DropIcon, PaletteIcon, UnderlineIcon } from './style/icons'
-import { fallbackCatalog, loadLocalFontCatalog, type LocalFontCatalogState } from './style/localFonts'
+import { fallbackCatalog, loadLocalFontCatalog, resetLocalFontCatalogCache, type LocalFontCatalogState } from './style/localFonts'
 import {
   ALIGNMENTS, captionAppearanceSchema, EMPHASIS_MODES, FONT_FAMILY_CHOICES, RESET_KEYS,
   DEFAULT_CAPTION_STYLE, type CaptionStyle,
@@ -72,11 +72,22 @@ export function StylePanel({ style, onDraft, onCommit }: {
     else setFontError('Font name must be plain letters, numbers, spaces, hyphens or underscores — matching an installed system font.')
   }
 
+  // Called from the dropdown's click, so Chromium's transient-activation requirement for
+  // `queryLocalFonts()` is met. The catalog is cached, so later opens are instant.
   const loadFonts = async () => {
+    if (fonts.status === 'loading' || fonts.status === 'ready' || (fonts.status === 'unavailable' && fonts.reason !== 'needs-gesture')) return
+    resetLocalFontCatalogCache()
     setFonts({ status: 'loading' })
     setFonts(await loadLocalFontCatalog())
   }
 
+  const groupedFamily = (family: { family: string }) => ({
+    value: family.family, label: family.family,
+    group: (FONT_FAMILY_CHOICES as readonly string[]).includes(family.family) ? 'Favourites' : 'System fonts',
+  })
+  // Try to have the full list ready before the menu is opened; if Chromium refuses without a
+  // click (`needs-gesture`) the menu's own open click retries.
+  useEffect(() => { void loadFonts() }, [])
   const families = fonts.status === 'ready' || fonts.status === 'unavailable' ? fonts.families : fallbackCatalog()
   const currentFamily = families.find((family) => family.family === draft.appearance.fontFamily)
   const faceOptions = fonts.status === 'ready' && currentFamily?.faces.length ? currentFamily.faces : FACE_OPTIONS
@@ -84,51 +95,49 @@ export function StylePanel({ style, onDraft, onCommit }: {
   const emphasisFaceOptions = fonts.status === 'ready' && emphasisFamily?.faces.length ? emphasisFamily.faces : FACE_OPTIONS
 
   return <section className="style-panel" aria-label="Text style">
-    <Section id="fonts" title="Fonts">
-      <Row label="Font Family" htmlFor="style-font-family" onReset={() => reset(RESET_KEYS.fontFamily)} isDefault={isDefault(RESET_KEYS.fontFamily)}>
-        <Stepper id="style-font-family"
+    <Section id="fonts" title="Text">
+      <Row label="Font" htmlFor="style-font-family" onReset={() => reset(RESET_KEYS.fontFamily)} isDefault={isDefault(RESET_KEYS.fontFamily)}>
+        <Select id="style-font-family"
           value={FONT_FAMILY_CHOICES.includes(draft.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) ? draft.appearance.fontFamily : 'custom'}
-          options={[...families.map((family) => ({ value: family.family, label: family.family })), { value: 'custom', label: 'Custom local font…' }]}
+          options={[...families.map(groupedFamily), { value: 'custom', label: 'Custom local font…' }]} onOpen={loadFonts} searchable
           onChange={(value) => { if (value === 'custom') { setCustomFont(draft.appearance.fontFamily); return } commitNow({ fontFamily: value }) }} />
       </Row>
-      {fonts.status === 'idle' && <button type="button" id="style-font-load" className="style-link-button" onClick={loadFonts}>Load installed fonts</button>}
-      {fonts.status === 'loading' && <p className="style-hint">Reading installed fonts…</p>}
-      {fonts.status === 'unavailable' && <p className="style-hint" data-font-catalog-reason={fonts.reason}>
-        {fonts.reason === 'needs-gesture' ? 'Click "Load installed fonts" again to grant access.'
-          : fonts.reason === 'denied' ? 'Font access was denied; using the built-in font list.'
-            : 'Installed-font listing is unavailable on this platform; using the built-in font list.'}
-      </p>}
-      {!FONT_FAMILY_CHOICES.includes(draft.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) && <Row label="Custom font name" htmlFor="style-font-custom">
-        <input id="style-font-custom" value={customFont} onChange={(event) => applyCustomFont(event.target.value)} onBlur={() => commit()}
-          aria-invalid={!!fontError} aria-describedby={fontError ? 'style-font-error' : undefined} />
-      </Row>}
-      {fontError && <p id="style-font-error" role="alert" className="style-error">{fontError}</p>}
-      <p className="style-hint">Installed system fonts only; no font is downloaded or bundled. Missing glyphs fall back per script.</p>
-      <Row label="Font Face" htmlFor="style-font-face" onReset={() => reset(RESET_KEYS.fontFace)} isDefault={isDefault(RESET_KEYS.fontFace)}>
-        <Stepper id="style-font-face" value={faceKey(draft.appearance.fontWeight, draft.appearance.fontItalic)}
+      <Row label="Font Face" htmlFor="style-font-face" labelHidden onReset={() => reset(RESET_KEYS.fontFace)} isDefault={isDefault(RESET_KEYS.fontFace)}>
+        <Select id="style-font-face" value={faceKey(draft.appearance.fontWeight, draft.appearance.fontItalic)}
           options={faceOptions.map((face) => ({ value: faceKey(face.weight, face.italic), label: face.style }))}
           onChange={(value) => { const [weight, italic] = value.split(':'); commitNow({ fontWeight: Number(weight), fontItalic: italic === 'true' }) }} />
       </Row>
-      <Row label="Font Size" htmlFor="style-font-size" onReset={() => reset(RESET_KEYS.fontSize)} isDefault={isDefault(RESET_KEYS.fontSize)}>
+      {!FONT_FAMILY_CHOICES.includes(draft.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) && <Row label="Custom font name" htmlFor="style-font-custom">
+        <TextField id="style-font-custom" value={customFont} onChange={applyCustomFont} onBlur={() => commit()}
+          invalid={!!fontError} describedBy={fontError ? 'style-font-error' : undefined} />
+      </Row>}
+      {fontError && <p id="style-font-error" role="alert" className="style-error">{fontError}</p>}
+      {fonts.status === 'loading' && <p className="style-hint">Reading installed fonts…</p>}
+      {fonts.status === 'unavailable' && <p className="style-hint" data-font-catalog-reason={fonts.reason}>
+        {fonts.reason === 'needs-gesture' ? 'Open the font menu again to grant access to installed fonts.'
+          : fonts.reason === 'denied' ? 'Font access was denied; using the built-in font list.'
+            : 'Installed-font listing is unavailable on this platform; using the built-in font list.'}
+      </p>}
+      <p className="style-hint">Installed system fonts are listed the first time you open the font menu; nothing is downloaded. Missing glyphs fall back per script.</p>
+      <Row label="Size" htmlFor="style-font-size" onReset={() => reset(RESET_KEYS.fontSize)} isDefault={isDefault(RESET_KEYS.fontSize)}>
         <SliderWithNumber id="style-font-size" min={20} max={120} value={draft.appearance.fontSize} unit="px"
           onDraft={(value) => change({ fontSize: value })} onCommit={() => commit()} />
       </Row>
-
-      <p className="style-subgroup">Emphasis</p>
-      <p className="style-hint">Selected words keep this font and color. With word timing, they animate when spoken.</p>
-      <Row label="Font Family" htmlFor="style-emphasis-family">
-        <Stepper id="style-emphasis-family" value={draft.appearance.emphasisFontFamily}
-          options={[{ value: '', label: 'Same as caption font' }, ...families.map((family) => ({ value: family.family, label: family.family }))]}
-          onChange={(value) => commitNow({ emphasisFontFamily: value })} />
+      <Row label="Tracking" htmlFor="style-letter-spacing" onReset={() => reset(RESET_KEYS.spacing)} isDefault={isDefault(RESET_KEYS.spacing)}>
+        <SliderWithNumber id="style-letter-spacing" min={-5} max={30} value={draft.appearance.letterSpacing} unit="px"
+          onDraft={(value) => change({ letterSpacing: value })} onCommit={() => commit()} />
       </Row>
-      <Row label="Font Face" htmlFor="style-emphasis-face" onReset={() => reset(RESET_KEYS.emphasisFace)} isDefault={isDefault(RESET_KEYS.emphasisFace)}>
-        <Stepper id="style-emphasis-face" value={faceKey(draft.appearance.emphasisWeight, draft.appearance.emphasisItalic)}
-          options={emphasisFaceOptions.map((face) => ({ value: faceKey(face.weight, face.italic), label: face.style }))}
-          onChange={(value) => { const [weight, italic] = value.split(':'); commitNow({ emphasisWeight: Number(weight), emphasisItalic: italic === 'true' }) }} />
+      <Row label="Word spacing" htmlFor="style-word-spacing">
+        <SliderWithNumber id="style-word-spacing" min={-10} max={60} value={draft.appearance.wordSpacing} unit="px"
+          onDraft={(value) => change({ wordSpacing: value })} onCommit={() => commit()} />
+      </Row>
+      <Row label="Line Spacing" htmlFor="style-line-height">
+        <SliderWithNumber id="style-line-height" min={.8} max={2.5} step={.05} value={draft.appearance.lineHeight}
+          onDraft={(value) => change({ lineHeight: value })} onCommit={() => commit()} />
       </Row>
     </Section>
 
-    <Section id="format" title="Format">
+    <Section id="layout" title="Layout">
       <Row label="Styles" onReset={() => reset([...RESET_KEYS.textTransform, ...RESET_KEYS.underline])} isDefault={isDefault([...RESET_KEYS.textTransform, ...RESET_KEYS.underline])}>
         <div className="segmented icons" role="group" id="style-text-transform">
           {TEXT_STYLE_BUTTONS.map(({ transform, glyph }) => <button key={transform} type="button"
@@ -147,24 +156,27 @@ export function StylePanel({ style, onDraft, onCommit }: {
           onChange={(value) => commitNow({ alignment: value })} />
       </Row>
       <Row label="Max lines" htmlFor="style-max-lines" onReset={() => reset(RESET_KEYS.maxLines)} isDefault={isDefault(RESET_KEYS.maxLines)}>
-        <input id="style-max-lines" type="number" min={1} max={6} value={draft.appearance.maxLines}
-          onChange={(event) => patch({ maxLines: Number(event.target.value) })}
-          onBlur={() => commitNow({ maxLines: Math.max(1, Math.min(6, Math.round(draft.appearance.maxLines))) })} />
+        <NumberField id="style-max-lines" min={1} max={6} step={1} value={draft.appearance.maxLines}
+          onDraft={(value) => patch({ maxLines: Math.round(value) })}
+          onCommit={(value) => commitNow({ maxLines: Math.max(1, Math.min(6, Math.round(value))) })} />
+      </Row>
+      <Row label="Position X" htmlFor="style-position-h" onReset={() => reset(RESET_KEYS.positionX)} isDefault={isDefault(RESET_KEYS.positionX)}>
+        <SliderWithNumber id="style-position-h" min={0} max={100} step={.1} unit="%" endLabels={['Left', 'Right']}
+          value={Math.round(draft.appearance.horizontal * 1000) / 10}
+          onDraft={(percent) => change({ horizontal: percent / 100 })} onCommit={(percent) => commitNow({ horizontal: Math.max(0, Math.min(100, percent)) / 100 })} />
+      </Row>
+      <Row label="Position Y" htmlFor="style-position-v" onReset={() => reset(RESET_KEYS.positionY)} isDefault={isDefault(RESET_KEYS.positionY)}>
+        <SliderWithNumber id="style-position-v" min={0} max={100} step={.1} unit="%" endLabels={['Top', 'Bottom']}
+          value={Math.round(draft.appearance.vertical * 1000) / 10}
+          onDraft={(percent) => change({ vertical: percent / 100 })} onCommit={(percent) => commitNow({ vertical: Math.max(0, Math.min(100, percent)) / 100 })} />
+      </Row>
+      <Row label="Rotation" htmlFor="style-rotation" onReset={() => reset(RESET_KEYS.rotation)} isDefault={isDefault(RESET_KEYS.rotation)}>
+        <SliderWithNumber id="style-rotation" min={-180} max={180} step={1} unit="°" value={draft.appearance.rotation}
+          onDraft={(rotation) => change({ rotation })} onCommit={(rotation) => commitNow({ rotation })} />
       </Row>
     </Section>
 
-    <Section id="position" title="Position" defaultOpen={false}>
-      <Row label="X" htmlFor="style-position-h" onReset={() => reset(RESET_KEYS.positionX)} isDefault={isDefault(RESET_KEYS.positionX)}>
-        <PercentField id="style-position-h" value={draft.appearance.horizontal}
-          onDraft={(horizontal) => change({ horizontal })} onCommit={(horizontal) => commitNow({ horizontal })} />
-      </Row>
-      <Row label="Y" htmlFor="style-position-v" onReset={() => reset(RESET_KEYS.positionY)} isDefault={isDefault(RESET_KEYS.positionY)}>
-        <PercentField id="style-position-v" value={draft.appearance.vertical}
-          onDraft={(vertical) => change({ vertical })} onCommit={(vertical) => commitNow({ vertical })} />
-      </Row>
-    </Section>
-
-    <Section id="color" title="Color">
+    <Section id="color" title="Fill">
       <Row label="Fill" onReset={() => reset(RESET_KEYS.color)} isDefault={isDefault(RESET_KEYS.color)}>
         <Segmented id="style-fill-mode" value={draft.appearance.gradientEnabled ? 'gradient' : 'solid'}
           options={[{ value: 'solid', label: 'Solid', icon: <DropIcon /> }, { value: 'gradient', label: 'Gradient', icon: <PaletteIcon /> }]}
@@ -188,6 +200,17 @@ export function StylePanel({ style, onDraft, onCommit }: {
     </Section>
 
     <Section id="emphasis" title="Emphasis" defaultOpen={false}>
+      <p className="style-hint" style={{ marginTop: 0 }}>Selected words keep this font and color. With word timing, they animate when spoken.</p>
+      <Row label="Font" htmlFor="style-emphasis-family">
+        <Select id="style-emphasis-family" value={draft.appearance.emphasisFontFamily}
+          options={[{ value: '', label: 'Same as caption font' }, ...families.map(groupedFamily)]} onOpen={loadFonts} searchable
+          onChange={(value) => commitNow({ emphasisFontFamily: value })} />
+      </Row>
+      <Row label="Font Face" htmlFor="style-emphasis-face" labelHidden onReset={() => reset(RESET_KEYS.emphasisFace)} isDefault={isDefault(RESET_KEYS.emphasisFace)}>
+        <Select id="style-emphasis-face" value={faceKey(draft.appearance.emphasisWeight, draft.appearance.emphasisItalic)}
+          options={emphasisFaceOptions.map((face) => ({ value: faceKey(face.weight, face.italic), label: face.style }))}
+          onChange={(value) => { const [weight, italic] = value.split(':'); commitNow({ emphasisWeight: Number(weight), emphasisItalic: italic === 'true' }) }} />
+      </Row>
       <Row label="Mode" onReset={() => reset(RESET_KEYS.emphasis)} isDefault={isDefault(RESET_KEYS.emphasis)}>
         <Segmented id="style-emphasis-mode" value={draft.appearance.emphasisMode}
           options={EMPHASIS_MODES.map((mode) => ({ value: mode, label: mode === 'emphasize' ? 'Emphasize' : 'Spotlight' }))}
@@ -237,21 +260,6 @@ export function StylePanel({ style, onDraft, onCommit }: {
         <Segmented id="style-emphasis-animation" value={draft.appearance.emphasisMotion}
           options={[{ value: 'pop', label: 'Pop' }, { value: 'none', label: 'None' }]}
           onChange={(value) => commitNow({ emphasisMotion: value })} />
-      </Row>
-    </Section>
-
-    <Section id="spacing" title="Spacing" defaultOpen={false}>
-      <Row label="Letter spacing" htmlFor="style-letter-spacing" onReset={() => reset(RESET_KEYS.spacing)} isDefault={isDefault(RESET_KEYS.spacing)}>
-        <SliderWithNumber id="style-letter-spacing" min={-5} max={30} value={draft.appearance.letterSpacing} unit="px"
-          onDraft={(value) => change({ letterSpacing: value })} onCommit={() => commit()} />
-      </Row>
-      <Row label="Word spacing" htmlFor="style-word-spacing">
-        <SliderWithNumber id="style-word-spacing" min={-10} max={60} value={draft.appearance.wordSpacing} unit="px"
-          onDraft={(value) => change({ wordSpacing: value })} onCommit={() => commit()} />
-      </Row>
-      <Row label="Line height" htmlFor="style-line-height">
-        <SliderWithNumber id="style-line-height" min={.8} max={2.5} step={.05} value={draft.appearance.lineHeight}
-          onDraft={(value) => change({ lineHeight: value })} onCommit={() => commit()} />
       </Row>
     </Section>
 

@@ -18,3 +18,6 @@ export const DropIcon = (props: IconProps) => <Icon {...props}><path d="M8 2.5c2
 /** Gradient fill (Color → Fill: Gradient). */
 export const PaletteIcon = (props: IconProps) => <Icon {...props}><path d="M8 2.5a5.5 5.5 0 1 0 0 11c.9 0 1.5-.6 1.5-1.4 0-.4-.2-.7-.4-1-.2-.2-.4-.5-.4-.9 0-.7.6-1.2 1.3-1.2H11a3 3 0 0 0 3-3c0-2.2-2.7-3.5-6-3.5Z" /><circle cx="5.6" cy="7" r=".7" fill="currentColor" stroke="none" /><circle cx="8.3" cy="5.3" r=".7" fill="currentColor" stroke="none" /><circle cx="10.8" cy="7" r=".7" fill="currentColor" stroke="none" /></Icon>
 export const UnderlineIcon = (props: IconProps) => <Icon {...props}><path d="M4.5 3v4.5a3.5 3.5 0 0 0 7 0V3M3.5 13h9" /></Icon>
+export const EyedropperIcon = (props: IconProps) => <Icon {...props}><path d="m10.5 2.5 3 3-1.6 1.6-3-3zM9 5l-5.5 5.5V13H6l5.5-5.5M3.5 10.5l2 2" /></Icon>
+/** Grid fill (Background → Fill: Grid). */
+export const GridIcon = (props: IconProps) => <Icon {...props}><path d="M2.5 2.5h11v11h-11ZM2.5 6.2h11M2.5 9.8h11M6.2 2.5v11M9.8 2.5v11" /></Icon>

@@ -3,29 +3,34 @@ import { z } from 'zod'
 import { mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { createReadStream, existsSync } from 'node:fs'
+import { createReadStream } from 'node:fs'
 import { Readable } from 'node:stream'
 import { planMediaRange } from './mediaRange'
 import { getMediaWorker, closeMediaWorker, configuredToolchain } from './mediaWorker'
 import { loadProject, projectSchema, PROJECT_FILE_EXTENSION, PROJECT_FILE_FILTER_NAME, type CaptionProject } from '../src/core/model'
 import type { ProjectMedia } from '../src/core/media'
+import { describeMediaMismatches } from '../src/core/media'
 import { projectAssetSchema, type ProjectAsset } from '../src/core/edit'
-import { candidateFromProbe, candidatePaths, mediaPathFromUrl, projectForSave, type AssetResolution } from './projectMedia'
+import { candidateFromProbe, candidatePaths, mediaPathFromUrl, projectForSave, type AssetResolution, type MediaCandidate } from './projectMedia'
+import { parseCube } from '../src/color/cube'
+import { fingerprintMedia } from '../workers/media/probe'
 import { classifyAsset, classifyMedia, AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, SUBTITLE_EXTENSIONS, VIDEO_EXTENSIONS } from '../src/core/assetKind'
 import { inspectFileForBin, MAX_SUBTITLE_BYTES, type AssetInspectDeps } from './assetInspect'
 import { WAVEFORM_EXTRACTION_VERSION, waveformDataSchema, waveformLoadRequestSchema } from '../src/core/waveform'
 import { silenceDetectRequestSchema, silenceDetectResultSchema } from '../src/core/silenceIpc'
 import { THUMBNAIL_EXTRACTION_VERSION, thumbnailLoadRequestSchema, type ThumbnailImage } from '../src/core/thumbnails'
-import { proxyCreateRequestSchema, proxySupportFromConfiguration, type ProxySupport } from '../src/core/proxy'
+import { proxyCreateRequestSchema, proxySupportFromConfiguration, playbackProxyEnsureRequestSchema, type ProxySupport, type PlaybackProxyStatus } from '../src/core/proxy'
 import { failure, type ProgressMessage } from '../workers/media/protocol'
 import { readWaveformCache, writeWaveformCache } from './waveformCache'
 import { registerModelIpc, closeModelManager } from './modelIpc'
 import { readThumbnailCache, writeThumbnailCache } from './thumbnailCache'
+import { PlaybackProxyService } from './playbackProxyService'
 import { registerTranscriptionIpc, runTranscriptionSmoke } from './transcriptionIpc'
 import { modelIdSchema } from '../src/core/modelCatalog'
 import { registerExportIpc, runExportSmoke } from './exportIpc'
+import { exportSettingsSchema } from '../src/export/settings'
 import { logExport } from './exportLog'
-import { closeJobs } from './jobs'
+import { closeJobs, getJobScheduler } from './jobs'
 import { registerAlignmentIpc } from './alignmentIpc'
 import { appMenuTemplate } from './appMenu'
 import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
@@ -55,6 +60,15 @@ const activeSilenceDetections = new Map<string, { cancelled: boolean; cancel?: (
 let shuttingDown = false
 let proxySupportCache: Promise<ProxySupport> | undefined
 
+function playbackProxyCacheDirectory(): string {
+  return path.join(app.getPath('userData'), 'Cache', 'playback-proxies')
+}
+let playbackProxyServiceInstance: PlaybackProxyService | undefined
+function getPlaybackProxyService(): PlaybackProxyService {
+  playbackProxyServiceInstance ??= new PlaybackProxyService({ worker: getMediaWorker(), scheduler: getJobScheduler(), cacheDirectory: playbackProxyCacheDirectory() })
+  return playbackProxyServiceInstance
+}
+
 function fingerprintKey(fingerprint: NonNullable<ProjectMedia['fingerprint']>) {
   return `${fingerprint.algorithm}:${fingerprint.value}:${fingerprint.sizeBytes}:${fingerprint.sampledBytes}`
 }
@@ -63,18 +77,18 @@ registerTranscriptionIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fing
 registerExportIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerAlignmentIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 
-const appIconPath = path.join(app.getAppPath(), 'build', 'icon.png')
-const appIcon = existsSync(appIconPath) ? appIconPath : undefined
+// dist-electron/main.cjs sits one level below the repo root, where assets/ lives.
+const appIconPath = path.join(__dirname, '../assets/icon.png')
 
 function createWindow() {
   const window = new BrowserWindow({
-    ...(appIcon ? { icon: appIcon } : {}),
     width: 1440,
     height: 920,
     minWidth: 940,
     minHeight: 680,
     backgroundColor: '#090b10',
     title: 'KathaCut',
+    icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -103,6 +117,30 @@ async function readTextForBin(filePath: string): Promise<{ content: string; size
   const info = await stat(filePath)
   if (info.size > MAX_SUBTITLE_BYTES) return { content: '', sizeBytes: info.size }
   return { content: await readFile(filePath, 'utf8'), sizeBytes: info.size }
+}
+
+/** A `.cube` LUT is well under a video's size, but a pathological hand-edited file (or one built for
+ * a much finer lattice than this app ever bakes) could still be huge as text — capped generously. */
+const MAX_LUT_BYTES = 32 * 1024 * 1024
+
+/**
+ * Reads, validates (`parseCube`, `src/color/cube.ts` — the same parser the renderer's preview uses)
+ * and fingerprints a `.cube` file, the whole of Slice 5's own relink/import path: a LUT is a text
+ * file, never probed as media (`inspectMedia` above is for video/image/audio only), so this is its
+ * own lightweight counterpart rather than a special case bolted onto that one.
+ */
+async function inspectLut(filePath: string, expected: ProjectMedia | null = null): Promise<MediaCandidate> {
+  const info = await stat(filePath)
+  if (info.size > MAX_LUT_BYTES) throw new Error(`${path.basename(filePath)} is larger than the ${Math.round(MAX_LUT_BYTES / (1024 * 1024))} MiB .cube import limit.`)
+  const text = await readFile(filePath, 'utf8')
+  try { parseCube(text) } catch (error) { throw new Error(`${path.basename(filePath)} could not be read as a .cube LUT: ${errorMessage(error)}`) }
+  const controller = new AbortController()
+  const fingerprint = await fingerprintMedia(filePath, controller.signal)
+  const media: ProjectMedia = { name: path.basename(filePath), reference: { relativePath: null, absolutePath: filePath }, fingerprint, metadata: null }
+  // Export resolves a LUT asset by fingerprint through this same registry (`buildExportForProject`),
+  // so a LUT that was imported but never registered here made every export using it fail as "missing".
+  inspectedMedia.set(fingerprintKey(fingerprint), { path: filePath, media })
+  return { path: filePath, url: '', media, mismatches: expected ? describeMediaMismatches(expected, media) : [], text }
 }
 
 const assetInspectDeps: AssetInspectDeps = { inspect: (filePath) => inspectMedia(filePath), readText: readTextForBin }
@@ -324,6 +362,22 @@ ipcMain.handle('media:proxy-cancel', (event, requestIdValue: unknown) => {
   if (active) { active.cancelled = true; active.cancel?.() }
 })
 
+// Automatic playback proxies (docs/STATUS.md): fire-and-forget from the renderer's side — it never
+// awaits a finished proxy, only subscribes to `media:playback-proxy-status` for this fingerprint.
+// Never a save dialog and never a fallback for an unsupported codec (that's `media:proxy-create`
+// above); this always writes into the app's own cache and is only ever used for preview.
+ipcMain.handle('media:playback-proxy-ensure', async (event, value: unknown) => {
+  const request = playbackProxyEnsureRequestSchema.parse(value)
+  const send = (status: PlaybackProxyStatus) => {
+    if (!event.sender.isDestroyed()) event.sender.send('media:playback-proxy-status', status)
+  }
+  const registered = inspectedMedia.get(fingerprintKey(request.fingerprint))
+  if (!registered) { send({ fingerprint: request.fingerprint, state: 'failed', url: null, reason: 'Media has not been selected or verified in this app session' }); return }
+  const support = await checkProxySupport()
+  if (!support.supported) { send({ fingerprint: request.fingerprint, state: 'unavailable', url: null, reason: support.reason }); return }
+  getPlaybackProxyService().ensure({ fingerprint: request.fingerprint, inputPath: registered.path, durationUs: request.durationUs }, send)
+})
+
 ipcMain.handle('dialog:open-video', async () => {
   const result = await dialog.showOpenDialog({
     properties: ['openFile'],
@@ -371,17 +425,24 @@ ipcMain.handle('project:open', async () => {
     // has its stored reference rewritten to the path actually found, so a later save keeps it linked.
     const assetResolutions: AssetResolution[] = []
     let assets: ProjectAsset[] = loaded.project.assets
+    // A `lut`-kind asset resolves through `inspectLut` (a text-file read, never ffprobe) rather than
+    // `inspectMedia`; its `.cube` text is collected separately so the renderer's LUT cache can be
+    // hydrated in the same round trip, without a second per-asset read.
+    const lutTexts: Record<string, string> = {}
     for (const asset of loaded.project.assets) {
       const paths = await candidatePaths(projectPath, asset)
       if (!paths.existing) { assetResolutions.push({ id: asset.id, resolution: { kind: 'missing', triedPaths: paths.tried } }); continue }
-      const candidate = await inspectMedia(paths.existing, asset)
+      let candidate: MediaCandidate
+      try { candidate = asset.kind === 'lut' ? await inspectLut(paths.existing, asset) : await inspectMedia(paths.existing, asset) }
+      catch { assetResolutions.push({ id: asset.id, resolution: { kind: 'missing', triedPaths: paths.tried } }); continue }
       if (candidate.mismatches.length) { assetResolutions.push({ id: asset.id, resolution: { kind: 'mismatch', candidate } }); continue }
       assetResolutions.push({ id: asset.id, resolution: { kind: 'resolved', candidate } })
       assets = assets.map((entry) => entry.id === asset.id ? { ...entry, ...candidate.media } : entry)
+      if (candidate.text !== undefined) lutTexts[asset.id] = candidate.text
     }
     const project = { ...loaded.project, assets }
     knownProjectPaths.add(projectPath)
-    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, migrationNotes: loaded.migrationNotes, assets: assetResolutions }
+    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, migrationNotes: loaded.migrationNotes, assets: assetResolutions, lutTexts }
   } catch (error) {
     return { ok: false as const, message: errorMessage(error) }
   }
@@ -411,6 +472,7 @@ const RELINK_FILTERS = {
   image: { name: 'Image', extensions: IMAGE_EXTENSIONS },
   audio: { name: 'Audio', extensions: AUDIO_EXTENSIONS },
   video: { name: 'Video', extensions: VIDEO_EXTENSIONS },
+  lut: { name: 'LUT', extensions: ['cube'] as string[] },
 } as const
 
 ipcMain.handle('assets:relink', async (_event, expectedValue: unknown) => {
@@ -418,10 +480,44 @@ ipcMain.handle('assets:relink', async (_event, expectedValue: unknown) => {
   const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [RELINK_FILTERS[expected.kind]] })
   if (result.canceled || !result.filePaths[0]) return null
   try {
+    if (expected.kind === 'lut') return { ok: true as const, candidate: await inspectLut(result.filePaths[0], expected) }
     const candidate = await inspectMedia(result.filePaths[0], expected)
     const actualKind = candidate.media.metadata ? classifyMedia(candidate.media.metadata) : null
     if (actualKind !== expected.kind) return { ok: false as const, message: `${candidate.media.name} is not a usable ${expected.kind} file.` }
     return { ok: true as const, candidate }
+  } catch (error) { return { ok: false as const, message: errorMessage(error) } }
+})
+
+/** "My LUTs" → Import .cube (Slice 5): opens a dialog filtered to `.cube`, reads, validates and
+ * fingerprints it (`inspectLut`) — the renderer creates a new `lut` project asset from the result. */
+ipcMain.handle('lut:import', async () => {
+  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [RELINK_FILTERS.lut] })
+  if (result.canceled || !result.filePaths[0]) return null
+  try { return { ok: true as const, candidate: await inspectLut(result.filePaths[0]) } }
+  catch (error) { return { ok: false as const, message: errorMessage(error) } }
+})
+
+const saveGeneratedLutSchema = z.object({ text: z.string().max(MAX_LUT_BYTES), name: z.string().min(1).max(120), defaultDir: z.string().nullable() })
+
+/** "Match reference image" → Save: writes a renderer-generated `.cube` to a path the user picks in a
+ * native save dialog (defaulting to the project folder), then imports it through `inspectLut` like
+ * any other LUT, so it is fingerprinted, relinkable and exportable. The text is re-validated with
+ * `parseCube` here — the renderer never chooses the path and main never trusts its content. */
+ipcMain.handle('lut:save-generated', async (_event, request: unknown) => {
+  const { text, name, defaultDir } = saveGeneratedLutSchema.parse(request)
+  try { parseCube(text) } catch (error) { return { ok: false as const, message: `The generated LUT is invalid: ${errorMessage(error)}` } }
+  const safeName = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\.cube$/i, '').trim() || 'Reference match'
+  const result = await dialog.showSaveDialog({
+    defaultPath: path.join(defaultDir ?? app.getPath('documents'), `${safeName}.cube`),
+    filters: [RELINK_FILTERS.lut],
+  })
+  if (result.canceled || !result.filePath) return null
+  const filePath = /\.cube$/i.test(result.filePath) ? result.filePath : `${result.filePath}.cube`
+  try {
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`
+    await writeFile(temporaryPath, text, { encoding: 'utf8', flag: 'wx' })
+    await rename(temporaryPath, filePath)
+    return { ok: true as const, candidate: await inspectLut(filePath) }
   } catch (error) { return { ok: false as const, message: errorMessage(error) } }
 })
 
@@ -507,9 +603,17 @@ function isAppOrigin(url: string): boolean {
   return isDev && !!process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL)
 }
 
+/** CORS headers for a `media:` response, so a `<video>`/`<img>` loaded with `crossOrigin="anonymous"`
+ * stays untainted and WebGL can upload it as a texture (the graded preview). Only the app's own
+ * origin is echoed; a packaged `file://` page sends `Origin: null`. */
+function mediaCorsHeaders(origin: string | null): Record<string, string> {
+  if (!origin) return {}
+  const devOrigin = isDev && process.env.VITE_DEV_SERVER_URL ? new URL(process.env.VITE_DEV_SERVER_URL).origin : null
+  if (origin !== 'null' && origin !== devOrigin) return {}
+  return { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' }
+}
+
 app.whenReady().then(async () => {
-  // Unpackaged runs otherwise show Electron's dock icon; a packaged .app uses its bundle icon.
-  if (appIcon && !app.isPackaged) app.dock?.setIcon(appIcon)
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     callback(ALLOWED_PERMISSIONS.has(permission) && isAppOrigin(details.requestingUrl))
   })
@@ -522,16 +626,21 @@ app.whenReady().then(async () => {
   protocol.handle('media', async (request) => {
     const filePath = mediaPathFromUrl(request.url)
     if (!filePath) return new Response('Bad Request', { status: 400 })
-    const allowed = [...inspectedMedia.values()].some((entry) => path.resolve(entry.path) === filePath)
+    // A playback proxy lives outside `inspectedMedia` (it is never a user-chosen or probed source
+    // path), so it is allowed by directory containment instead — this cache directory only ever
+    // holds files this app generated itself (`playbackProxyCache.ts`), never an arbitrary path.
+    const proxyCacheRoot = playbackProxyCacheDirectory() + path.sep
+    const allowed = [...inspectedMedia.values()].some((entry) => path.resolve(entry.path) === filePath) || filePath.startsWith(proxyCacheRoot)
     if (!allowed) return new Response('Forbidden', { status: 403 })
     // Ranges are answered here (206 + Content-Range) because net.fetch on file URLs slices the body
     // but reports 200, which makes Chromium's media pipeline treat the video as unseekable.
     let sizeBytes: number
     try { sizeBytes = (await stat(filePath)).size } catch { return new Response('Not Found', { status: 404 }) }
     const plan = planMediaRange(request.headers.get('range'), sizeBytes, filePath)
-    if (plan.status === 416 || request.method === 'HEAD') return new Response(null, { status: plan.status, headers: plan.headers })
+    const headers = { ...plan.headers, ...mediaCorsHeaders(request.headers.get('origin')) }
+    if (plan.status === 416 || request.method === 'HEAD') return new Response(null, { status: plan.status, headers })
     const stream = Readable.toWeb(createReadStream(filePath, { start: plan.start, end: plan.end })) as ReadableStream
-    return new Response(stream, { status: plan.status, headers: plan.headers })
+    return new Response(stream, { status: plan.status, headers })
   })
 
   // Developer-only, read-only smoke entry; no renderer IPC is exposed by M1.
@@ -572,7 +681,8 @@ app.whenReady().then(async () => {
       const candidate = await inspectMedia(mediaPath)
       const srtPath = process.env.CAPTION_STUDIO_EXPORT_SMOKE_SRT || null
       const manifestPath = process.env.CAPTION_STUDIO_EXPORT_SMOKE_MANIFEST || null
-      console.log(JSON.stringify(await runExportSmoke(candidate.path, candidate.media, srtPath, outputPath, manifestPath)))
+      console.log(JSON.stringify(await runExportSmoke(candidate.path, candidate.media, srtPath, outputPath, manifestPath,
+        process.env.CAPTION_STUDIO_EXPORT_SMOKE_SETTINGS ? exportSettingsSchema.parse(JSON.parse(process.env.CAPTION_STUDIO_EXPORT_SMOKE_SETTINGS)) : undefined)))
     } catch (error) { console.error(error); process.exitCode = 1 }
     app.quit()
     return
@@ -581,6 +691,7 @@ app.whenReady().then(async () => {
     const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
     target?.webContents.send('menu:command', command)
   })))
+  if (process.platform === 'darwin') app.dock?.setIcon(appIconPath)
   createWindow()
   app.on('activate', () => {
     if (!shuttingDown && BrowserWindow.getAllWindows().length === 0) createWindow()

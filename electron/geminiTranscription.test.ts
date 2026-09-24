@@ -39,8 +39,8 @@ describe('segmentsFromWords', () => {
     expect(locateWordSpans(segments[0].text, segments[0].words!)).not.toBeNull()
   })
 
-  it('maps language choices to Gemini locale hints', () => {
-    expect(geminiLocales('auto')).toEqual(['ml-IN', 'en-IN'])
+  it('maps language choices to Gemini locale hints, sending none for mixed speech', () => {
+    expect(geminiLocales('auto')).toEqual([])
     expect(geminiLocales('ml')).toEqual(['ml-IN'])
     expect(geminiLocales('en')).toEqual(['en-IN'])
   })
@@ -53,22 +53,22 @@ describe('GeminiTranscriptionAdapter', () => {
       chunks: [{ path: '/tmp/a.wav', startUs: 0, endUs: 3_300_000 }, { path: '/tmp/b.wav', startUs: 7_700_000, endUs: 10_000_000 }],
     }) }) } as unknown as Pick<MediaWorkerClient, 'start'>
     const uploads: { path: string; locales: readonly string[] }[] = []
-    const adapter = new GeminiTranscriptionAdapter(worker, async (path, locales) => {
-      uploads.push({ path, locales })
+    const adapter = new GeminiTranscriptionAdapter(worker, async (path, options) => {
+      uploads.push({ path, locales: options.locales })
       return path === '/tmp/a.wav'
-        ? { words: [w('ആദ്യ', 1000, 1400), w('വാചകം', 1450, 2000)], usage: { inputTokens: 10, outputTokens: 4 } }
-        : { words: [w('after', 500, 900), w('pause', 950, 1400)], usage: { inputTokens: 7, outputTokens: 3 } }
+        ? { words: [w('ആദ്യ', 1000, 1400), w('വാചകം', 1450, 2000)], usage: { inputTokens: 10, outputTokens: 4 }, droppedAnnotations: 1 }
+        : { words: [w('after', 500, 900), w('pause', 950, 1400)], usage: { inputTokens: 7, outputTokens: 3 }, droppedAnnotations: 0 }
     }, '/tmp/chunks')
     const transcript = await runTranscription(adapter, {
       audio: { path: '/tmp/audio.wav', sourceStartUs: 5_000_000, durationUs: 10_000_000, sampleRate: 16000, channels: 1, sampleCount: 160_000 },
     }, { language: 'auto', device: 'cpu', wordTimestamps: true })
-    expect(uploads).toEqual([{ path: '/tmp/a.wav', locales: ['ml-IN', 'en-IN'] }, { path: '/tmp/b.wav', locales: ['ml-IN', 'en-IN'] }])
+    expect(uploads).toEqual([{ path: '/tmp/a.wav', locales: [] }, { path: '/tmp/b.wav', locales: [] }])
     expect(transcript.language).toBe('ml')
     expect(transcript.segments.map(({ startUs, endUs, text }) => ({ startUs, endUs, text }))).toEqual([
       { startUs: 6_000_000, endUs: 7_000_000, text: 'ആദ്യ വാചകം' },
       { startUs: 13_200_000, endUs: 14_100_000, text: 'after pause' },
     ])
     expect(transcript.segments[1].words[0]).toMatchObject({ startUs: 13_200_000, endUs: 13_600_000, timingSource: 'model' })
-    expect(adapter.lastRun).toMatchObject({ inputTokens: 17, outputTokens: 7, droppedWords: 0 })
+    expect(adapter.lastRun).toMatchObject({ inputTokens: 17, outputTokens: 7, droppedWords: 0, droppedAnnotations: 1 })
   })
 })

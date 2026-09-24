@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { jobSnapshotSchema, type JobSnapshot, type JobStructuredError } from '../core/jobs'
 import { projectSchema } from '../core/model'
+import { exportSettingsSchema } from './settings'
 
 /** Renderer ↔ main export bridge, mirroring `transcriptionIpc.ts`. The renderer sends only the live
  * project — never a path. Main resolves every file the timeline plays through the fingerprints it
@@ -10,6 +11,7 @@ import { projectSchema } from '../core/model'
 export const exportStartRequestSchema = z.strictObject({
   requestId: z.uuid(),
   project: projectSchema,
+  settings: exportSettingsSchema.optional(),
 })
 export type ExportStartRequest = z.infer<typeof exportStartRequestSchema>
 

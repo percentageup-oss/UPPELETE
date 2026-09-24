@@ -101,7 +101,7 @@ exports=$(CONFIG="$CONFIG" node -e "$EXPORT_JS")
 eval "$exports"
 
 case "$mode" in
-  dev) exec npm run dev ;;
+  dev) scripts/stop-stale.sh; exec npm run dev ;;
   electron) npm run build && exec npx electron . ;;
   smoke) npm run build:electron && exec npx electron . --media-worker-smoke ;;
 esac

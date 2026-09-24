@@ -12,13 +12,14 @@ import type { CaptionDisplay } from './captions/wordDisplay'
 import { transcriptSpans, wordMenuAvailability, type TranscriptSpan, type WordActionType } from './transcript'
 import { positionWordActionMenu } from './wordActionMenu'
 import { TranscriptionPanel, type ApplyTranscript } from './TranscriptionPanel'
+import { NumberField } from './style/controls'
 
 export type { WordActionType }
 
 export function CaptionsPanel({
   cueCount, visibleCues, selectedCueId, selectedWordId, warningCueIds, notInSequence, videoNameOf,
   historyPastLength, historyFutureLength, onUndo, onRedo,
-  effectiveStyle, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onEstimate, onGroup,
+  effectiveStyle, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onPlacementOverride, onEstimate, onGroup,
   onSelect, onUpdateText, onSelectWord, onWordAction, onEstimateMissing, cueButtonRefs,
   videos, pickedVideo, onPickVideo, mediaReady, onApplyTranscript, geminiKeyConfigured, onNeedGeminiKey, onImportSrt,
 }: {
@@ -42,6 +43,8 @@ export function CaptionsPanel({
   onProjectStyle: (style: CaptionStyle) => void
   onOverride: (override?: { motion?: CaptionMotion; motionSpeed?: number }) => void
   onResetOverrides: () => void
+  /** The selected caption's own stage-drag placement override (`CaptionStageEditor`'s Alt-drag). */
+  onPlacementOverride: (override?: Cue['placementOverride']) => void
   onEstimate: () => void
   onGroup: (options: GroupingOptions, all: boolean) => void
   onSelect: (cue: Cue) => void
@@ -73,7 +76,8 @@ export function CaptionsPanel({
       <div className="history"><button onClick={onUndo} disabled={!historyPastLength} aria-label="Undo" title="Undo (⌘/Ctrl+Z)">↶</button><button onClick={onRedo} disabled={!historyFutureLength} aria-label="Redo" title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)">↷</button></div>
       <CaptionTools style={effectiveStyle} selected={selected} captionDisplay={captionDisplay}
         onCaptionDisplay={onCaptionDisplay} onProjectStyle={onProjectStyle}
-        onOverride={onOverride} onResetOverrides={onResetOverrides} onEstimate={onEstimate} onGroup={onGroup} />
+        onOverride={onOverride} onResetOverrides={onResetOverrides} onPlacementOverride={onPlacementOverride}
+        onEstimate={onEstimate} onGroup={onGroup} />
     </div></div>
     <div className="cue-list" aria-label="Caption cues">
       {videos.length > 1 && <VideoPicker videos={videos} picked={pickedVideo} onPick={onPickVideo} label="Transcribe" />}
@@ -84,6 +88,7 @@ export function CaptionsPanel({
       </div>}
       {visibleCues.map((cue, index) => <TranscriptCue key={cue.id} cue={cue} index={index} selected={cue.id === selectedCueId} warning={warningCueIds.has(cue.id)}
         notInSequence={notInSequence(cue)} videoName={videos.length > 1 ? videoNameOf(cue) : null} selectedWordId={selectedWord?.id ?? null}
+        effectiveStyle={effectiveStyle}
         onSelect={() => onSelect(cue)} onUpdateText={(text) => onUpdateText(cue.id, text)} onSelectWord={(span) => onSelectWord(cue, span)}
         onAction={(type, span) => onWordAction(cue.id, type, span)} onEstimateMissing={onEstimateMissing}
         reference={(element) => { if (element) cueButtonRefs.current.set(cue.id, element); else cueButtonRefs.current.delete(cue.id) }} />)}
@@ -91,10 +96,11 @@ export function CaptionsPanel({
   </>
 }
 
-function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onEstimate, onGroup }: {
+function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onPlacementOverride, onEstimate, onGroup }: {
   style: CaptionStyle; selected: Cue | null; captionDisplay: CaptionDisplay
   onCaptionDisplay: (display: CaptionDisplay) => void; onProjectStyle: (style: CaptionStyle) => void
   onOverride: (override?: { motion?: CaptionMotion; motionSpeed?: number }) => void; onResetOverrides: () => void
+  onPlacementOverride: (override?: Cue['placementOverride']) => void
   onEstimate: () => void; onGroup: (options: GroupingOptions, all: boolean) => void
 }) {
   const [scope, setScope] = useState<'all' | 'selected'>('all')
@@ -118,7 +124,7 @@ function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onPro
     else onProjectStyle({ ...style, motionSpeed })
   }
   return <details className="caption-tools">
-    <summary>⚙ Caption Tools</summary>
+    <summary>Caption Tools</summary>
     <div className="caption-tools-popover">
     <section aria-label="Caption transition controls">
       <div className="caption-tools-row"><label>Apply to <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="all">All captions</option><option value="selected" disabled={!selected}>Selected caption</option></select></label>
@@ -128,17 +134,22 @@ function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onPro
       <label>Transition <select aria-label="Caption transition" value={effective.motion} onChange={(e) => setMotion(e.target.value as CaptionMotion)}>
         {MOTIONS.map((motion) => <option key={motion.id} value={motion.id}>{motion.label}</option>)}
       </select></label>
-      <label>Speed <input aria-label="Transition speed" type="number" min="0.25" max="4" step="0.25" value={effective.motionSpeed} disabled={!speedEnabled}
-        onChange={(e) => setSpeed(Math.max(.25, Math.min(4, Number(e.target.value) || 1)))} />×</label>
+      <label>Speed <NumberField id="caption-motion-speed" ariaLabel="Transition speed" min={.25} max={4} step={.25} unit="×" value={effective.motionSpeed} disabled={!speedEnabled}
+        onDraft={(value) => setSpeed(Math.max(.25, Math.min(4, value)))} onCommit={(value) => setSpeed(Math.max(.25, Math.min(4, value)))} /></label>
       <button type="button" disabled={!speedEnabled || effective.motionSpeed === 1} onClick={() => setSpeed(1)}>Reset speed</button>
       {!speedEnabled && <p className="style-hint">This effect follows word timing and has no separate transition duration.</p>}
       {missingTiming && <p className="template-estimate-cta">This effect needs usable word timing. <button type="button" onClick={onEstimate}>Apply with estimated timing</button></p>}
       <button type="button" onClick={onResetOverrides}>Reset all caption overrides</button>
+      {selected?.placementOverride && <div className="caption-tools-row">
+        <span className="override-badge" title="Moved, resized or rotated on the stage independently of the project style">Placement override</span>
+        <button type="button" onClick={() => onPlacementOverride(undefined)}>Use project placement</button>
+      </div>}
     </section>
     <section aria-label="Caption display and grouping controls">
       <label>Video display <select value={captionDisplay} onChange={(e) => onCaptionDisplay(e.target.value as CaptionDisplay)}><option value="line">Full caption</option><option value="word">One word at a time</option></select></label>
       <div className="caption-tools-row"><label>Max words <select value={maxWords} onChange={(e) => setMaxWords(Number(e.target.value))}><option value={7}>Default</option>{[1, 2, 3, 4, 5].map((value) => <option key={value} value={value}>{value} words</option>)}</select></label>
-        <label>Max characters <input type="number" min="1" max="200" value={maxChars} onChange={(e) => setMaxChars(Math.max(1, Math.min(200, Number(e.target.value) || 42)))} /></label>
+        <label>Max characters <NumberField id="caption-max-chars" min={1} max={200} step={1} value={maxChars}
+          onDraft={(value) => setMaxChars(Math.max(1, Math.min(200, Math.round(value))))} onCommit={(value) => setMaxChars(Math.max(1, Math.min(200, Math.round(value))))} /></label>
         <label>Lines <select value={style.appearance.maxLines} onChange={(e) => onProjectStyle({ ...style, appearance: { ...style.appearance, maxLines: Number(e.target.value) } })}>{[1,2,3,4,5,6].map((value) => <option key={value} value={value}>{value} line{value === 1 ? '' : 's'}</option>)}</select></label>
       </div>
       <p className="style-hint">Character limits count Malayalam grapheme clusters. Explicit line breaks are preserved.</p>
@@ -149,14 +160,20 @@ function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onPro
   </details>
 }
 
-function TranscriptCue({ cue, index, selected, warning, notInSequence, videoName, selectedWordId, onSelect, onUpdateText, onSelectWord, onAction, onEstimateMissing, reference }: {
+function TranscriptCue({ cue, index, selected, warning, notInSequence, videoName, selectedWordId, effectiveStyle, onSelect, onUpdateText, onSelectWord, onAction, onEstimateMissing, reference }: {
   cue: Cue; index: number; selected: boolean; warning: boolean; notInSequence: boolean; videoName: string | null; selectedWordId: string | null
+  effectiveStyle: CaptionStyle
   onSelect: () => void; onUpdateText: (text: string) => boolean; onSelectWord: (span: TranscriptSpan) => void
   onAction: (type: WordActionType, span: TranscriptSpan) => void
   onEstimateMissing: () => void
   reference: (element: HTMLDivElement | null) => void
 }) {
   const spans = transcriptSpans(cue)
+  // Whether this cue's *effective* motion (project style, or its own override) needs word timing to
+  // animate at all — an edit that breaks that timing otherwise silently falls back to static-clean
+  // with no visible explanation (see `wordMotionAvailability` in captions/renderer.ts).
+  const motionNeedsWords = MOTIONS.find((motion) => motion.id === resolveCaptionMotion(effectiveStyle, cue.motionOverride).motion)?.words ?? false
+  const availability = motionNeedsWords ? wordMotionAvailability(cue) : null
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(cue.text)
   const [composing, setComposing] = useState(false)
@@ -203,11 +220,16 @@ function TranscriptCue({ cue, index, selected, warning, notInSequence, videoName
   }, [menuOpen, active?.textStart])
   const beginEditing = () => { setMenuOpen(false); setDraft(cue.text); setEditing(true) }
   return <div ref={(element) => { rootRef.current = element; reference(element) }} role="button" tabIndex={0} className={`cue-card ${selected ? 'selected' : ''} ${warning ? 'has-warning' : ''}`}
-    onClick={() => { setMenuOpen(false); onSelect() }} onDoubleClick={beginEditing} onKeyDown={(event) => { if ((event.target as HTMLElement).closest('textarea,button,input,select')) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }}
+    onClick={() => { setMenuOpen(false); onSelect() }} onDoubleClick={beginEditing}
+    // Enter selects; Space is left alone so it reaches the global play/pause shortcut even while a
+    // cue card is focused/selected.
+    onKeyDown={(event) => { if ((event.target as HTMLElement).closest('textarea,button,input,select')) return; if (event.key === 'Enter') { event.preventDefault(); onSelect() } }}
     aria-pressed={selected} aria-label={`Cue ${index + 1}: ${cue.text || 'empty'}, ${formatClock(cue.startUs)} to ${formatClock(cue.endUs)}`}>
     <span className="cue-number">{index + 1}</span><span className="cue-content"><time>{formatTimestamp(cue.startUs, ':').slice(3, -4)} — {formatTimestamp(cue.endUs, ':').slice(3, -4)}</time>
       {videoName && <span className="cue-video-badge" title={`Spoken in ${videoName}`}>{videoName}</span>}
       {notInSequence && <span className="cue-cut-badge" title="No clip on the timeline plays this caption’s part of its video, so it won’t appear in the exported video. It is kept, and comes back if that part is played again.">Not in sequence</span>}
+      {availability && !availability.enabled && <span className="cue-timing-badge" title={availability.explanation}>Animation paused</span>}
+      {availability?.enabled && availability.estimated && <span className="cue-timing-badge estimated" title={availability.explanation}>Estimated timing</span>}
       {editing ? <textarea className="transcript-inline-editor" autoFocus value={draft} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
         onKeyDown={(event) => { if (composing || event.nativeEvent.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); setEditing(false) } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (onUpdateText(draft)) setEditing(false) } }}
         onBlur={() => { if (!composing && onUpdateText(draft)) setEditing(false) }} aria-label={`Edit caption ${index + 1}`} /> : <span className="cue-text">{spans.length ? spans.map((span, position) => <span key={span.textStart}>{cue.text.slice(position ? spans[position - 1].textEnd : 0, span.textStart)}<button type="button" className={`transcript-word ${(span.word ? span.word.id === selectedWordId : menuOpen && span.textStart === activeStart) ? 'selected' : ''}`}

@@ -19,6 +19,9 @@ export type WordTarget = { wordId: string } | { textStart: number }
 export type CaptionCommand =
   | { type: 'toggle-emphasis'; cueId: string; textStart: number }
   | { type: 'estimate-words'; cueId: string; idPrefix: string; missingOnly?: boolean }
+  /** `estimateIfUntimed` (an id prefix) restores word timing this edit broke on a cue that already had
+   * complete timing, so a word-driven motion preset keeps animating instead of silently falling back to
+   * static-clean. It never estimates a cue that had no word timing to begin with (e.g. imported SRT). */
   | { type: 'update-text'; cueId: string; text: string; estimateIfUntimed?: string }
   | { type: 'update-time'; cueId: string; startUs: number; endUs: number }
   | { type: 'shift-time'; cueId: string; deltaUs: number }
@@ -36,6 +39,8 @@ export type CaptionCommand =
   | { type: 'apply-template'; style: CaptionStyle; idPrefix: string }
   | { type: 'set-motion-override'; cueId: string; override?: { motion?: CaptionMotion; motionSpeed?: number } }
   | { type: 'reset-motion-overrides' }
+  | { type: 'set-placement-override'; cueId: string; override?: Cue['placementOverride'] }
+  | { type: 'reset-placement-overrides' }
   | { type: 'line-break-before-word'; cueId: string; target: WordTarget }
   | { type: 'split-before-word'; cueId: string; wordId: string; rightCueId: string }
   | { type: 'move-from-word-to-next'; cueId: string; wordId: string }
@@ -217,15 +222,20 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     const cue = cues.find((item) => item.id === command.cueId)
     if (!cue) return fail('The selected cue no longer exists.')
     if (cue.text === command.text) return { ok: true, project, selectedId: cue.id, warnings: validateCaptions(cues, context).warnings }
+    // A cue that already had complete word timing keeps a word-driven motion preset working
+    // through the edit — see `wordMotionAvailability` (renderer.ts), which requires every token to
+    // be covered by a timed word or falls back to static-clean. Only fill the gap this edit just
+    // opened; never invent word timing for a cue that never had it (e.g. imported SRT).
+    const hadCompleteTiming = cue.words.length > 0 && untimedTokenCount(cue) === 0
     let words = retainSafeWordTimings(cue.words, cue.text, command.text)
-    // In WORD display, a freshly typed/edited cue should show word-by-word immediately rather than
-    // as an untimed placeholder until the user toggles the mode again.
-    if (command.estimateIfUntimed !== undefined) {
+    if (command.estimateIfUntimed !== undefined && hadCompleteTiming) {
       const draft = { ...cue, text: command.text, words }
       if (untimedTokenCount(draft) > 0 && captionTokens(command.text).length > 0) {
         let serial = 0
         try { words = estimateMissingWordTimings(draft, () => `${command.estimateIfUntimed}-${++serial}`) }
-        catch { /* too short to estimate; leave the safely-retained timing as-is */ }
+        catch (error) {
+          commandWarnings.push({ kind: 'estimate-skipped', cueIds: [cue.id], message: error instanceof Error ? error.message : 'Cannot estimate word timing.' })
+        }
       }
     }
     cues = replaceCue(cues, cue.id, [{
@@ -385,13 +395,12 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     captionDisplay = command.display
   } else if (command.type === 'apply-template') {
     captionStyle = command.style
-    const needsWords = command.style.motion === 'active-word-highlight'
-      || command.style.motion === 'word-pop'
-      || command.style.motion === 'progressive-word-reveal'
     let serial = 0
     const newId = () => `${command.idPrefix}-${++serial}`
     cues = cues.map((cue) => {
-      let updated = cue.motionOverride ? { ...cue, motionOverride: undefined } : cue
+      let updated = cue
+      const motion = cue.motionOverride?.motion ?? command.style.motion
+      const needsWords = motion === 'active-word-highlight' || motion === 'word-pop' || motion === 'progressive-word-reveal'
       if (!needsWords || !cuesNeedingWordTiming([updated]).length) return updated
       try {
         updated = { ...updated, words: estimateMissingWordTimings(updated, newId), needsReview: true }
@@ -406,6 +415,12 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     cues = replaceCue(cues, cue.id, [{ ...cue, motionOverride: command.override }])
   } else if (command.type === 'reset-motion-overrides') {
     cues = cues.map((cue) => cue.motionOverride ? { ...cue, motionOverride: undefined } : cue)
+  } else if (command.type === 'set-placement-override') {
+    const cue = cues.find((item) => item.id === command.cueId)
+    if (!cue) return fail('The selected cue no longer exists.')
+    cues = replaceCue(cues, cue.id, [{ ...cue, placementOverride: command.override }])
+  } else if (command.type === 'reset-placement-overrides') {
+    cues = cues.map((cue) => cue.placementOverride ? { ...cue, placementOverride: undefined } : cue)
   } else if (command.type === 'line-break-before-word') {
     const cue = cues.find((item) => item.id === command.cueId)
     const located = cue && locateTarget(cue, command.target)

@@ -68,7 +68,7 @@ Composition space is always **1080 units wide** by `1080 / aspect` tall (`COMPOS
 
 | Tool | Does |
 | --- | --- |
-| `get_project` | Title, output format, assets, tracks, clips, blur regions, caption style, caption count, playhead, selection, validation warnings. Call first to orient. |
+| `get_project` | Title, output format, assets, tracks (with `solo`/`volume`), clips (with `linkId`, `enabled`, `gain`, `detachedAudio` — clips sharing a `linkId` are edited together; pass `unlinked: true` on a clip command to act on one), blur regions, caption style, caption count, playhead, selection, validation warnings. Call first to orient. |
 | `get_captions` | Cues by source-time range and/or id, paginated; `words: true` includes per-word timing. |
 | `edit` | An array of editing commands (the same union the UI's `runCommand` uses — captions, assets, tracks, clips, blur regions, markers) applied as **one undo step**. Nothing commits if any command fails; the failing index and its errors come back so the caller can fix and retry. |
 | `set_caption_style` | Patches `{motion?, motionSpeed?, appearance?}` onto the current style (read via an internal `get_project`-equivalent call first) and applies it project-wide, exactly like the Style panel. |

@@ -8,7 +8,8 @@ import { failure, type Toolchain } from './protocol'
 import { PngReader } from './exportProcesses'
 import { exportSupport, mostInformativeFailure, renderVideo, type ExportDependencies } from './export'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
-import { frameSourceUs, type ExportManifest } from '../../src/export/plan'
+import { exportManifestV3Schema, frameSourceUs, type ExportManifest } from '../../src/export/plan'
+import { encodeCubeData, parseCube } from '../../src/color/cube'
 
 const PINNED_VERSION = 'ffmpeg version 9.0.1\nconfiguration: --disable-gpl --disable-version3 --disable-nonfree --disable-autodetect --disable-network --enable-zlib --enable-videotoolbox\n'
 const SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
@@ -412,6 +413,45 @@ describe('renderVideo', () => {
     expect(encoderArgs).not.toContain('-filter_complex')
     expect(encoderArgs[scriptIndex + 1].startsWith(root)).toBe(true)
     expect(scriptContentAtSpawnTime).toContain('concat=n=200:v=1:a=0[vcat]')
+  })
+
+  it('writes a manifest v3 baked LUT to its own .cube file before spawning the encoder, and the graph names it', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'export-test-'))
+    directories.push(root)
+    const identity = new Float32Array(2 ** 3 * 3)
+    for (let b = 0; b < 2; b++) for (let g = 0; g < 2; g++) for (let r = 0; r < 2; r++) {
+      const i = ((b * 2 + g) * 2 + r) * 3
+      identity[i] = r; identity[i + 1] = g; identity[i + 2] = b
+    }
+    const manifest = exportManifestV3Schema.parse({
+      version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { width: 1080, height: 1920, frameRate: { numerator: 30, denominator: 1 } },
+      sequenceDurationUs: 1_000_000, inputs: [{ path: '/media/in.mp4', kind: 'video' }],
+      clips: [{ id: 'a', inputIndex: 0, assetId: 'v', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 1_000_000, opacity: 1, fit: 'contain', gain: 1, lutId: 'lut-1' }],
+      overlays: [], blurRegions: [], luts: [{ id: 'lut-1', size: 2, data: encodeCubeData(identity) }],
+    })
+    const renderManifestPath = path.join(root, 'frames.json')
+    await writeFile(renderManifestPath, JSON.stringify(manifest))
+    const signal = new AbortController().signal
+    let cubeFileContentAtSpawnTime = ''
+    const spawn: ExportDependencies['spawn'] = ((executable, args, s) => {
+      if (executable === tools.exportHost!.executable) return fakeHost(s, () => pngFrame(1)) as any
+      const encoderArgs = args as string[]
+      const graph = encoderArgs.includes('-filter_complex_script') ? readFileSync(encoderArgs[encoderArgs.indexOf('-filter_complex_script') + 1], 'utf8') : encoderArgs[encoderArgs.indexOf('-filter_complex') + 1]
+      const match = /lut3d=file='([^']+)'/.exec(graph)
+      if (!match) console.error('GRAPH:', graph)
+      expect(match).not.toBeNull()
+      // Read now, synchronously, before the job's `finally` removes its temp directory.
+      cubeFileContentAtSpawnTime = readFileSync(match![1], 'utf8')
+      return fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
+    await renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    const parsed = parseCube(cubeFileContentAtSpawnTime)
+    expect(parsed.size).toBe(2)
+    expect(Array.from(parsed.data)).toEqual(Array.from(identity))
   })
 })
 
