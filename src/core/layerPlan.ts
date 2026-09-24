@@ -1,4 +1,4 @@
-import { captionFrame, type CaptionLayout, type LayoutInputs } from '../captions/renderer'
+import { captionFrame, type CaptionLayout, type LayoutInputs, type MotionCue } from '../captions/renderer'
 import { captionStyleInputs, DEFAULT_CAPTION_STYLE, resolveCaptionMotion, type CaptionStyle } from '../captions/style'
 import { displayCue, type CaptionDisplay } from '../captions/wordDisplay'
 import { compositionFor } from './composition'
@@ -7,7 +7,7 @@ import { frameEffectsAt } from './frameEffects'
 import type { Clip, EffectRegion, TextOverlay, Track } from './edit'
 import type { Rational } from './media'
 import type { Cue } from './model'
-import { textMotionAt } from '../captions/textMotion'
+import { decorativeTextCue, textMotionAt, titleMotionAt } from '../captions/textMotion'
 import { activeCueAt, type ActiveCue, type TimeRange } from './timelineModel'
 
 /**
@@ -101,6 +101,8 @@ export function createLayerPlan(input: LayerPlanInput) {
   const mediaDurationUs = input.mediaDurationUs ?? null
   const aspect = input.output ? input.output.width / input.output.height : 16 / 9
   const baseInputs = captionStyleInputs(style, compositionFor(aspect))
+  // Per-title layout inputs and decorative cue, built once instead of once per exported frame.
+  const textInputs = new Map<string, { inputs: LayoutInputs; cue: MotionCue }>()
 
   const frameAt = (index: number): LayerFrame => {
     const sequenceUs = sequenceFrameUs(index, input.frameRate)
@@ -124,6 +126,9 @@ export function createLayerPlan(input: LayerPlanInput) {
     const frame = shown
       ? captionFrame(stubLayout({ ...baseInputs, emphasized: shown.emphasized }), shown, sourceUs, resolved.motion, resolved.motionSpeed)
       : null
+    // Caption title motion (style.titleMotion) is applied by CaptionPreview to the shown cue, so it must join the signature.
+    const captionTitle = shown && baseInputs.titleMotion
+      ? titleMotionAt({ startUs: shown.startUs, endUs: shown.endUs, titleMotion: baseInputs.titleMotion }, sourceUs) : null
     const overlayUs = input.timeline ? sequenceUs : sourceUs
     const overlays = (input.overlays ?? [])
       .filter((overlay) => overlayUs >= overlay.startUs && overlayUs < overlay.endUs)
@@ -132,7 +137,16 @@ export function createLayerPlan(input: LayerPlanInput) {
     // project through the v3 manifest, never the segment-mapped v2 path.
     const frameEffects = input.effects?.length ? frameEffectsAt(input.effects, sequenceUs, compositionFor(aspect)) : null
     const textActors = (input.textOverlays ?? []).filter((item) => item.startUs <= sequenceUs && sequenceUs < item.endUs)
-      .map((item) => { const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs); return [item.id, item.layerOrder, motion] })
+      .map((item) => {
+        const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs)
+        let own = textInputs.get(item.id)
+        if (!own) { own = { inputs: captionStyleInputs(item.style, compositionFor(aspect)), cue: decorativeTextCue(item) }; textInputs.set(item.id, own) }
+        // The title's own word motion and entrance treatment are evaluated by TextOverlayActor at paint time;
+        // leaving them out reuses the first (fully hidden) frame for the whole hold.
+        const ownFrame = captionFrame(stubLayout(own.inputs), own.cue, sequenceUs, item.style.motion, item.style.motionSpeed)
+        return [item.id, item.layerOrder, motion, titleMotionAt(item, sequenceUs), ownFrame.visible, ownFrame.opacity,
+          ownFrame.words?.map((word) => [word.wordIndex, word.active, word.revealed, word.scale]) ?? null]
+      })
     // `elapsedUs` is excluded on purpose: it advances every frame but changes nothing visible.
     // `active?.id` already discriminates a placement override today (an override lives on the cue
     // itself, so a different cue is already a different signature); `placementOverride` is included
@@ -141,7 +155,7 @@ export function createLayerPlan(input: LayerPlanInput) {
     const signature = JSON.stringify([
       active?.id ?? null, active?.placementOverride ?? null, shown?.text ?? null, shown?.startUs ?? null, shown?.endUs ?? null,
       frame?.visible ?? false, frame?.opacity ?? 0, frame?.motion ?? null,
-      frame?.words?.map((word) => [word.wordIndex, word.active, word.revealed, word.scale]) ?? null,
+      frame?.words?.map((word) => [word.wordIndex, word.active, word.revealed, word.scale]) ?? null, captionTitle,
       overlays, frameEffects, textActors.length ? textActors : null,
     ])
     return { index, sequenceUs, sourceUs, activeCueId: active?.id ?? null, active: found, signature }

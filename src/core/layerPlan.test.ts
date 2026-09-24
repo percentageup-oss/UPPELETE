@@ -137,4 +137,25 @@ describe('frame signatures', () => {
     expect(signatureAt(900_000)).toBe(signatureAt(1_000_000))
     expect(signatureAt(900_000)).not.toBe(signatureAt(2_500_000))
   })
+
+  it('changes signature through a title entrance even when enter/exit are none', () => {
+    for (const kind of ['focus', 'cascade'] as const) {
+      const titleMotion = { kind, durationUs: 600_000 }
+      const text = [{ id: 't1', text: 'one two three', startUs: 0, endUs: 2_000_000, style: { ...DEFAULT_CAPTION_STYLE, titleMotion }, layerOrder: 1,
+        enter: { kind: 'none' as const, durationUs: 0 }, exit: { kind: 'none' as const, durationUs: 0 }, titleMotion }]
+      const plan = createLayerPlan({ cues: [], frameRate: { numerator: 100, denominator: 1 }, textOverlays: text, output })
+      const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+      expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
+      expect(signatureAt(300_000)).not.toBe(signatureAt(310_000))
+      expect(signatureAt(800_000)).toBe(signatureAt(1_500_000))
+    }
+  })
+
+  it('changes signature through a caption style titleMotion ramp', () => {
+    const style = { ...DEFAULT_CAPTION_STYLE, titleMotion: { kind: 'focus' as const, durationUs: 600_000 } }
+    const plan = createLayerPlan({ cues: [timed], style, frameRate: { numerator: 100, denominator: 1 }, output })
+    const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+    expect(signatureAt(1_010_000)).not.toBe(signatureAt(1_020_000))
+    expect(signatureAt(1_800_000)).toBe(signatureAt(1_900_000))
+  })
 })

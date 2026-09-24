@@ -1,0 +1,15 @@
+KathaCut - third-party components shipped in this installer
+
+Electron / Chromium - MIT and various open-source licenses (see LICENSES.chromium.html next to the app).
+
+FFmpeg 9.0 (ffmpeg, ffprobe) - GNU LGPL v3+ build, unmodified, from BtbN/FFmpeg-Builds (Windows) and a project build from the FFmpeg 9.0.1 source tarball (macOS, LGPL v2.1+).
+  Source: https://ffmpeg.org/releases/ - Windows build sources: https://github.com/BtbN/FFmpeg-Builds
+  Run 'ffmpeg -version' for the exact configure line. You may replace these executables in the bin folder next to this file.
+
+whisper.cpp 1.9.4 (whisper-cli, ggml) - MIT. See licenses/whisper-MIT.md.
+
+NVIDIA CUDA runtime (cudart, cuBLAS) - Windows package only, redistributed under the NVIDIA CUDA Toolkit EULA (redistributable components). Used only when an NVIDIA GPU is present.
+
+Microsoft Visual C++ runtime (msvcp140, vcruntime140) - Windows package only, redistributable under Microsoft's Visual Studio redistribution terms.
+
+Speech models are not included; they are downloaded by the user inside the app (MIT, OpenAI Whisper weights).

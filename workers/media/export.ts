@@ -145,7 +145,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // The host allow-lists exactly these URLs (scripts/export-host.mjs) — never an arbitrary
     // renderer- or project-supplied path — so an overlay asset this job did not resolve can never load.
     const assetArgs = [...new Set(job.overlayUrls)].flatMap((url) => ['--asset', url])
-    host = spawn(tools.exportHost!.executable, [tools.exportHost!.scriptPath, '--user-data', hostProfileDirectory, ...assetArgs], controller.signal, env)
+    host = spawn(tools.exportHost!.executable, [...(tools.exportHost!.args ?? [tools.exportHost!.scriptPath]), '--user-data', hostProfileDirectory, ...assetArgs], controller.signal, env)
     const reader = new PngReader(host.child.stdout)
     // Layer masks FFmpeg applies (video clips, blur) are images the host rasterizes from the same SVG
     // the preview masks with. They must exist before the encoder opens them as inputs, so the host

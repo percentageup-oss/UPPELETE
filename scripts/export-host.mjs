@@ -59,7 +59,7 @@ async function render(value) {
       if (!filePath) return new Response('Bad Request', { status: 400 })
       return net.fetch(pathToFileURL(filePath).href)
     })
-    await window.loadFile(join(dirname(process.argv[1]), 'index.html'))
+    await window.loadFile(join(__dirname, 'index.html'))
   }
   const frame = await renderOffscreen(window, request, marker = marker % 0xfffffe + 1)
   const png = toPng(frame.bitmap, request.composition)

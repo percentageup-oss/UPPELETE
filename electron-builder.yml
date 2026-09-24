@@ -1,0 +1,45 @@
+appId: com.vxlabs.kathacut
+productName: KathaCut
+copyright: KathaCut
+# The worker and export host are spawned by path and must live outside an ASAR archive.
+asar: false
+npmRebuild: false
+electronDist: node_modules/electron/dist
+directories:
+  output: release
+  buildResources: assets
+files:
+  - package.json
+  - dist/**
+  - dist-electron/*.cjs
+  - dist-worker/server.cjs
+  - dist-export/**
+  - assets/icon.png
+  - '!node_modules'
+  - '!node_modules/**'
+extraResources:
+  - from: build/bin/${os}
+    to: bin
+  - from: docs/licenses
+    to: licenses
+  - from: THIRD_PARTY_NOTICES.txt
+    to: THIRD_PARTY_NOTICES.txt
+win:
+  target:
+    - target: nsis
+      arch: x64
+  icon: assets/icon.png
+  artifactName: KathaCut-Setup-${version}-win-x64.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+mac:
+  target:
+    - target: dmg
+      arch: arm64
+  icon: assets/icon.icns
+  category: public.app-category.video
+  identity: "-"
+  hardenedRuntime: false
+  artifactName: KathaCut-${version}-mac-arm64.${ext}

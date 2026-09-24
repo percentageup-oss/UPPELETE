@@ -116,7 +116,7 @@ export const serverMessageSchema = z.discriminatedUnion('type', [
 ])
 export type ServerMessage = z.infer<typeof serverMessageSchema>
 export const toolchainSchema = z.strictObject({ ffmpegPath: filePath, ffprobePath: filePath, whisperCliPath: filePath.optional(),
-  exportHost: z.strictObject({ executable: filePath, scriptPath: filePath }).optional() })
+  exportHost: z.strictObject({ executable: filePath, scriptPath: filePath, args: z.array(z.string().max(256)).max(8).optional() }).optional() })
 export type Toolchain = z.infer<typeof toolchainSchema>
 
 export class MediaWorkerError extends Error {

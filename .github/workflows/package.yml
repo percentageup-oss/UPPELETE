@@ -1,0 +1,79 @@
+name: Package installers
+
+# Builds the unsigned test installers: KathaCut-Setup-*-win-x64.exe and KathaCut-*-mac-arm64.dmg.
+# Run it from the Actions tab (Run workflow), or push a v* tag. The installers land in a draft
+# pre-release, because they are too large (~600 MB) for workflow artifacts to be convenient.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: release/KathaCut-Setup-*-win-x64.exe
+          compression-level: 0
+          retention-days: 7
+
+  mac:
+    runs-on: macos-14 # Apple Silicon
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - name: Cache media tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            .tools/ffmpeg-9.0.1
+            .tools/whisper.cpp-1.9.4
+          key: mac-tools-${{ hashFiles('scripts/build-ffmpeg.sh', 'scripts/build-whisper.sh') }}
+      - name: Build FFmpeg 9.0.1 (LGPL profile)
+        run: bash scripts/build-ffmpeg.sh
+      - name: Build whisper-cli 1.9.4 (Metal)
+        run: bash scripts/build-whisper.sh
+      - run: npm run dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-installer
+          path: release/KathaCut-*-mac-arm64.dmg
+          compression-level: 0
+          retention-days: 7
+
+  release:
+    needs: [windows, mac]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: installers
+          merge-multiple: true
+      - name: Draft pre-release with both installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="test-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" installers/* --draft --prerelease \
+            --title "KathaCut test build ${GITHUB_RUN_NUMBER}" \
+            --notes "Unsigned test installers (Windows x64 and macOS Apple Silicon). Not for public distribution."

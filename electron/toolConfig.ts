@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 import { filePath, toolchainSchema, type Toolchain } from '../workers/media/protocol'
 
@@ -21,11 +22,22 @@ export function readLocalToolConfig(configPath: string): string | undefined {
   }
 }
 
+/** Tools shipped inside a packaged app, under <resources>/bin. Only files that exist are returned. */
+export function bundledToolPaths(resourcesPath: string, platform: NodeJS.Platform): Partial<Record<'ffmpeg' | 'ffprobe' | 'whisperCli', string>> {
+  const suffix = platform === 'win32' ? '.exe' : ''
+  const found: Partial<Record<'ffmpeg' | 'ffprobe' | 'whisperCli', string>> = {}
+  for (const [key, name] of [['ffmpeg', 'ffmpeg'], ['ffprobe', 'ffprobe'], ['whisperCli', 'whisper-cli']] as const) {
+    const candidate = path.join(resourcesPath, 'bin', name + suffix)
+    if (existsSync(candidate)) found[key] = candidate
+  }
+  return found
+}
+
 /**
  * Explicit absolute tool paths only: each CAPTION_STUDIO_* variable overrides the matching local-file
  * key. No PATH search. Malformed configuration fails loudly instead of silently disabling media tools.
  */
-export function resolveToolchain(env: NodeJS.ProcessEnv, localConfigText: string | undefined, sourceLabel: string): Toolchain | undefined {
+export function resolveToolchain(env: NodeJS.ProcessEnv, localConfigText: string | undefined, sourceLabel: string, bundled: Partial<Record<'ffmpeg' | 'ffprobe' | 'whisperCli', string>> = {}): Toolchain | undefined {
   let local: z.infer<typeof localToolConfigSchema> = {}
   if (localConfigText !== undefined) {
     let parsed: unknown
@@ -38,9 +50,9 @@ export function resolveToolchain(env: NodeJS.ProcessEnv, localConfigText: string
     if (!result.success) throw new Error(`${sourceLabel} is invalid:\n${z.prettifyError(result.error)}`)
     local = result.data
   }
-  const ffmpegPath = env.CAPTION_STUDIO_FFMPEG_PATH || local.ffmpegPath
-  const ffprobePath = env.CAPTION_STUDIO_FFPROBE_PATH || local.ffprobePath
-  const whisperCliPath = env.CAPTION_STUDIO_WHISPER_CLI_PATH || local.whisperCliPath
+  const ffmpegPath = env.CAPTION_STUDIO_FFMPEG_PATH || local.ffmpegPath || bundled.ffmpeg
+  const ffprobePath = env.CAPTION_STUDIO_FFPROBE_PATH || local.ffprobePath || bundled.ffprobe
+  const whisperCliPath = env.CAPTION_STUDIO_WHISPER_CLI_PATH || local.whisperCliPath || bundled.whisperCli
   if (Boolean(ffmpegPath) !== Boolean(ffprobePath)) throw new Error('Configure both media-tool executable paths')
   if (whisperCliPath && !ffmpegPath) throw new Error('Configure the FFmpeg/ffprobe pair together with whisper-cli; transcription extracts audio with FFmpeg')
   if (!ffmpegPath || !ffprobePath) return undefined

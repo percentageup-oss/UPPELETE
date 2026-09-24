@@ -53,3 +53,21 @@ describe('local media tool configuration', () => {
     expect(resolveToolchain({}, readLocalToolConfig(configPath), configPath)).toEqual(pair)
   })
 })
+
+describe('bundled tool lookup', () => {
+  it('falls back to bundled tools only when nothing else is configured', () => {
+    const bundled = { ffmpeg: '/res/bin/ffmpeg', ffprobe: '/res/bin/ffprobe', whisperCli: '/res/bin/whisper-cli' }
+    expect(resolveToolchain({}, undefined, label, bundled)).toEqual({ ffmpegPath: '/res/bin/ffmpeg', ffprobePath: '/res/bin/ffprobe', whisperCliPath: '/res/bin/whisper-cli' })
+    expect(resolveToolchain({ CAPTION_STUDIO_FFMPEG_PATH: '/env/ffmpeg' }, undefined, label, bundled)?.ffmpegPath).toBe('/env/ffmpeg')
+  })
+
+  it('finds only the files that exist under resources/bin', async () => {
+    const { bundledToolPaths } = await import('./toolConfig')
+    const root = await mkdtemp(path.join(tmpdir(), 'bundled-tools-'))
+    directories.push(root)
+    await import('node:fs/promises').then((fs) => fs.mkdir(path.join(root, 'bin')))
+    await writeFile(path.join(root, 'bin', 'ffmpeg.exe'), '')
+    expect(bundledToolPaths(root, 'win32')).toEqual({ ffmpeg: path.join(root, 'bin', 'ffmpeg.exe') })
+    expect(bundledToolPaths(root, 'darwin')).toEqual({})
+  })
+})

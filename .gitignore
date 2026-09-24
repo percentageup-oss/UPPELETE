@@ -21,3 +21,5 @@ caption-studio.local.json
 .tools/
 bench/
 dist-export/
+build/bin/
+release/

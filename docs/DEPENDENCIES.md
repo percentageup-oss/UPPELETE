@@ -267,3 +267,17 @@ and no camera/film-stock brand name appears in any id, name or description a use
 see. A user-imported `.cube` LUT is never committed, bundled or shipped — it stays wherever the user
 put it on disk, referenced and relinked the same way project media is, and is explicitly the user's
 own file to license.
+
+## Installer test builds (2026-09-24)
+
+Test installers now bundle third-party binaries under `resources/bin` (attribution in `THIRD_PARTY_NOTICES.txt`, staged by `scripts/stage-tools.mjs`, which refuses GPL/nonfree FFmpeg):
+
+| Component | Platform | Source | License |
+| --- | --- | --- | --- |
+| FFmpeg + ffprobe 9.0.2 | Windows x64 | BtbN/FFmpeg-Builds `latest` (`ffmpeg-n9.0-latest-win64-lgpl-9.0.zip`, checksum from the release) | LGPL-3.0+ (`--enable-version3`; not the ADR 0001 LGPL-2.1 profile). Rolling asset: pin before any public release. |
+| FFmpeg + ffprobe 9.0.1 | macOS arm64 | `scripts/build-ffmpeg.sh` from the pinned source tarball; libvpx 1.15.0 (sha256 `e935eded7d81631a538bfae703fd1e293aad1c7fd3407ba00440c95105d2011e`) and opus 1.5.2 (sha256 `65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1`) built static | LGPL-2.1+, libs BSD-3-Clause |
+| whisper-cli 1.9.4 (ggml, CUDA 12.4 build) | Windows x64 | whisper.cpp release `b5130`, `whisper-cublas-12.4.0-bin-x64.zip`, digest from the GitHub release API | MIT; CUDA runtime (`cudart`, `cublas`, `cublasLt`) under the NVIDIA CUDA Toolkit EULA redistributable terms |
+| whisper-cli 1.9.4 (Metal) | macOS arm64 | `scripts/build-whisper.sh` | MIT |
+| VC++ runtime (`msvcp140*`, `vcruntime140*`) | Windows x64 | Visual Studio `VC/Redist/MSVC/<version>/x64` | Microsoft redistributable terms |
+
+No speech models or fonts are bundled.

@@ -37,7 +37,7 @@ import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
 
 // Display name for menus, the About panel and the dock. userData stays at the original 'caption-studio' folder so
 // downloaded models, caches, logs and stored secrets survive the rename.
-const userDataPath = app.getPath('userData')
+const userDataPath = path.join(app.getPath('appData'), 'caption-studio')
 app.setName('KathaCut')
 app.setPath('userData', userDataPath)
 app.setAboutPanelOptions({ applicationName: 'KathaCut', credits: 'Your local AI video toolkit.' })
