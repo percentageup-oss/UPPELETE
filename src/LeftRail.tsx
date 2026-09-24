@@ -1,14 +1,17 @@
 import { useState } from 'react'
 import { CaptionsIcon } from './TimelineIcons'
-import { MediaBinIcon, OverlaysIcon, SettingsIcon, TransitionsIcon } from './RailIcons'
+import { ColorIcon, EffectsIcon, LayersIcon, MediaBinIcon, OverlaysIcon, SettingsIcon, TitlesIcon } from './RailIcons'
 
-export type RailTab = 'media' | 'captions' | 'overlays' | 'transitions'
+export type RailTab = 'media' | 'captions' | 'overlays' | 'titles' | 'effects' | 'color' | 'layers'
 
 const TABS: { id: RailTab; label: string; icon: (props: { className?: string }) => React.ReactNode }[] = [
   { id: 'media', label: 'Media', icon: (props) => <MediaBinIcon {...props} /> },
   { id: 'captions', label: 'Captions', icon: (props) => <CaptionsIcon {...props} /> },
   { id: 'overlays', label: 'Overlays', icon: (props) => <OverlaysIcon {...props} /> },
-  { id: 'transitions', label: 'Transitions', icon: (props) => <TransitionsIcon {...props} /> },
+  { id: 'titles', label: 'Titles', icon: (props) => <TitlesIcon {...props} /> },
+  { id: 'effects', label: 'Effects', icon: (props) => <EffectsIcon {...props} /> },
+  { id: 'color', label: 'Color', icon: (props) => <ColorIcon {...props} /> },
+  { id: 'layers', label: 'Layers', icon: (props) => <LayersIcon {...props} /> },
 ]
 
 /** A vertical icon rail, CapCut-style: a roving-tabindex tablist (Up/Down/Home/End move focus and

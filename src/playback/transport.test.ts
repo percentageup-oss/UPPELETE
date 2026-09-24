@@ -51,6 +51,29 @@ describe('transport actions', () => {
   })
 })
 
+describe('linked audio elements', () => {
+  const audioTrack = (id: string): Track => ({ ...track(id), kind: 'audio' })
+  const withAudio = [track('V1'), audioTrack('A1')]
+  const pair: Clip[] = [
+    { ...video('v', 'V1', 'A', 0, 0, 4 * US), detachedAudio: true, linkId: 'L' } as Clip,
+    { kind: 'audio', id: 'a', trackId: 'A1', assetId: 'A', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 4 * US, gain: 1, linkId: 'L' },
+  ]
+  const videoAssetIds = new Set(['A'])
+
+  it('plays a video file’s audio clip through its own pooled element, beside the picture', () => {
+    expect(kinds(transportActionsAt(1 * US, withAudio, pair, [], { playing: true, videoAssetIds }))).toEqual([
+      'load:V1.A', 'seek:V1.A@1000000', 'play:V1.A', 'load:A1.A', 'seek:A1.A@1000000', 'play:A1.A',
+    ])
+  })
+  it('does not pool an audio clip of an audio file (Web Audio plays those)', () => {
+    expect(kinds(transportActionsAt(1 * US, withAudio, pair, [], { playing: true }))).toEqual(['load:V1.A', 'seek:V1.A@1000000', 'play:V1.A'])
+  })
+  it('skips a disabled clip entirely', () => {
+    const disabled = pair.map((clip) => clip.kind === 'audio' ? { ...clip, enabled: false } : clip)
+    expect(kinds(transportActionsAt(1 * US, withAudio, disabled, [], { playing: true, videoAssetIds }))).toEqual(['load:V1.A', 'seek:V1.A@1000000', 'play:V1.A'])
+  })
+})
+
 describe('video pool', () => {
   const fake = () => {
     const calls: string[] = []

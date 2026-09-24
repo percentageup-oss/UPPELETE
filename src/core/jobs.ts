@@ -7,14 +7,20 @@ import { z } from 'zod'
  * source of truth for the media-worker wire contract.
  */
 
-export const jobKindSchema = z.enum(['transcription', 'alignment', 'export'])
+export const jobKindSchema = z.enum(['transcription', 'alignment', 'export', 'playback-proxy'])
 export type JobKind = z.infer<typeof jobKindSchema>
 
-/** Every kind currently defined is resource-heavy; T1 arbitrates all of them together. */
+/**
+ * Every kind currently defined is resource-heavy; T1 arbitrates all of them together. A
+ * background playback-proxy transcode is heavy for the same reason export is: it saturates the
+ * one shared FFmpeg worker, so it must queue behind (not alongside) a transcription or export the
+ * user is actively waiting on rather than silently starving it of CPU.
+ */
 export const JOB_RESOURCE_CLASS: Record<JobKind, 'heavy'> = {
   transcription: 'heavy',
   alignment: 'heavy',
   export: 'heavy',
+  'playback-proxy': 'heavy',
 }
 
 export const jobStateSchema = z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled'])
@@ -45,6 +51,7 @@ export const jobProgressPhaseSchema = z.enum([
   'aligning',
   'rendering',
   'encoding',
+  'proxy',
 ])
 export type JobProgressPhase = z.infer<typeof jobProgressPhaseSchema>
 

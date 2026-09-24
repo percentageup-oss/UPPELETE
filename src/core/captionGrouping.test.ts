@@ -23,7 +23,10 @@ describe('readable grouping without retiming recognition', () => {
     expect(timing(groups)).toEqual(timing([original]))
     const pauseStart = original.words[3].endUs, pauseEnd = original.words[4].startUs
     expect(groups.some((cue) => cue.startUs < pauseEnd && cue.endUs > pauseStart)).toBe(false)
-    expect(projectSchema.safeParse({ ...createProject(), cues: groups }).success).toBe(true)
+    // Caption-track binding isn't what this test exercises (`groupCaption` never touches it; commands
+    // bind it afterward via `bindUnboundItems`), so the sanity check here uses an empty caption-track
+    // list rather than `createProject()`'s default one.
+    expect(projectSchema.safeParse({ ...createProject(), captionTracks: [], cues: groups }).success).toBe(true)
     expect(original.words[4].startUs).toBe(22_600_030)
   })
 

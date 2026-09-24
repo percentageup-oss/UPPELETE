@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { ASSET_DRAG_TYPE, clearDragPayload, dropContent, getDragPayload, setDragPayload, type AssetDragPayload } from './dragPayload'
+import { ASSET_DRAG_TYPE, PRESET_DRAG_TYPE, clearDragPayload, dropContent, getDragPayload, setDragPayload, type AssetDragPayload, type PresetDragPayload } from './dragPayload'
 
 const payload: AssetDragPayload = { source: 'bin', assetId: 'asset-1', kind: 'image', name: 'logo.png', durationUs: null }
+const presetPayload: PresetDragPayload = { source: 'preset', preset: 'zoom-in' }
 
 function fakeDataTransfer(types: string[], data: Record<string, string> = {}, files: File[] = []): DataTransfer {
   return {
@@ -47,5 +48,14 @@ describe('dropContent', () => {
 
   it('recognizes a file drag during dragover, before dataTransfer.files is populated', () => {
     expect(dropContent(fakeDataTransfer(['Files']))).toEqual({ kind: 'files', files: [] })
+  })
+
+  it('reads the live payload for a preset drag (Zoom panel), during dragover', () => {
+    setDragPayload(presetPayload)
+    expect(dropContent(fakeDataTransfer([PRESET_DRAG_TYPE]))).toEqual({ kind: 'preset', payload: presetPayload })
+  })
+
+  it('falls back to getData for an out-of-window preset drag', () => {
+    expect(dropContent(fakeDataTransfer([PRESET_DRAG_TYPE], { [PRESET_DRAG_TYPE]: JSON.stringify(presetPayload) }))).toEqual({ kind: 'preset', payload: presetPayload })
   })
 })

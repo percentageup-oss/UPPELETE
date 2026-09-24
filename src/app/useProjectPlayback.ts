@@ -6,6 +6,8 @@ import { createVideoPool } from '../playback/videoPool'
 import { createSequenceTransport } from '../playback/transport'
 import { createSfxScheduler, type SfxClipSpec } from '../playback/SfxScheduler'
 import { clipLengthUs } from '../core/timelineModel'
+import { constantRate, isConstantSpeed } from '../core/clipTime'
+import { effectiveGain } from '../core/clipLinks'
 
 /** Non-frame UI (the transport readout, the timeline playhead) updates at this rate while playing;
  * only `CaptionStage` and the stage editor follow the clock frame by frame. */
@@ -29,10 +31,22 @@ export function useProjectPlayback(project: CaptionProject, durationUs: number, 
   const live = useRef({ project, urlOf, handlers, bump: () => setPoolVersion((version) => version + 1) })
   live.current = { project, urlOf, handlers, bump: live.current.bump }
   const clock = useMemo(() => createSequenceClock(), [])
-  const pool = useMemo(() => createVideoPool<HTMLVideoElement>(() => document.createElement('video'), {
+  const pool = useMemo(() => createVideoPool<HTMLVideoElement>(() => {
+    // CORS-clean (the `media:` handler sends Access-Control-Allow-Origin) so the graded preview can
+    // upload frames to WebGL; must be set before `src` is assigned.
+    const element = document.createElement('video')
+    element.crossOrigin = 'anonymous'
+    return element
+  }, {
     onCreate: (entry) => {
       entry.element.addEventListener('error', () => live.current.handlers.onMediaError(entry.assetId, entry.element))
-      entry.element.addEventListener('loadeddata', () => live.current.handlers.onMediaReady(entry.assetId))
+      entry.element.addEventListener('loadeddata', () => {
+        // Chromium plays the audio of a file whose video codec it can't decode (e.g. iPhone ProRes
+        // .mov) and reports no error — the frame just stays black. No decoded dimensions means no video.
+        const asset = live.current.project.assets.find((candidate) => candidate.id === entry.assetId)
+        if (asset?.kind === 'video' && entry.element.videoWidth === 0) live.current.handlers.onMediaError(entry.assetId, entry.element)
+        else live.current.handlers.onMediaReady(entry.assetId)
+      })
       live.current.bump()
     },
   }), [])
@@ -41,7 +55,8 @@ export function useProjectPlayback(project: CaptionProject, durationUs: number, 
     timeline: () => {
       const { project: current, urlOf: resolve } = live.current
       const assets = new Map(current.assets.map((asset) => [asset.id, asset]))
-      return { tracks: current.tracks, clips: current.clips, urlOf: (assetId) => resolve(assets.get(assetId)) }
+      const videoAssetIds = new Set(current.assets.filter((asset) => asset.kind === 'video').map((asset) => asset.id))
+      return { tracks: current.tracks, clips: current.clips, videoAssetIds, urlOf: (assetId) => resolve(assets.get(assetId)) }
     },
     onPlayError: (error, element) => live.current.handlers.onPlayError(error, element),
   }), [pool])
@@ -67,12 +82,15 @@ export function useProjectPlayback(project: CaptionProject, durationUs: number, 
 
   // Audio clips on unmuted tracks, resolved to what the scheduler plays.
   useEffect(() => {
-    const muted = new Set(project.tracks.filter((track) => track.muted).map((track) => track.id))
     const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
     const specs: SfxClipSpec[] = project.clips.flatMap((clip) => {
-      if (clip.kind !== 'audio') return []
-      const url = urlOf(assets.get(clip.assetId))
-      return url ? [{ id: clip.id, url, startUs: clip.timelineStartUs, inPointUs: clip.sourceStartUs, durationUs: clipLengthUs(clip), gain: muted.has(clip.trackId) ? 0 : clip.gain }] : []
+      // A speed curve has no steady rate to play at, so it is silent here (and in export).
+      if (clip.kind !== 'audio' || !isConstantSpeed(clip)) return []
+      const asset = assets.get(clip.assetId)
+      // A video file's sound plays through the transport's pooled elements, not decoded into memory here.
+      if (asset?.kind === 'video') return []
+      const url = urlOf(asset)
+      return url ? [{ id: clip.id, url, startUs: clip.timelineStartUs, inPointUs: clip.sourceStartUs, durationUs: clipLengthUs(clip), speed: constantRate(clip), gain: effectiveGain(clip, project.tracks) }] : []
     })
     sfx.setClips(specs)
   }, [sfx, project.clips, project.tracks, project.assets, urlOf])

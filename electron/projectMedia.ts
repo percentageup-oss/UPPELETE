@@ -9,6 +9,10 @@ export type MediaCandidate = {
   url: string
   media: ProjectMedia
   mismatches: string[]
+  /** `lut`-kind assets only: the `.cube` file's own text (already parsed and validated by the time
+   * this is set — `inspectLut` in `electron/main.ts`), so the renderer's `useLutAssets` cache can be
+   * hydrated straight from a relink or a fresh import without a second read of the file. */
+  text?: string
 }
 
 export type ProjectMediaResolution =

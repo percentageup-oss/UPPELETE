@@ -20,7 +20,7 @@ export function VideoClipContent({ clip, asset, widthPx, heightPx, visible, queu
   queue: ThumbnailQueue | null; waveform: WaveformData | null
 }) {
   const request = asset?.fingerprint && asset.kind !== 'audio' && clip.kind === 'video'
-    ? { fingerprint: asset.fingerprint, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs, count: thumbnailCountFor(widthPx, heightPx), width: THUMBNAIL_PIXEL_WIDTH }
+    ? { fingerprint: asset.fingerprint, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs, ...(clip.speed ? { speed: clip.speed } : {}), count: thumbnailCountFor(widthPx, heightPx), width: THUMBNAIL_PIXEL_WIDTH }
     : null
   const key = request ? stripKey(request) : null
   // Asking is a side effect, so it happens here rather than while rendering; only visible clips ask.
@@ -36,6 +36,7 @@ export function VideoClipContent({ clip, asset, widthPx, heightPx, visible, queu
       {images.map((image, index) => <img key={image.requestedUs} src={image.dataUrl} alt="" loading="lazy"
         style={{ left: `${index * 100 / images.length}%`, width: `${100 / images.length}%` }} />)}
     </div>}
-    {waveform && clip.kind === 'video' && <ClipWaveform waveform={waveform} sourceStartUs={clip.sourceStartUs} sourceEndUs={clip.sourceEndUs} className="waveform clip-audio-band" />}
+    {/* Only a video that still carries its own sound draws it here; a detached video's waveform lives on its audio lane. */}
+    {waveform && clip.kind === 'video' && !clip.detachedAudio && <ClipWaveform waveform={waveform} sourceStartUs={clip.sourceStartUs} sourceEndUs={clip.sourceEndUs} speed={clip.speed} className="waveform clip-audio-band" />}
   </>
 }

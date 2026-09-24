@@ -6,6 +6,7 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
+    "predev": "bash scripts/stop-stale.sh",
     "dev": "concurrently -k -s first \"vite --strictPort\" \"npm:dev:electron\"",
     "dev:electron": "wait-on -t 60000 http-get://localhost:5173/ && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build": "vite build && npm run build:electron",
@@ -19,6 +20,7 @@
     "smoke:captions": "electron scripts/caption-renderer-smoke.mjs",
     "tools:whisper": "bash scripts/build-whisper.sh",
     "bench:transcription": "npm run build:worker && node dist-worker/transcription-bench.cjs",
+    "probe:gemini": "npm run build:worker && node dist-worker/gemini-recognition-probe.cjs",
     "convert:hf-whisper": "bash scripts/convert-hf-whisper.sh",
     "prototype:export": "electron scripts/export-renderer-prototype.mjs",
     "parity:export": "npm run build:electron && electron scripts/export-parity.mjs"

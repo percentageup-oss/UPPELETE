@@ -99,6 +99,22 @@ describe('Malayalam-safe shared renderer', () => {
     expect(renderToStaticMarkup(<CaptionView frame={captionFrame(layout, { startUs: 0, endUs: 100 }, 100)} />)).toBe('')
   })
 
+  it('wraps rotated captions around their own center, and only when rotated', () => {
+    const layout = layoutCaption('ക്ഷ കി React!', inputs(), measure)
+    const unrotated = renderToStaticMarkup(<CaptionView frame={captionFrame(layout, { startUs: 0, endUs: 100 }, 50)} />)
+    // 0deg (the schema default) must produce byte-identical output to before rotation existed —
+    // no wrapper div, no transform — since this is the export parity fixture's untouched path.
+    expect(unrotated).not.toContain('rotate(')
+    const rotatedInputs = { ...layout.inputs, appearance: { ...layout.inputs.appearance, rotation: 12 } }
+    const rotatedLayout = layoutCaption('ക്ഷ കി React!', rotatedInputs, measure)
+    const rotated = renderToStaticMarkup(<CaptionView frame={captionFrame(rotatedLayout, { startUs: 0, endUs: 100 }, 50)} />)
+    expect(rotated).toContain('rotate(12deg)')
+    expect(rotated).toContain('transform-origin:center')
+    // The shaping run itself is untouched by rotation — still one whole-line text node.
+    expect(rotated).toContain('>ക്ഷ കി React!</div>')
+    expect(rotated).not.toContain('<span')
+  })
+
   it('validates geometry, padding, timestamps and metrics', () => {
     const value = inputs()
     expect(() => layoutCaption('കി', { ...value, maxLines: 0 }, measure)).toThrow()

@@ -58,8 +58,8 @@ export function ClipStageEditor({ tracks, clips, composition, clock, selectedId,
 
   const projection = useCompositionProjection(rootRef, composition)
   // Back to front, so a picture on a higher track is hit first (it is also later in the DOM).
-  const visible = useMemo(() => activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio'), { skipHidden: true })
-    .map((entry) => entry.clip).filter((clip): clip is Placed => clip.kind !== 'audio' && clip.rect !== undefined), [tracks, clips, frameUs])
+  const visible = useMemo(() => activeClipsAt(frameUs, tracks, clips.filter((clip) => clip.kind !== 'audio' && clip.kind !== 'adjustment'), { skipHidden: true })
+    .map((entry) => entry.clip).filter((clip): clip is Placed => clip.kind !== 'audio' && clip.kind !== 'adjustment' && clip.rect !== undefined), [tracks, clips, frameUs])
 
   useEffect(() => {
     if (!drag) return
@@ -160,7 +160,7 @@ export function ClipStageEditor({ tracks, clips, composition, clock, selectedId,
         style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
         tabIndex={selected ? 0 : -1}
         role="button"
-        aria-label={`${overlay.kind === 'video' ? 'Picture-in-picture video' : 'Image'} at ${Math.round(overlay.rect.x)}, ${Math.round(overlay.rect.y)}`}
+        aria-label={`${overlay.kind === 'video' ? 'Picture-in-picture video' : overlay.kind === 'color' ? 'Background' : 'Image'} at ${Math.round(overlay.rect.x)}, ${Math.round(overlay.rect.y)}`}
         onPointerDown={(event) => beginMove(event, overlay)}
         onKeyDown={(event) => handleKeyNudge(event, overlay)}>
         {selected && HANDLES.map((handle) => <span key={handle} className="overlay-handle" data-handle={handle}

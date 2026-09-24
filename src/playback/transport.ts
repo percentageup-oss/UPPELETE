@@ -1,5 +1,7 @@
 import type { Clip, Track } from '../core/edit'
-import { activeClipsAt, nextBoundaryAfter } from '../core/timelineModel'
+import { effectiveGain } from '../core/clipLinks'
+import { isConstantSpeed, speedRateAt } from '../core/clipTime'
+import { activeClipsAt, nextBoundaryAfter, sequenceUsOf } from '../core/timelineModel'
 import type { SequenceClock } from './sequenceClock'
 import type { PooledVideo, VideoLike, VideoPool } from './videoPool'
 
@@ -48,6 +50,8 @@ export type TransportOptions = {
   pausedToleranceUs?: number
   /** How long before a clip starts its element is loaded and seeked. */
   prerollUs?: number
+  /** Assets that are video files: an audio clip of one plays through a pooled element (its sound track), not Web Audio. */
+  videoAssetIds?: ReadonlySet<string>
 }
 
 export const DEFAULT_PLAYING_DRIFT_LIMIT_US = 1_000_000
@@ -55,20 +59,36 @@ export const DEFAULT_PLAYING_TOLERANCE_US = 250_000
 export const DEFAULT_PAUSED_TOLERANCE_US = 20_000
 export const DEFAULT_PREROLL_US = 500_000
 
+/** Chromium refuses `playbackRate` outside this range. */
+const MIN_ELEMENT_RATE = 0.0625
+const MAX_ELEMENT_RATE = 16
+
+/** The element rate for a clip at `sourceUs`: the transport's rate times the clip's speed there, so a
+ * ramp re-evaluates on every tick. Pitch is preserved by the element (Chromium's default). */
+export function elementRateFor(clip: Clip, sourceUs: number, clockRate: number): number {
+  const speed = clip.kind === 'video' || clip.kind === 'audio' ? clip.speed : undefined
+  return Math.min(MAX_ELEMENT_RATE, Math.max(MIN_ELEMENT_RATE, clockRate * speedRateAt(speed, sourceUs)))
+}
+
+/** A ramped clip plays silent: only a constant rate keeps its audio intelligible (export matches). */
+export const silentForSpeed = (clip: Clip): boolean => (clip.kind === 'video' || clip.kind === 'audio') && !isConstantSpeed(clip)
+
 /** The element each visible video track needs now, and the ones it will need next. */
-export function wantedElements(sequenceUs: number, tracks: readonly Track[], clips: readonly Clip[], prerollUs = DEFAULT_PREROLL_US) {
-  const videoClips = clips.filter((clip) => clip.kind === 'video')
+export function wantedElements(sequenceUs: number, tracks: readonly Track[], clips: readonly Clip[], prerollUs = DEFAULT_PREROLL_US, videoAssetIds: ReadonlySet<string> = new Set()) {
+  // Video clips, plus audio clips that play a video file's sound (schema 15's linked audio).
+  const videoClips = clips.filter((clip) => clip.kind === 'video' || (clip.kind === 'audio' && videoAssetIds.has(clip.assetId)))
   const active = activeClipsAt(sequenceUs, tracks, videoClips, { skipHidden: true })
-  const activeKeys = new Map(active.map((entry) => [elementKey(entry.track.id, entry.clip.assetId), entry]))
+  const activeKeys = new Map(active.map((entry) => [elementKey(entry.track.id, (entry.clip as { assetId: string }).assetId), entry]))
   const preroll = new Map<ElementKey, { trackId: string; assetId: string; sourceUs: number }>()
   const upcoming = nextBoundaryAfter(sequenceUs, videoClips)
   if (upcoming !== null && upcoming - sequenceUs <= prerollUs) {
     for (const track of tracks) {
-      if (track.kind !== 'video' || track.hidden) continue
-      const next = videoClips.find((clip) => clip.trackId === track.id && clip.timelineStartUs > sequenceUs && clip.timelineStartUs <= sequenceUs + prerollUs)
+      if (track.hidden) continue
+      const next = videoClips.find((clip) => clip.trackId === track.id && clip.enabled !== false && clip.timelineStartUs > sequenceUs && clip.timelineStartUs <= sequenceUs + prerollUs)
       if (!next) continue
-      const key = elementKey(track.id, next.assetId)
-      if (!activeKeys.has(key)) preroll.set(key, { trackId: track.id, assetId: next.assetId, sourceUs: next.sourceStartUs })
+      const assetId = (next as { assetId: string }).assetId
+      const key = elementKey(track.id, assetId)
+      if (!activeKeys.has(key)) preroll.set(key, { trackId: track.id, assetId, sourceUs: next.sourceStartUs })
     }
   }
   return { active, activeKeys, preroll }
@@ -78,15 +98,15 @@ export function transportActionsAt(sequenceUs: number, tracks: readonly Track[],
   const playingDriftLimit = options.playingDriftLimitUs ?? DEFAULT_PLAYING_DRIFT_LIMIT_US
   const playingTolerance = options.playingToleranceUs ?? DEFAULT_PLAYING_TOLERANCE_US
   const pausedTolerance = options.pausedToleranceUs ?? DEFAULT_PAUSED_TOLERANCE_US
-  const { activeKeys, preroll } = wantedElements(sequenceUs, tracks, clips, options.prerollUs)
+  const { activeKeys, preroll } = wantedElements(sequenceUs, tracks, clips, options.prerollUs, options.videoAssetIds)
   const byKey = new Map(elements.map((element) => [element.key, element]))
-  // The last active key is the topmost video: the one `createSequenceTransport` arms as master.
-  const masterKey = [...activeKeys.keys()].at(-1)
+  // The last active *video* key is the topmost video: the one `createSequenceTransport` arms as master.
+  const masterKey = [...activeKeys].filter(([, entry]) => entry.clip.kind === 'video').map(([key]) => key).at(-1)
   const actions: TransportAction[] = []
   for (const [key, entry] of activeKeys) {
     const element = byKey.get(key)
     if (!element || !element.loaded) {
-      actions.push({ kind: 'load', key, trackId: entry.track.id, assetId: entry.clip.assetId }, { kind: 'seek', key, sourceUs: entry.sourceUs })
+      actions.push({ kind: 'load', key, trackId: entry.track.id, assetId: (entry.clip as { assetId: string }).assetId }, { kind: 'seek', key, sourceUs: entry.sourceUs })
       if (options.playing) actions.push({ kind: 'play', key })
       continue
     }
@@ -117,8 +137,8 @@ export function transportActionsAt(sequenceUs: number, tracks: readonly Track[],
 }
 
 /** The clip each active key is playing, for volume/mute and for the master clock discipline. */
-export function activeByKey(sequenceUs: number, tracks: readonly Track[], clips: readonly Clip[]) {
-  return wantedElements(sequenceUs, tracks, clips, 0).activeKeys
+export function activeByKey(sequenceUs: number, tracks: readonly Track[], clips: readonly Clip[], videoAssetIds?: ReadonlySet<string>) {
+  return wantedElements(sequenceUs, tracks, clips, 0, videoAssetIds).activeKeys
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -130,6 +150,8 @@ export type TransportTimeline = {
   clips: readonly Clip[]
   /** The runtime `media://` URL of an asset, or `null` while it is offline. */
   urlOf(assetId: string): string | null
+  /** Assets that are video files (an audio clip of one is played by a pooled element). Default none. */
+  videoAssetIds?: ReadonlySet<string>
 }
 
 export type SequenceTransport = {
@@ -176,7 +198,7 @@ export function createSequenceTransport<V extends VideoLike>(options: {
     const onFrame = (_now: number, metadata: { mediaTime: number }) => {
       if (!master || master.element !== element || !clock) return
       if (clock.isPlaying() && !element.paused && !element.seeking) {
-        clock.discipline(master.clip.timelineStartUs + Math.round(metadata.mediaTime * 1_000_000) - master.clip.sourceStartUs)
+        clock.discipline(sequenceUsOf(master.clip, Math.round(metadata.mediaTime * 1_000_000)))
       }
       master.handle = element.requestVideoFrameCallback!(onFrame)
     }
@@ -185,7 +207,7 @@ export function createSequenceTransport<V extends VideoLike>(options: {
 
   const evaluate = () => {
     if (!clock) return
-    const { tracks, clips, urlOf } = options.timeline()
+    const { tracks, clips, urlOf, videoAssetIds } = options.timeline()
     const sequenceUs = clock.getUs()
     const { playing, rate, seekEpoch } = clock.getState()
     // `clock.set` (a scrub, a click on the ruler, a jump) bumps the epoch; nothing else does.
@@ -196,7 +218,7 @@ export function createSequenceTransport<V extends VideoLike>(options: {
       currentUs: Math.round(entry.element.currentTime * 1_000_000), paused: entry.element.paused, seeking: entry.element.seeking,
       loaded: entry.element.readyState >= 1 && entry.url === urlOf(entry.assetId),
     }))
-    for (const action of transportActionsAt(sequenceUs, tracks, clips, states, { playing, justSought })) {
+    for (const action of transportActionsAt(sequenceUs, tracks, clips, states, { playing, justSought, videoAssetIds })) {
       if (action.kind === 'load') {
         const url = urlOf(action.assetId)
         if (url) pool.acquire(action.key, action.trackId, action.assetId, url)
@@ -208,17 +230,19 @@ export function createSequenceTransport<V extends VideoLike>(options: {
       else if (action.kind === 'pause') element.pause()
       else void element.play().catch((error: unknown) => options.onPlayError?.(error, element))
     }
-    const active = activeByKey(sequenceUs, tracks, clips)
+    const active = activeByKey(sequenceUs, tracks, clips, videoAssetIds)
     pool.touch(active.keys())
     let top: { entry: PooledVideo<V>; clip: Clip } | null = null
-    for (const [key, { track, clip }] of active) {
+    for (const [key, { track, clip, sourceUs }] of active) {
       const entry = pool.get(key)
       if (!entry) continue
-      const gain = clip.kind === 'video' ? clip.gain : 1
-      entry.element.muted = track.muted || gain === 0
+      // Mute, solo, the track fader, a disabled clip and a video whose sound was detached all fold into one gain.
+      const gain = effectiveGain(clip, tracks)
+      entry.element.muted = gain === 0 || silentForSpeed(clip)
       entry.element.volume = Math.min(1, gain)
-      if (entry.element.playbackRate !== rate) entry.element.playbackRate = rate
-      top = { entry, clip }
+      const elementRate = elementRateFor(clip, sourceUs, rate)
+      if (entry.element.playbackRate !== elementRate) entry.element.playbackRate = elementRate
+      if (clip.kind === 'video') top = { entry, clip }
     }
     if (top && playing) {
       if (top.entry.element.requestVideoFrameCallback) armMaster(top.entry, top.clip)
@@ -228,7 +252,7 @@ export function createSequenceTransport<V extends VideoLike>(options: {
         stopMaster()
         const { element } = top.entry
         const { clip } = top
-        if (!element.paused && !element.seeking) clock.discipline(clip.timelineStartUs + Math.round(element.currentTime * 1_000_000) - clip.sourceStartUs)
+        if (!element.paused && !element.seeking) clock.discipline(sequenceUsOf(clip, Math.round(element.currentTime * 1_000_000)))
       }
     } else stopMaster()
   }

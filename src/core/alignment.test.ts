@@ -20,6 +20,7 @@ describe('exact alignment matching', () => {
     const project = createProject()
     project.cues = [{
       id: 'c1', startUs: 0, endUs: 4_000_000, text: 'one two three', timingSource: 'imported', textSource: 'imported', needsReview: true,
+      captionTrackId: project.captionTracks[0].id,
       words: [{ id: 'manual', text: 'two', textStart: 4, textEnd: 7, startUs: 1_200_000, endUs: 1_800_000, timingSource: 'manual', needsReview: false }],
     }]
     let serial = 0

@@ -24,7 +24,7 @@ it('discloses uploads for Gemini, hides local model controls, and asks for a mis
   expect(missing).toMatch(/<button class="accent" disabled="">Transcribe with Gemini/)
   const ready = render(true)
   expect(ready).not.toContain('Add Gemini API key')
-  expect(ready).toContain('Malayalam + English (mixed)')
+  expect(ready).toContain('Automatic — mixed languages (recommended)')
 })
 
 it('offers a Translate to dropdown for the Gemini engine, defaulting to "None"', () => {

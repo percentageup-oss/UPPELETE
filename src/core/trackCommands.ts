@@ -3,7 +3,7 @@ import type { CaptionProject } from './model'
 import { normalizeClips, trackLabel } from './timelineModel'
 import { failItem, replaceById, type ItemFailure, type ItemStep } from './itemStep'
 
-export type TrackFlags = Partial<Pick<Track, 'name' | 'muted' | 'hidden' | 'locked' | 'heightPx'>>
+export type TrackFlags = Partial<Pick<Track, 'name' | 'muted' | 'hidden' | 'locked' | 'heightPx' | 'solo' | 'volume'>>
 
 export type TrackCommand =
   // Appended after the last track of its kind (on top, for video) unless `index` says otherwise.

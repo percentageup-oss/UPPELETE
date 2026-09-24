@@ -2,6 +2,7 @@ import { sliceEmphasis } from '../core/emphasis'
 import { captionTokens, graphemes, locateWordSpans, type TextSpan } from '../core/captionText'
 import type { CaptionWord } from '../core/model'
 import type { CaptionMotion } from './style'
+import type { TitleMotion } from './style'
 
 export type Size = { width: number; height: number }
 export type Rect = Size & { x: number; y: number }
@@ -20,10 +21,14 @@ export type CaptionAppearance = {
   /** Only set when it differs from `shadow` (docs/CAPTION_RENDERER.md); undefined means "inherit `shadow`". */
   emphasisShadow?: string
   emphasisUnderline?: boolean
+  /** Degrees, applied after layout around the painted block's own center (`CaptionView`); never
+   * fed into `layoutCaption`'s wrap/fit math, which stays axis-aligned. */
+  rotation: number
 }
 export type LayoutInputs = {
   /** Stable composition/media space, independent of preview pixels. */
   viewport: Size
+  titleMotion?: TitleMotion
   safeArea: { top: number; right: number; bottom: number; left: number }
   font: CaptionFont
   /** Optional measured local font for selected words. */
@@ -48,7 +53,8 @@ export type CaptionLayout = {
   /** The emphasis font actually used to measure word regions, resized to match the fitted `font`. */
   emphasisFont?: CaptionFont
 }
-export type MotionCue = { text: string; startUs: number; endUs: number; words?: CaptionWord[]; emphasized?: TextSpan[] }
+export type MotionCueWord = Omit<CaptionWord, 'timingSource'> & { timingSource: CaptionWord['timingSource'] | 'decorative' }
+export type MotionCue = { text: string; startUs: number; endUs: number; words?: MotionCueWord[]; emphasized?: TextSpan[] }
 export type WordRegion = Rect & {
   lineIndex: number; wordIndex: number; textStart: number; textEnd: number; revealRight: number
   /** Position/width measured with the emphasis font's own shaping run, when it differs from the base font. */
@@ -56,7 +62,7 @@ export type WordRegion = Rect & {
 }
 export type MeasureRange = (text: string, start: number, end: number, font: CaptionFont, emphasis?: RunEmphasis) => Rect[]
 
-export type WordMotionReason = 'no-words' | 'incomplete' | 'invalid' | 'needs-review' | 'estimated' | 'ok'
+export type WordMotionReason = 'no-words' | 'incomplete' | 'invalid' | 'needs-review' | 'estimated' | 'decorative' | 'ok'
 /** No invented timings. A partial or stale word list must not drive a word animation. */
 export function wordMotionAvailability(cue: MotionCue | null): { enabled: boolean; estimated: boolean; reason: WordMotionReason; explanation: string } {
   const words = cue?.words ?? []
@@ -68,16 +74,18 @@ export function wordMotionAvailability(cue: MotionCue | null): { enabled: boolea
     && word.startUs >= cue!.startUs && word.endUs <= cue!.endUs && word.endUs > word.startUs
     && (index === 0 || word.startUs >= words[index - 1].endUs))
   const estimated = words.some((word) => word.timingSource === 'estimated')
+  const decorative = words.length > 0 && words.every((word) => word.timingSource === 'decorative')
   const stale = words.some((word) => word.needsReview && word.timingSource !== 'estimated')
   const reason: WordMotionReason = words.length === 0 ? 'no-words'
     : !complete ? 'incomplete'
       : !valid ? 'invalid'
         : stale ? 'needs-review'
-          : estimated ? 'estimated' : 'ok'
+          : decorative ? 'decorative' : estimated ? 'estimated' : 'ok'
   return { enabled: valid && !stale, estimated, reason,
     explanation: !valid ? 'Word effects unavailable: complete word timing is required. Cue timing alone uses static clean; no words are estimated by rendering.'
       : stale ? 'Word effects unavailable: word timing needs review. Preview uses static clean.'
-        : estimated ? 'Estimated word timing — not aligned to audio; needs review.'
+          : decorative ? 'Decorative word timing for this text animation; not aligned to audio.'
+          : estimated ? 'Estimated word timing — not aligned to audio; needs review.'
           : `Word timing: ${[...new Set(words.map((word) => word.timingSource))].join(', ')}.`,
   }
 }
@@ -104,7 +112,7 @@ export function fittedEmphasisFont(inputs: LayoutInputs, fitted: CaptionFont): C
 
 /** Range metrics come from complete shaped lines, not isolated token measurements. */
 export function layoutCaptionWords(layout: CaptionLayout, cue: MotionCue, measure: MeasureRange): CaptionLayout {
-  if (layout.status !== 'ready' || !wordMotionAvailability(cue).enabled || layout.inputs.emphasized?.length) return layout
+  if (layout.status !== 'ready' || !wordMotionAvailability(cue).enabled) return layout
   const spans = locateWordSpans(cue.text, cue.words!)!
   // The layout's own font may have been shrunk to fit maxLines; the emphasis face must track that
   // fitted size (keeping its own ratio to the base font), or its word rects would be measured
@@ -113,15 +121,18 @@ export function layoutCaptionWords(layout: CaptionLayout, cue: MotionCue, measur
   const wordRegions = spans.flatMap((span, wordIndex) => layout.lines.flatMap((line, lineIndex) => {
     const start = Math.max(span.textStart, line.textStart), end = Math.min(span.textEnd, line.textEnd)
     if (end <= start) return []
+    const selectedEmphasis = layout.inputs.emphasized?.length
+      ? { spans: sliceEmphasis(layout.inputs.emphasized, line.textStart, line.textEnd), font: fittedEmphasisFont(layout.inputs, layout.font) }
+      : undefined
     const revealEnd = Math.min(line.textEnd, spans[wordIndex + 1]?.textStart ?? cue.text.length)
-    const prefix = measure(line.text, 0, revealEnd - line.textStart, layout.font)
+    const prefix = measure(line.text, 0, revealEnd - line.textStart, layout.font, selectedEmphasis)
     const revealRight = line.x + Math.max(0, ...prefix.map((rect) => rect.x + rect.width))
     // Measure the emphasis face against the *same complete line*, not a scaled copy of the regular
     // rect: a bolder/italic face has different glyph advances, so cropping a bold shaping run with
     // the regular rect would clip the wrong glyphs (docs/CAPTION_RENDERER.md).
-    const emphasisRects = emphasisFont ? measure(line.text, start - line.textStart, end - line.textStart, emphasisFont) : null
+    const emphasisRects = emphasisFont && !selectedEmphasis ? measure(line.text, start - line.textStart, end - line.textStart, emphasisFont) : null
     const emphasisRect = emphasisRects?.[0]
-    return measure(line.text, start - line.textStart, end - line.textStart, layout.font).map((rect) => ({
+    return measure(line.text, start - line.textStart, end - line.textStart, layout.font, selectedEmphasis).map((rect) => ({
       ...rect, x: line.x + rect.x, y: line.y, height: line.height, lineIndex, wordIndex,
       textStart: start, textEnd: end, revealRight,
       emphasis: emphasisRect ? { x: line.x + emphasisRect.x, width: emphasisRect.width } : undefined,
@@ -140,7 +151,7 @@ export function defaultCaptionInputs(viewport: Size): LayoutInputs {
     font: { stack: DEFAULT_FONT_STACK, size: viewport.width * .055, weight: 700, lineHeight: 1.6, readiness: 'loading', revision: 'system',
       italic: false, letterSpacing: 0, wordSpacing: 0, textTransform: 'none' },
     maxLines: 3, position: { horizontal: .5, vertical: 1 }, alignment: 'center', wrapping: 'whitespace',
-    appearance: { color: '#ffffff', outlineColor: '#000000', outlineWidth: 1, shadow: '0 2px 3px #000', background: 'transparent', padding: 6 },
+    appearance: { color: '#ffffff', outlineColor: '#000000', outlineWidth: 1, shadow: '0 2px 3px #000', background: 'transparent', padding: 6, rotation: 0 },
   }
 }
 
@@ -227,7 +238,7 @@ export function layoutCaption(text: string, inputs: LayoutInputs, measure: Measu
 export type CaptionFrame = { visible: boolean; opacity: number; elapsedUs: number; layout: CaptionLayout
   wordSpans?: TextSpan[]; motion?: CaptionMotion; timingNotice?: string; words?: { wordIndex: number; active: boolean; revealed: boolean; scale: number }[] }
 /** Pure absolute-source-time evaluation: no CSS animation, elapsed playback clock or seek history. */
-export function captionFrame(layout: CaptionLayout, cue: { startUs: number; endUs: number; text?: string; words?: CaptionWord[] }, timestampUs: number,
+export function captionFrame(layout: CaptionLayout, cue: { startUs: number; endUs: number; text?: string; words?: MotionCueWord[] }, timestampUs: number,
   requested: CaptionMotion = 'static-clean', motionSpeed = 1): CaptionFrame {
   if (![cue.startUs, cue.endUs, timestampUs].every(Number.isSafeInteger) || cue.startUs < 0 || cue.endUs <= cue.startUs || timestampUs < 0) throw new Error('Expected safe integer source timestamps and positive cue duration.')
   if (!Number.isFinite(motionSpeed) || motionSpeed < .25 || motionSpeed > 4) throw new Error('Motion speed must be between 0.25× and 4×.')

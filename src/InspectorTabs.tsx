@@ -7,7 +7,7 @@ const TABS: { id: InspectorTab; label: string }[] = [
 
 /** A standard roving-tabindex tablist: only the active tab is in the tab order, Left/Right/Home/End
  * move focus and selection together, and only the selected panel is rendered. Templates moved to
- * the left rail's Transitions tab (TransitionsPanel.tsx), so this is Edit/Style only. */
+ * the left rail's Titles tab (TitlesPanel.tsx), so this is Edit/Style only. */
 export function InspectorTabs({ active, onChange, edit, style }: {
   active: InspectorTab; onChange: (tab: InspectorTab) => void
   edit: ReactNode; style: ReactNode

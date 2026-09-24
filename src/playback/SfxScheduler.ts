@@ -42,7 +42,10 @@ export type SfxClipSpec = {
   /** Sequence time at which the clip starts playing. */
   startUs: number
   inPointUs: number
+  /** Length on the timeline; buffer-native length is this × `speed`. */
   durationUs: number
+  /** Constant clip speed (default 1). */
+  speed?: number
   gain: number
 }
 
@@ -120,14 +123,16 @@ export function createSfxScheduler(deps: {
       const elapsedIntoClipUs = Math.max(0, posSeqUs - startSeqUs)
       // `when` is wall-clock; offset/duration below are buffer-native time, unaffected by rate.
       const when = elapsedIntoClipUs > 0 ? context.currentTime : context.currentTime + (startSeqUs - posSeqUs) / 1_000_000 / rate
-      const offsetUs = clip.inPointUs + elapsedIntoClipUs
-      const portionUs = clip.durationUs - elapsedIntoClipUs
+      // Buffer-native time runs `speed`× faster than the sequence over a retimed clip.
+      const speed = clip.speed ?? 1
+      const offsetUs = clip.inPointUs + elapsedIntoClipUs * speed
+      const portionUs = (clip.durationUs - elapsedIntoClipUs) * speed
       if (portionUs <= 0) continue
       const gainNode = context.createGain()
       gainNode.gain.value = clip.gain
       const source = context.createBufferSource()
       source.buffer = buffer
-      source.playbackRate.value = rate
+      source.playbackRate.value = rate * speed
       source.connect(gainNode)
       gainNode.connect(context.destination)
       source.onended = () => { active.delete(clip.id) }

@@ -8,7 +8,7 @@ const cue = (id: string, startUs: number, endUs: number): Cue =>
   ({ id, mediaAssetId: 'x', startUs, endUs, text: `cue ${id}`, timingSource: 'imported', needsReview: false, textSource: 'imported', words: [] })
 const state = (overrides: Partial<ProjectSummary> = {}): ProjectSummary => ({
   title: 'Test', path: null, schemaVersion: 5, format: undefined, durationUs: 10 * US, playheadUs: 0,
-  underPlayhead: null, selection: null, assets: [], tracks: [], clips: [], blurRegions: [], captionStyle: undefined,
+  underPlayhead: null, selection: null, assets: [], tracks: [], clips: [], blurRegions: [], effects: [], textOverlays: [], captionStyle: undefined,
   cueCount: 0, warnings: [], ...overrides,
 })
 

@@ -19,6 +19,8 @@ export type ExportRequest = {
   /** Output size, rate and range — derived by main from the project's format (or the probed first video). */
   plan: ExportPlan
   manifest: ExportManifest
+  /** Explicit video bitrate from the user's export settings; absent keeps the automatic class. */
+  encoding?: { videoBitrateKbps: number }
   /** The user's chosen final destination (a native save dialog), never the source media path. */
   destinationPath: string
 }
@@ -107,7 +109,7 @@ export class ExportService {
       return await this.options.worker.start({
         operation: 'export', inputPaths: request.inputPaths, renderManifestPath: manifestPath,
         outputPath: temporaryOutputPath, range: plan.range, frameRate: plan.frameRate, width: plan.width, height: plan.height,
-        profile: 'mp4-caption-renderer-v1',
+        profile: 'mp4-caption-renderer-v1', ...(request.encoding ? { encoding: request.encoding } : {}),
       }, {
         signal: ctx.signal,
         // Generous ceiling scaled from the output duration; real progress still drives the UI.

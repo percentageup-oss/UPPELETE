@@ -11,6 +11,10 @@ export async function alignWithGemini(
   segments: readonly AudioRelativeAlignmentSegment[],
   signal: AbortSignal,
 ): Promise<{ output: RawAlignmentOutput; usage: GeminiUsage }> {
-  const { words, usage } = await geminiRecognizer(apiKey, 'align')(audioPath, ['ml-IN', 'en-IN'], signal)
+  // No locale hint, for the reason `geminiLocales` documents: pinning ml-IN/en-IN made the model
+  // transliterate spoken English into Malayalam script, and `alignmentKey` only lowercases and strips
+  // punctuation — a recognized "സീ" can never match the imported SRT's "See", so every English token
+  // fell back to estimated timing. Detection keeps English in Latin script, where it can match.
+  const { words, usage } = await geminiRecognizer(apiKey, 'align')(audioPath, { locales: [] }, signal)
   return { output: matchRecognizedWords(segments, words, 'gemini-api', GEMINI_ALIGNMENT_MODEL), usage }
 }

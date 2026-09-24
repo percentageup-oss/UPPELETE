@@ -61,11 +61,24 @@ it('renders the new emphasis Size/Glow/Styles/Animation controls, with the glow 
   expect(on).toContain('id="style-emphasis-glow-color"')
 })
 
-it('offers "Same as caption font" as the emphasis family stepper’s first option', () => {
-  const html = render()
-  expect(html).toMatch(/id="style-emphasis-family"[^]*?<option value=""[^>]*>Same as caption font<\/option>/)
+it('shows "Same as caption font" on the emphasis family dropdown until a font is chosen', () => {
+  expect(render()).toMatch(/id="style-emphasis-family"[^]*?<span>Same as caption font<\/span>/)
 })
 
-it('offers Anek Malayalam in the default font dropdown without loading the system catalog', () => {
-  expect(render()).toMatch(/id="style-font-family"[^]*?<option value="Anek Malayalam"[^>]*>Anek Malayalam<\/option>/)
+it('renders the caption font as a searchable popover trigger showing the current font', () => {
+  const html = render()
+  expect(html).toMatch(/id="style-font-family"[^>]*aria-haspopup="listbox"[^]*?<span>Noto Sans Malayalam<\/span>/)
+})
+
+it('puts the emphasis font and face in the Emphasis section and uses a dropdown for the caption font', () => {
+  const html = render()
+  const emphasis = html.slice(html.indexOf('data-section="emphasis"'))
+  expect(emphasis).toContain('id="style-emphasis-family"')
+  expect(emphasis).toContain('id="style-emphasis-face"')
+  expect(html).toContain('class="ins-select"')
+  expect(html).not.toContain('stepper')
+})
+
+it('shows no eyedropper without the EyeDropper API', () => {
+  expect(render()).not.toContain('color-eyedropper')
 })
