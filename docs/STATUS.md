@@ -1,5 +1,17 @@
 # Status
 
+## 2026-09-24 — Windows export froze at 46% with no message
+
+**Cause (not yet confirmed).** Reported: a Windows export stopped at 46% and stayed there. The frame loop had no deadline on any step. It waited on the host for a PNG and on FFmpeg to accept one, so a process that stayed alive but stopped making progress froze the bar without an error. Two gaps made this possible. (1) The host's 15 s paint deadline started only after `window.x1.render` returned, so a page render that never settled blocked the host. (2) After encoding, the worker also waited without limit for the host to exit. That wait would hang if Electron on Windows misses stdin EOF. This could not be reproduced here, so which process stalled at 46% is still unknown.
+
+**Changes.** Each frame step now has a 60 s stall deadline (`FRAME_STALL_MS`). A stall fails the export with `Export stalled at frame N of T: the caption renderer returned no frame…` or `…the h264_mf encoder accepted no frame…`, and attaches that process's stderr tail as the diagnostic. `ownedProcess` exposes `diagnostic()` for this. The host's deadline now covers the page render as well as the paint. After FFmpeg finishes, the host gets 2 s to exit and is then reaped. Files: `workers/media/export.ts`, `workers/media/exportProcesses.ts`, `scripts/export-frame-transport.mjs`, plus 3 tests in `export.test.ts`.
+
+**Verification (Linux only).** `tsc --noEmit` is clean and `build-export.mjs` builds. With `process.platform` stubbed to darwin, `workers/media` passes 138 tests (135 before, plus 3 new). Run unstubbed on Linux, the renderVideo tests stop at the encoder gate as they did before (14 fails before, 17 with the new tests). Nothing was run on Windows.
+
+**Limitations.** This makes the hang fail with a named cause; it does not fix the root cause. A frame that legitimately takes over 60 s would now fail.
+
+**Next.** Re-run the same export on Windows. It should now fail within about a minute and name the renderer or the encoder. Use that message and the `export` log line in `%APPDATA%\caption-studio\logs\export.log` to fix the root cause.
+
 ## 2026-09-24 — Windows export: "[aost#0:1/aac] Terminating thread with return code -22"
 
 **Cause.** The AAC lines were FFmpeg's teardown, not the fault. On this machine (RTX 3070 Ti, driver 591.86) FFmpeg 9.0.2's NVENC needs API 13.1 (driver 610+), so the probe correctly rejected it and selection fell back to `h264_mf`. The probe was a bare `-c:v h264_mf` encode, which passed. The real export adds `-hw_encoding 1 … -pix_fmt yuv420p`, and the hardware Media Foundation encoder rejects yuv420p (`format negotiation failed (1/0)` → `Error while opening encoder`). No video packets were written, so AAC and the muxer failed after it. The notice showed only the last two stderr lines.

@@ -41,7 +41,9 @@ export async function renderOffscreen(window, request, marker) {
   // Handle rejection immediately, including failures while awaiting font readiness.
   painted.catch(() => {})
   try {
-    const result = await wc.executeJavaScript(`window.x1.render(${JSON.stringify(request)}, ${marker})`)
+    // The deadline covers the page's own render too: a render that never settles (an image decode
+    // or readiness wait that hangs) would otherwise block the host, and the export, indefinitely.
+    const result = await Promise.race([wc.executeJavaScript(`window.x1.render(${JSON.stringify(request)}, ${marker})`), painted.then(() => new Promise(() => {}))])
     committed = true
     wc.invalidate() // Chromium emits no paint for unchanged pages without explicit invalidation.
     return { ...result, bitmap: await painted, stalePaints }

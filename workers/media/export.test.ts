@@ -298,6 +298,65 @@ describe('renderVideo', () => {
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', diagnostic: 'videotoolbox session invalidated' } })
   })
 
+  it('fails a frame the caption renderer never returns as a named stall instead of hanging', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    let hostHandle!: ReturnType<typeof fakeHost>, encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      // Answers the first 13 frames, then stays alive but silent — a hung renderer.
+      if (executable === tools.exportHost!.executable) return hostHandle = fakeHost(s, (request) => request.timestampUs < frameSourceUs(13, 0, { numerator: 30, denominator: 1 }) ? pngFrame(1) : null) as any
+      return encoderHandle = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root, stallMs: 50 })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', message: expect.stringMatching(/stalled at frame 14 of 30: the caption renderer/) } })
+    expect(hostHandle.stop).toHaveBeenCalled()
+    expect(encoderHandle.stop).toHaveBeenCalled()
+    expect(await readdir(root)).toEqual(['frames.json'])
+  }, 10_000)
+
+  it('fails an encoder that stops accepting frames as a named stall with its stderr', async () => {
+    const { root, renderManifestPath } = await jobFixture()
+    let encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) return fakeHost(s, () => pngFrame(1)) as any
+      encoderHandle = fakeEncoder(s)
+      // A wedged encoder: alive, but its stdin never completes a write after the fifth frame.
+      const stdin = encoderHandle.child.stdin as PassThrough
+      const write = stdin.write.bind(stdin)
+      let writes = 0
+      stdin.write = ((chunk: any, callback?: any) => ++writes > 5 ? true : write(chunk, callback)) as any
+      return { ...encoderHandle, diagnostic: () => 'mf: MFT async event wait' } as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root, stallMs: 50 })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', message: expect.stringMatching(/stalled at frame 6 of 30: the \S+ encoder accepted no frame/), diagnostic: 'mf: MFT async event wait' } })
+  }, 10_000)
+
+  it('does not let a host that ignores stdin EOF hold a finished export open', async () => {
+    const { root, renderManifestPath } = await jobFixture()
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) {
+        // Stays running after its stdin ends; only being stopped (killed) closes it.
+        const host = fakeHost(s, () => pngFrame(1))
+        let kill!: () => void
+        const closed = new Promise<void>((_resolve, reject) => { kill = () => reject(failure('TOOL_FAILED', 'Export process failed')) })
+        closed.catch(() => {})
+        return { ...host, closed, stop: vi.fn(() => kill()) } as any
+      }
+      return fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
+    const result = await renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    expect(result.frameCount).toBe(30)
+  }, 10_000)
+
   it('surfaces the export host failure with its diagnostic instead of the encoder\'s teardown cancellation', async () => {
     // The mirror of the encoder case above, and the reported bug: the host dies on its own, the
     // encoder is then stopped by the job and rejects `CANCELLED`, and the encoder used to be read first.

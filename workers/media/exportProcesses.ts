@@ -20,7 +20,8 @@ export function ownedProcess(executable: string, args: string[], signal: AbortSi
     else resolve()
   }))
   closed.catch(() => {})
-  return { child, closed, stop }
+  /** The last 8 KiB of stderr so far — what a stalled (still running) process has said. */
+  return { child, closed, stop, diagnostic: () => diagnostic }
 }
 export async function writeBounded(stream: Writable, bytes: Buffer | string): Promise<void> {
   await new Promise<void>((resolve, reject) => stream.write(bytes, (error) => error ? reject(error) : resolve()))

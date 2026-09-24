@@ -22,6 +22,28 @@ const FILTER_COMPLEX_ARGV_LIMIT_BYTES = 8 * 1024
 /** How long a failing export waits for its peer process to say why it died before tearing it down. */
 const PEER_SETTLE_MS = 2000
 
+/**
+ * The longest a single frame step may wait on a live peer — the host returning a PNG, or FFmpeg
+ * accepting one — before the export fails as stalled. The host bounds its own render at 15 s and
+ * exits on failure, so this only fires when a process is alive but no longer making progress
+ * (a wedged hardware encoder, a hung renderer). Without it the pipe waits forever and the progress
+ * bar freezes with no message.
+ */
+const FRAME_STALL_MS = 60_000
+
+/** Rejects with a stall failure naming the step if `work` has not settled within `ms`. */
+async function withinStallDeadline<T>(work: Promise<T>, ms: number, describe: () => { message: string; diagnostic: string }): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const { message, diagnostic } = describe()
+        reject(failure('TOOL_FAILED', message, { diagnostic: diagnostic.slice(-8192) }))
+      }, ms)
+    })])
+  } finally { clearTimeout(timer) }
+}
+
 /** Resolves once every promise settles or the deadline passes, whichever is first; never rejects. */
 async function settledWithin(promises: (Promise<unknown> | undefined)[], ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -56,7 +78,7 @@ type MediaProber = typeof probeMedia
  * exercise the real orchestration logic — cancellation, progress parsing, gap-frame reuse,
  * cleanup and output validation — against fake processes instead of a real FFmpeg/export host,
  * mirroring the `{ runTool, temporaryRoot }` injection already used by `waveform.ts`/`thumbnails.ts`. */
-export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string }
+export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number }
 
 export async function exportSupport(tools: Toolchain | undefined, signal: AbortSignal,
   dependencies: Pick<ExportDependencies, 'runTool'> = {}): Promise<ExportSupport> {
@@ -167,6 +189,20 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // export (they are one fully transparent image), preserving X2's gap-frame reuse across gaps
     // that are not adjacent. Only these two buffers are retained, so memory stays bounded.
     type RenderedFrame = { signature: string; png: Buffer }
+    const stallMs = dependencies.stallMs ?? FRAME_STALL_MS
+    const seconds = Math.round(stallMs / 1000)
+    const encoderHandle = encoder, hostHandle = host
+    const toEncoder = (index: number, png: Buffer) => withinStallDeadline(writeBounded(encoderHandle.child.stdin, png), stallMs, () => ({
+      message: `Export stalled at frame ${index + 1} of ${total}: the ${videoEncoder} encoder accepted no frame for ${seconds} s`,
+      diagnostic: encoderHandle.diagnostic?.() ?? '',
+    }))
+    const fromHost = async (index: number, request: unknown) => {
+      await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
+      return withinStallDeadline(reader.frame(), stallMs, () => ({
+        message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
+        diagnostic: hostHandle.diagnostic?.() ?? '',
+      }))
+    }
     let previous: RenderedFrame | null = null
     let gap: RenderedFrame | null = null
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
@@ -176,18 +212,21 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
       if (cached) {
         previous = { signature: frame.signature, png: cached }
-        await writeBounded(encoder.child.stdin, cached)
+        await toEncoder(index, cached)
         continue
       }
       const { request } = job.request(index, frame)
-      await writeBounded(host.child.stdin, JSON.stringify(request) + '\n')
-      const png = await reader.frame()
+      const png = await fromHost(index, request)
       previous = { signature: frame.signature, png }
       if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
-      await writeBounded(encoder.child.stdin, png)
+      await toEncoder(index, png)
     }
     host.child.stdin.end(); encoder.child.stdin.end()
-    await encoder.closed; await host.closed
+    await encoder.closed
+    // Every frame is already encoded; the host is only asked to exit. It is given a moment and then
+    // reaped by `finally`, so a host that misses stdin EOF (seen with Electron on Windows) cannot
+    // hold a finished export open.
+    await settledWithin([host.closed], PEER_SETTLE_MS)
     if (signal.aborted) throw failure('CANCELLED', 'Export cancelled')
     // Independent output validation precedes finalization by main's commit gate.
     const output = await probe(tools.ffprobePath, task.outputPath, signal)
