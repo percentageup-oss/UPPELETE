@@ -121,6 +121,40 @@ describe('caption editing commands', () => {
     if (deleted.ok) expect(deleted.project.cues.map((item) => item.id)).toEqual(['b'])
   })
 
+  it('duplicates a cue with a fresh ID, offset timing, and shifted word timing', () => {
+    const original = cue('a', 1_000_000, 2_000_000, 'hello', {
+      words: [{ id: 'w1', startUs: 1_000_000, endUs: 2_000_000, text: 'hello', timingSource: 'model', needsReview: false }],
+    })
+    const result = applyCaptionCommand(project(original), { type: 'duplicate', cueId: 'a', duplicateId: 'a-copy' })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.selectedId).toBe('a-copy')
+    expect(result.project.cues.map((item) => item.id)).toEqual(['a', 'a-copy'])
+    const copy = result.project.cues[1]
+    expect(copy.startUs).toBe(1_250_000)
+    expect(copy.endUs).toBe(2_250_000)
+    expect(copy.text).toBe('hello')
+    expect(copy.words).toEqual([{ id: 'a-copy-w0', startUs: 1_250_000, endUs: 2_250_000, text: 'hello', timingSource: 'model', needsReview: false }])
+    // The original is untouched.
+    expect(result.project.cues[0]).toEqual(original)
+  })
+
+  it('clamps a duplicated cue to its video duration instead of failing', () => {
+    const original = cue('a', 4_000_000, 5_000_000, 'end of clip')
+    const result = applyCaptionCommand(project(original), { type: 'duplicate', cueId: 'a', duplicateId: 'a-copy' }, { mediaDurationUs: 5_000_000 })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const copy = result.project.cues.find((item) => item.id === 'a-copy')!
+    expect(copy.startUs).toBe(4_000_000)
+    expect(copy.endUs).toBe(5_000_000)
+  })
+
+  it('rejects duplicating a missing cue or reusing an ID', () => {
+    const initial = project(cue('a', 0, 1_000_000, 'one'))
+    expect(applyCaptionCommand(initial, { type: 'duplicate', cueId: 'missing', duplicateId: 'x' }).ok).toBe(false)
+    expect(applyCaptionCommand(initial, { type: 'duplicate', cueId: 'a', duplicateId: 'a' }).ok).toBe(false)
+  })
+
   it('splits at the playhead without breaking Malayalam grapheme clusters', () => {
     const result = applyCaptionCommand(project(cue('a', 0, 4_000_000, 'ഞാൻ React പഠിക്കുന്നു')), { type: 'split', cueId: 'a', atUs: 2_000_000, rightCueId: 'b' })
     expect(result.ok).toBe(true)

@@ -25,6 +25,9 @@ export type ShortcutAction =
   | 'previous-cue'
   | 'next-cue'
   | 'show-shortcuts'
+  // Cmd/Ctrl+C copies the selected timeline item (cue, clip or text); Cmd/Ctrl+V pastes a clone of it.
+  | 'copy-item'
+  | 'paste-item'
 
 export type KeyboardShortcutEvent = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
 
@@ -45,6 +48,8 @@ export function shortcutForEvent(event: KeyboardShortcutEvent, target: EventTarg
   if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'y') return 'redo'
   if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') return 'split-clips'
   if (modifier && event.altKey && !event.shiftKey && event.key.toLowerCase() === 'l') return 'toggle-clip-link'
+  if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c') return 'copy-item'
+  if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v') return 'paste-item'
   if (modifier || event.altKey) return null
   if (event.shiftKey && (event.key === 'Delete' || event.key === 'Backspace')) return 'ripple-delete'
 

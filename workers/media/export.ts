@@ -7,6 +7,8 @@ import {
 } from '../../src/export/plan'
 import { createLayerPlan } from '../../src/core/layerPlan'
 import { exportSupportFromConfiguration, type ExportSupport } from '../../src/core/exportSupport'
+import type { VideoEncoderId } from '../../src/core/exportEncoder'
+import { selectVideoEncoder } from './exportEncoderSelect'
 import { failure, MediaWorkerError, type MediaTask, type MediaResult, type ProgressMessage, type Toolchain } from './protocol'
 import { runExecutable } from './process'
 import { probeMedia } from './probe'
@@ -19,6 +21,28 @@ const FILTER_COMPLEX_ARGV_LIMIT_BYTES = 8 * 1024
 
 /** How long a failing export waits for its peer process to say why it died before tearing it down. */
 const PEER_SETTLE_MS = 2000
+
+/**
+ * The longest a single frame step may wait on a live peer — the host returning a PNG, or FFmpeg
+ * accepting one — before the export fails as stalled. The host bounds its own render at 15 s and
+ * exits on failure, so this only fires when a process is alive but no longer making progress
+ * (a wedged hardware encoder, a hung renderer). Without it the pipe waits forever and the progress
+ * bar freezes with no message.
+ */
+const FRAME_STALL_MS = 60_000
+
+/** Rejects with a stall failure naming the step if `work` has not settled within `ms`. */
+async function withinStallDeadline<T>(work: Promise<T>, ms: number, describe: () => { message: string; diagnostic: string }): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        const { message, diagnostic } = describe()
+        reject(failure('TOOL_FAILED', message, { diagnostic: diagnostic.slice(-8192) }))
+      }, ms)
+    })])
+  } finally { clearTimeout(timer) }
+}
 
 /** Resolves once every promise settles or the deadline passes, whichever is first; never rejects. */
 async function settledWithin(promises: (Promise<unknown> | undefined)[], ms: number): Promise<void> {
@@ -54,15 +78,21 @@ type MediaProber = typeof probeMedia
  * exercise the real orchestration logic — cancellation, progress parsing, gap-frame reuse,
  * cleanup and output validation — against fake processes instead of a real FFmpeg/export host,
  * mirroring the `{ runTool, temporaryRoot }` injection already used by `waveform.ts`/`thumbnails.ts`. */
-export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string }
+export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number }
 
 export async function exportSupport(tools: Toolchain | undefined, signal: AbortSignal,
   dependencies: Pick<ExportDependencies, 'runTool'> = {}): Promise<ExportSupport> {
   if (!tools?.exportHost) return { supported: false, reason: 'The GPU export host is not configured for this build.' }
   const runTool = dependencies.runTool ?? runExecutable
-  const support = exportSupportFromConfiguration(await runTool(tools.ffmpegPath, ['-version'], signal), process.platform)
+  let encodersOutput: string | undefined
+  if (process.platform !== 'darwin') {
+    const selection = await selectVideoEncoder(tools.ffmpegPath, signal, runTool)
+    if ('reason' in selection) return { supported: false, reason: selection.reason }
+    encodersOutput = selection.encodersOutput
+  }
+  const support = exportSupportFromConfiguration(await runTool(tools.ffmpegPath, ['-version'], signal), process.platform, encodersOutput)
   if (!support.supported) return support
-  const probeSupport = exportSupportFromConfiguration(await runTool(tools.ffprobePath, ['-version'], signal), process.platform)
+  const probeSupport = exportSupportFromConfiguration(await runTool(tools.ffprobePath, ['-version'], signal), process.platform, encodersOutput)
   if (!probeSupport.supported) return probeSupport
   try {
     await stat(tools.exportHost.executable)
@@ -79,6 +109,9 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   const probe = dependencies.probe ?? probeMedia
   const support = await exportSupport(tools, signal, dependencies)
   if (!support.supported) throw failure('UNSUPPORTED_OPERATION', support.reason!)
+  const selection = await selectVideoEncoder(tools.ffmpegPath, signal, dependencies.runTool ?? runExecutable)
+  if ('reason' in selection) throw failure('UNSUPPORTED_OPERATION', selection.reason)
+  const videoEncoder = selection.encoder
   if (!path.isAbsolute(task.outputPath) || task.inputPaths.some((input) => path.resolve(input) === path.resolve(task.outputPath))) {
     throw failure('INVALID_MESSAGE', 'Export must use a new explicit destination')
   }
@@ -100,9 +133,9 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   try {
     // `prepareV3` writes any baked LUT files into `hostProfileDirectory` before building the
     // filtergraph, since the graph embeds their on-disk paths as literal `lut3d=file=…` text.
-    const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, hostProfileDirectory) : await prepareV2(manifest, task, tools, signal, probe, plan)
+    const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, hostProfileDirectory, videoEncoder) : await prepareV2(manifest, task, tools, signal, probe, plan, videoEncoder)
     // Cuts can chain hundreds of trim/concat filters; past the Windows argv limit the graph moves
-    // to a file passed with `-filter_complex_script` instead of being inlined (docs/EDITING.md).
+    // to a file passed with `-/filter_complex <file>` instead of being inlined (docs/EDITING.md).
     const graph = job.graph
     let filterComplexScriptPath: string | undefined
     if (Buffer.byteLength(graph.filterComplex, 'utf8') > FILTER_COMPLEX_ARGV_LIMIT_BYTES) {
@@ -156,6 +189,20 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // export (they are one fully transparent image), preserving X2's gap-frame reuse across gaps
     // that are not adjacent. Only these two buffers are retained, so memory stays bounded.
     type RenderedFrame = { signature: string; png: Buffer }
+    const stallMs = dependencies.stallMs ?? FRAME_STALL_MS
+    const seconds = Math.round(stallMs / 1000)
+    const encoderHandle = encoder, hostHandle = host
+    const toEncoder = (index: number, png: Buffer) => withinStallDeadline(writeBounded(encoderHandle.child.stdin, png), stallMs, () => ({
+      message: `Export stalled at frame ${index + 1} of ${total}: the ${videoEncoder} encoder accepted no frame for ${seconds} s`,
+      diagnostic: encoderHandle.diagnostic?.() ?? '',
+    }))
+    const fromHost = async (index: number, request: unknown) => {
+      await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
+      return withinStallDeadline(reader.frame(), stallMs, () => ({
+        message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
+        diagnostic: hostHandle.diagnostic?.() ?? '',
+      }))
+    }
     let previous: RenderedFrame | null = null
     let gap: RenderedFrame | null = null
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
@@ -165,18 +212,21 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
       if (cached) {
         previous = { signature: frame.signature, png: cached }
-        await writeBounded(encoder.child.stdin, cached)
+        await toEncoder(index, cached)
         continue
       }
       const { request } = job.request(index, frame)
-      await writeBounded(host.child.stdin, JSON.stringify(request) + '\n')
-      const png = await reader.frame()
+      const png = await fromHost(index, request)
       previous = { signature: frame.signature, png }
       if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
-      await writeBounded(encoder.child.stdin, png)
+      await toEncoder(index, png)
     }
     host.child.stdin.end(); encoder.child.stdin.end()
-    await encoder.closed; await host.closed
+    await encoder.closed
+    // Every frame is already encoded; the host is only asked to exit. It is given a moment and then
+    // reaped by `finally`, so a host that misses stdin EOF (seen with Electron on Windows) cannot
+    // hold a finished export open.
+    await settledWithin([host.closed], PEER_SETTLE_MS)
     if (signal.aborted) throw failure('CANCELLED', 'Export cancelled')
     // Independent output validation precedes finalization by main's commit gate.
     const output = await probe(tools.ffprobePath, task.outputPath, signal)
@@ -220,7 +270,7 @@ type PreparedExport = {
 
 /** Manifests v1/v2: one source media, X2's byte-identical encoder arguments. */
 async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchema.parse>, ExportManifestV3>, task: ExportTask, tools: Toolchain,
-  signal: AbortSignal, probe: MediaProber, plan: ReturnType<typeof exportPlanSchema.parse>): Promise<PreparedExport> {
+  signal: AbortSignal, probe: MediaProber, plan: ReturnType<typeof exportPlanSchema.parse>, videoEncoder: VideoEncoderId): Promise<PreparedExport> {
   const edits = normalizeManifest(manifest)
   const [inputPath] = task.inputPaths
   // One plan for which source timestamp each output frame shows and which frames repeat.
@@ -244,7 +294,7 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
     layer,
     request: (index, frame) => frameRequestAt(manifest, plan, index, frame.sourceUs),
     graph: exportFilterGraph(plan, hasAudio, manifest),
-    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script, task.encoding),
+    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script, task.encoding, videoEncoder),
     overlayUrls: edits.overlays.map((overlay) => overlay.assetUrl),
     masks: [],
     frameCount: exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate),
@@ -257,7 +307,7 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
  * end of its file fails here with its name rather than as an opaque FFmpeg error — and every input
  * must be one the task declared.
  */
-async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: Toolchain, signal: AbortSignal, probe: MediaProber, hostProfileDirectory: string): Promise<PreparedExport> {
+async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: Toolchain, signal: AbortSignal, probe: MediaProber, hostProfileDirectory: string, videoEncoder: VideoEncoderId): Promise<PreparedExport> {
   const declared = new Set(task.inputPaths.map((input) => path.resolve(input)))
   // Each baked LUT (`manifest.luts`, Color: adjustment layers) becomes its own `.cube` file next to
   // `filtergraph.txt`, before the graph is built — the graph embeds the file's own path as literal
@@ -297,7 +347,7 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
     layer,
     request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
     graph,
-    args: (script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graph),
+    args: (script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graph, videoEncoder),
     overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
     masks: maskTargets(manifest),
     frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),

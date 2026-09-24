@@ -1085,7 +1085,7 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
 }
 
 export const PROJECT_FILE_EXTENSION = 'cstudio'
-export const PROJECT_FILE_FILTER_NAME = 'Caption Studio project'
+export const PROJECT_FILE_FILTER_NAME = 'KathaCut project'
 
 /** A new project's default lanes: one video track and one audio track, exactly the rows the
  * timeline has always shown. */

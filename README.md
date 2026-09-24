@@ -1,6 +1,8 @@
-# Caption Studio (working name)
+# KathaCut
 
-Local-first desktop subtitle editor for Malayalam/English creator videos.
+**Your local AI video toolkit.**
+
+A local-first desktop subtitle editor for Malayalam/English creator videos.
 
 Status: editor foundation in development. The current desktop slice probes local media through the isolated worker, stores portable references and sampled fingerprints, resolves/relinks missing media, extracts and caches real audio waveforms, opens SRT files, synchronizes captions with playback, edits text/timing, supports undo/redo, and saves/opens `.cstudio` projects (schema 3, with schema 1/2 migration) with autosave once a project is named, or exports SRT.
 
@@ -24,6 +26,13 @@ everything to the gitignored `caption-studio.local.json`. The app reads that fil
 unpackaged runs, so plain `npm run dev` or `npx electron .` also work afterwards. No tools are
 downloaded or looked up on PATH by the app itself; see [media worker](docs/MEDIA_WORKER.md) and
 [dependencies](docs/DEPENDENCIES.md).
+
+**Windows (PowerShell):** `.\dev.ps1` does the same and needs no manual paths. It finds FFmpeg/ffprobe
+(PATH, winget, Scoop, Chocolatey, `C:\ffmpeg`, `.tools`), checks the build can export (PNG codec plus
+`h264_nvenc` or `h264_mf`), and otherwise downloads a BtbN LGPL build into `.tools\`. It also fetches
+whisper-cli (CUDA build when an NVIDIA GPU is present). Export uses NVIDIA NVENC when a test encode
+succeeds, else Windows Media Foundation; set `CAPTION_STUDIO_EXPORT_ENCODER=h264_mf` to force the
+fallback. Flags: `-Reconfigure`, `-Yes`. If scripts are blocked: `powershell -ExecutionPolicy Bypass -File .\dev.ps1`.
 
 Use `npm run check` for type checks, tests and production builds. No remote repository has been created. Select an open-source license before public release; no license choice is implied by this project.
 

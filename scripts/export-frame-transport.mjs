@@ -3,6 +3,8 @@ import { nativeImage } from 'electron'
 /** A compositor-visible token correlates a paint with a committed request, even for static frames. */
 export function markedBitmap(image, composition, marker) {
   const size = image.getSize()
+  // Windows emits an empty (0x0) paint before the first real one; it carries no marker, so it is stale.
+  if (size.width === 0 || size.height === 0) return null
   if (size.width !== composition.width || size.height !== composition.height) throw new Error(`Unexpected pixel dimensions: ${JSON.stringify(size)}`)
   const bitmap = image.toBitmap()
   if (bitmap.length !== size.width * size.height * 4) throw new Error('Unexpected bitmap size')
@@ -39,7 +41,9 @@ export async function renderOffscreen(window, request, marker) {
   // Handle rejection immediately, including failures while awaiting font readiness.
   painted.catch(() => {})
   try {
-    const result = await wc.executeJavaScript(`window.x1.render(${JSON.stringify(request)}, ${marker})`)
+    // The deadline covers the page's own render too: a render that never settles (an image decode
+    // or readiness wait that hangs) would otherwise block the host, and the export, indefinitely.
+    const result = await Promise.race([wc.executeJavaScript(`window.x1.render(${JSON.stringify(request)}, ${marker})`), painted.then(() => new Promise(() => {}))])
     committed = true
     wc.invalidate() // Chromium emits no paint for unchanged pages without explicit invalidation.
     return { ...result, bitmap: await painted, stalePaints }

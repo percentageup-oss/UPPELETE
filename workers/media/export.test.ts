@@ -144,6 +144,13 @@ describe('PngReader', () => {
     expect(await reader.frame()).toEqual(a)
     expect(await reader.frame()).toEqual(b)
   })
+  it('drops the stray CRLF Electron.exe prints on Windows before the first frame, even split across chunks', async () => {
+    const a = pngFrame(1), b = pngFrame(2)
+    async function* chunks() { yield Buffer.from('\r'); yield Buffer.concat([Buffer.from('\n'), framed(a)]); yield framed(b) }
+    const reader = new PngReader(chunks())
+    expect(await reader.frame()).toEqual(a)
+    expect(await reader.frame()).toEqual(b)
+  })
   it('rejects a length header over the size limit', async () => {
     async function* chunks() { const header = Buffer.alloc(4); header.writeUInt32BE(65 * 1024 * 1024); yield header }
     await expect(new PngReader(chunks()).frame()).rejects.toMatchObject({ detail: { code: 'OUTPUT_LIMIT' } })
@@ -291,6 +298,65 @@ describe('renderVideo', () => {
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', diagnostic: 'videotoolbox session invalidated' } })
   })
 
+  it('fails a frame the caption renderer never returns as a named stall instead of hanging', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    let hostHandle!: ReturnType<typeof fakeHost>, encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      // Answers the first 13 frames, then stays alive but silent — a hung renderer.
+      if (executable === tools.exportHost!.executable) return hostHandle = fakeHost(s, (request) => request.timestampUs < frameSourceUs(13, 0, { numerator: 30, denominator: 1 }) ? pngFrame(1) : null) as any
+      return encoderHandle = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root, stallMs: 50 })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', message: expect.stringMatching(/stalled at frame 14 of 30: the caption renderer/) } })
+    expect(hostHandle.stop).toHaveBeenCalled()
+    expect(encoderHandle.stop).toHaveBeenCalled()
+    expect(await readdir(root)).toEqual(['frames.json'])
+  }, 10_000)
+
+  it('fails an encoder that stops accepting frames as a named stall with its stderr', async () => {
+    const { root, renderManifestPath } = await jobFixture()
+    let encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) return fakeHost(s, () => pngFrame(1)) as any
+      encoderHandle = fakeEncoder(s)
+      // A wedged encoder: alive, but its stdin never completes a write after the fifth frame.
+      const stdin = encoderHandle.child.stdin as PassThrough
+      const write = stdin.write.bind(stdin)
+      let writes = 0
+      stdin.write = ((chunk: any, callback?: any) => ++writes > 5 ? true : write(chunk, callback)) as any
+      return { ...encoderHandle, diagnostic: () => 'mf: MFT async event wait' } as any
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root, stallMs: 50 })
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', message: expect.stringMatching(/stalled at frame 6 of 30: the \S+ encoder accepted no frame/), diagnostic: 'mf: MFT async event wait' } })
+  }, 10_000)
+
+  it('does not let a host that ignores stdin EOF hold a finished export open', async () => {
+    const { root, renderManifestPath } = await jobFixture()
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) {
+        // Stays running after its stdin ends; only being stopped (killed) closes it.
+        const host = fakeHost(s, () => pngFrame(1))
+        let kill!: () => void
+        const closed = new Promise<void>((_resolve, reject) => { kill = () => reject(failure('TOOL_FAILED', 'Export process failed')) })
+        closed.catch(() => {})
+        return { ...host, closed, stop: vi.fn(() => kill()) } as any
+      }
+      return fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
+    const result = await renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    expect(result.frameCount).toBe(30)
+  }, 10_000)
+
   it('surfaces the export host failure with its diagnostic instead of the encoder\'s teardown cancellation', async () => {
     // The mirror of the encoder case above, and the reported bug: the host dies on its own, the
     // encoder is then stopped by the job and rejects `CANCELLED`, and the encoder used to be read first.
@@ -386,7 +452,7 @@ describe('renderVideo', () => {
     expect(encoderHandle.received.length).toBe(18)
   })
 
-  it('writes an oversized filtergraph to a script file in the job directory and passes -filter_complex_script', async () => {
+  it('writes an oversized filtergraph to a script file in the job directory and passes -/filter_complex <file>', async () => {
     // 200 kept segments produce a trim/concat graph well past the 8 KiB argv-safe inline limit.
     const segments = Array.from({ length: 200 }, (_, index) => ({ startUs: index * 10_000, endUs: index * 10_000 + 5_000 }))
     const { root, renderManifestPath } = await jobFixture({ segments })
@@ -398,7 +464,7 @@ describe('renderVideo', () => {
       encoderArgs = args as string[]
       // The job directory (and this script file) is removed once the job finishes, so it has to be
       // read synchronously here, right after export.ts writes it and before it spawns this process.
-      const scriptIndex = encoderArgs.indexOf('-filter_complex_script')
+      const scriptIndex = encoderArgs.indexOf('-/filter_complex')
       if (scriptIndex >= 0) scriptContentAtSpawnTime = readFileSync(encoderArgs[scriptIndex + 1], 'utf8')
       return fakeEncoder(s) as any
     }) as ExportDependencies['spawn']
@@ -408,7 +474,7 @@ describe('renderVideo', () => {
       operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 2_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
-    const scriptIndex = encoderArgs.indexOf('-filter_complex_script')
+    const scriptIndex = encoderArgs.indexOf('-/filter_complex')
     expect(scriptIndex).toBeGreaterThan(-1)
     expect(encoderArgs).not.toContain('-filter_complex')
     expect(encoderArgs[scriptIndex + 1].startsWith(root)).toBe(true)
@@ -436,7 +502,7 @@ describe('renderVideo', () => {
     const spawn: ExportDependencies['spawn'] = ((executable, args, s) => {
       if (executable === tools.exportHost!.executable) return fakeHost(s, () => pngFrame(1)) as any
       const encoderArgs = args as string[]
-      const graph = encoderArgs.includes('-filter_complex_script') ? readFileSync(encoderArgs[encoderArgs.indexOf('-filter_complex_script') + 1], 'utf8') : encoderArgs[encoderArgs.indexOf('-filter_complex') + 1]
+      const graph = encoderArgs.includes('-/filter_complex') ? readFileSync(encoderArgs[encoderArgs.indexOf('-/filter_complex') + 1], 'utf8') : encoderArgs[encoderArgs.indexOf('-filter_complex') + 1]
       const match = /lut3d=file='([^']+)'/.exec(graph)
       if (!match) console.error('GRAPH:', graph)
       expect(match).not.toBeNull()

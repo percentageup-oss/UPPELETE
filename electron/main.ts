@@ -35,6 +35,13 @@ import { registerAlignmentIpc } from './alignmentIpc'
 import { appMenuTemplate } from './appMenu'
 import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
 
+// Display name for menus, the About panel and the dock. userData stays at the original 'caption-studio' folder so
+// downloaded models, caches, logs and stored secrets survive the rename.
+const userDataPath = app.getPath('userData')
+app.setName('KathaCut')
+app.setPath('userData', userDataPath)
+app.setAboutPanelOptions({ applicationName: 'KathaCut', credits: 'Your local AI video toolkit.' })
+
 // Must run before the app is ready. Marks the scheme as fetchable from any page origin (dev
 // server included) and as a secure context, without weakening default webSecurity/CSP elsewhere.
 protocol.registerSchemesAsPrivileged([
@@ -80,7 +87,7 @@ function createWindow() {
     minWidth: 940,
     minHeight: 680,
     backgroundColor: '#090b10',
-    title: 'Caption Studio',
+    title: 'KathaCut',
     icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

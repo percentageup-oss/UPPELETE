@@ -193,6 +193,8 @@ export function ShortcutReference() {
       <div><dt>Alt+click</dt><dd>Select one side of a linked pair; edits then affect only that clip</dd></div>
       <div><dt>Q / W</dt><dd>Trim the start / end of the selected clip (or every clip under the playhead) to the playhead; ripple or overwrite follows the toolbar toggle</dd></div>
       <div><dt>I / O</dt><dd>Mark the In / Out of the export range at the playhead; Shift+I / Shift+O jump to them, X clears the range. Playback stops at Out</dd></div>
+      <div><dt>⌘/Ctrl+C, ⌘/Ctrl+V</dt><dd>Copy the selected caption, clip, text or zoom region, then paste a clone of it</dd></div>
+      <div><dt>Alt+drag (Option+drag on Mac)</dt><dd>On the timeline, drag a clip or zoom region to clone it; the original stays put</dd></div>
       <div><dt>⌘/Ctrl+Z</dt><dd>Undo</dd></div>
       <div><dt>⌘/Ctrl+Shift+Z or Ctrl+Y</dt><dd>Redo</dd></div>
       <div><dt>⌘/Ctrl+O</dt><dd>Open project</dd></div>

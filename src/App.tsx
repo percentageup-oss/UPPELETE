@@ -5,6 +5,7 @@ import { formatFromMedia } from './core/format'
 import type { ExportSettings } from './export/settings'
 import { untimedTokenCount } from './core/wordTiming'
 import { parseEditedTimestamp } from './core/time'
+import { diagnosticSummary } from './core/exportDiagnostic'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { validateCaptions, type ValidationIssue } from './core/captionCommands'
@@ -112,6 +113,7 @@ import { TextOverlayActor } from './captions/TextOverlayActor'
 import { defaultTextOverlay } from './core/textCommands'
 import { textAnchorAt, type TextAnchor } from './core/textPlacement'
 import { TextStageInput } from './TextStageInput'
+import brandIcon from './assets/brand/icon-dark.png'
 
 type Notice = { tone: 'info' | 'error' | 'warning'; text: string } | null
 type SaveStatus = { kind: 'saved'; at: number } | { kind: 'saving' } | { kind: 'error'; message: string }
@@ -191,6 +193,9 @@ export default function App() {
   // One selection for every kind of timeline item (one ID namespace). `selectedCueId` keeps every
   // caption read site unchanged.
   const [selection, setSelection] = useState<Selection | null>(null)
+  // Ctrl/Cmd+C snapshots which item to clone by reference; Ctrl/Cmd+V re-resolves it against the
+  // live project so a paste after further edits (or the original's deletion) fails cleanly.
+  const [clipboardItem, setClipboardItem] = useState<{ kind: 'cue' | 'clip' | 'text' | 'zoomRegion'; id: string } | null>(null)
   const [editingText, setEditingText] = useState<{ id: string; selectAll: boolean } | null>(null)
   const selectedCueId = selection?.kind === 'cue' ? selection.id : null
   const setSelectedId = (id: string | null) => setSelection(id === null ? null : { kind: 'cue', id })
@@ -395,11 +400,10 @@ export default function App() {
   })
 
   const errorText = (error: unknown) => error instanceof Error ? error.message : 'The operation failed.'
-  /** A job's `diagnostic` carries the encoder's own stderr or a worker exit code. It used to be
-   * dropped here, leaving a one-line message that could not be acted on; a trimmed tail of it now
-   * reaches the notice, and the whole of it is in the export log. */
+  /** A job's `diagnostic` carries the encoder's own stderr or a worker exit code. Its root-cause
+   * lines (not FFmpeg's per-stream teardown) reach the notice; the whole of it is in the export log. */
   const exportErrorText = (error: JobStructuredError) => {
-    const diagnostic = error.diagnostic?.trim().split('\n').filter(Boolean).slice(-2).join(' ').slice(-300)
+    const diagnostic = diagnosticSummary(error.diagnostic)
     return diagnostic ? `${error.message} — ${diagnostic}` : error.message
   }
   const migrationNote = (from: 1 | 2 | 3 | 4 | null) => from ? ` and migrated from schema ${from} — autosave starts once you save it in the current format (⌘/Ctrl+S)` : ''
@@ -1176,11 +1180,11 @@ export default function App() {
     const { linkId: _linkId, ...unlinkedClip } = clip as Clip & { linkId?: string }
     return runCommand({ type: 'clip-add', clip: { ...unlinkedClip, id: crypto.randomUUID(), trackId, timelineStartUs: startUs } as Clip, track, idPrefix: crypto.randomUUID() })
   }
-  const duplicateSelectedClip = () => {
-    if (!clipBase) return
-    const offset = clipBase.kind !== 'audio' && clipBase.kind !== 'adjustment' && clipBase.rect ? { ...clipBase, rect: { ...clipBase.rect, x: Math.min(clipBase.rect.x + 24, 1080 - clipBase.rect.width), y: clipBase.rect.y + 24 } } as Clip : clipBase
+  const duplicateClip = (clip: Clip) => {
+    const offset = clip.kind !== 'audio' && clip.kind !== 'adjustment' && clip.rect ? { ...clip, rect: { ...clip.rect, x: Math.min(clip.rect.x + 24, 1080 - clip.rect.width), y: clip.rect.y + 24 } } as Clip : clip
     placeCopy(offset)
   }
+  const duplicateSelectedClip = () => { if (clipBase) duplicateClip(clipBase) }
   const splitClips = () => {
     const onlyIds = clipBase && currentUs > clipBase.timelineStartUs && currentUs < clipEndUs(clipBase) ? [clipBase.id] : undefined
     runCommand({ type: 'clip-split', atUs: Math.round(currentUs), clipIds: onlyIds, idPrefix: crypto.randomUUID(), ...(onlyIds && unlinkedSelection ? { unlinked: true } : {}) }, () => null)
@@ -1211,6 +1215,9 @@ export default function App() {
   }
   const moveZoomRegion = (zoomId: string, startUs: number) => runCommand({ type: 'zoom-region-move', zoomId, startUs: Math.max(0, Math.round(startUs)) })
   const trimZoomRegion = (zoomId: string, edge: 'start' | 'end', deltaUs: number) => runCommand({ type: 'zoom-region-trim', zoomId, edge, deltaUs: Math.round(deltaUs) })
+  // `zoom-region-add`'s own `clampZoomRegion` already finds the copy a free spot in the one lane
+  // (the nearest gap next to the original), so a duplicate needs no offset math of its own.
+  const duplicateZoomRegion = (region: ZoomRegion) => runCommand({ type: 'zoom-region-add', region: { ...region, id: crypto.randomUUID() } })
   const draftZoomRegion = (zoomId: string, changes: ZoomRegionChanges) => setZoomRegionDraft({ id: zoomId, changes })
   const commitZoomRegion = (zoomId: string, changes: ZoomRegionChanges) => { setZoomRegionDraft(null); return runCommand({ type: 'zoom-region-update', zoomId, changes }) }
   // Blur has no shared lane (regions may overlap, `blurRegion.ts`), so — unlike zoom — `blur-update`
@@ -1559,6 +1566,35 @@ export default function App() {
     return deleteSelectedCue()
   }
 
+  const copySelection = () => {
+    if (!selection) return setNotice({ tone: 'error', text: 'Select an item before copying it.' })
+    if (selection.kind !== 'cue' && selection.kind !== 'clip' && selection.kind !== 'text' && selection.kind !== 'zoomRegion') {
+      return setNotice({ tone: 'error', text: 'This item can’t be copied yet.' })
+    }
+    setClipboardItem({ kind: selection.kind, id: selection.id })
+  }
+
+  const pasteClipboard = () => {
+    if (!clipboardItem) return setNotice({ tone: 'error', text: 'Copy an item before pasting it.' })
+    if (clipboardItem.kind === 'cue') {
+      const cue = project.cues.find((item) => item.id === clipboardItem.id)
+      if (!cue) return setNotice({ tone: 'error', text: 'That caption no longer exists.' })
+      runCommand({ type: 'duplicate', cueId: cue.id, duplicateId: crypto.randomUUID() })
+    } else if (clipboardItem.kind === 'clip') {
+      const clip = project.clips.find((item) => item.id === clipboardItem.id)
+      if (!clip) return setNotice({ tone: 'error', text: 'That clip no longer exists.' })
+      duplicateClip(clip)
+    } else if (clipboardItem.kind === 'zoomRegion') {
+      const region = project.zoomRegions.find((item) => item.id === clipboardItem.id)
+      if (!region) return setNotice({ tone: 'error', text: 'That zoom region no longer exists.' })
+      duplicateZoomRegion(region)
+    } else {
+      const overlay = project.textOverlays.find((item) => item.id === clipboardItem.id)
+      if (!overlay) return setNotice({ tone: 'error', text: 'That text item no longer exists.' })
+      runCommand({ type: 'text-duplicate', textId: overlay.id, duplicateId: crypto.randomUUID() })
+    }
+  }
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const action = shortcutForEvent(event, event.target)
@@ -1593,6 +1629,8 @@ export default function App() {
         'previous-cue': () => selectAdjacentCue(-1),
         'next-cue': () => selectAdjacentCue(1),
         'show-shortcuts': () => setSettingsTab('shortcuts'),
+        'copy-item': copySelection,
+        'paste-item': pasteClipboard,
       }
       actions[action]()
     }
@@ -1700,7 +1738,13 @@ export default function App() {
         { id: 'ctx-text-duplicate', label: 'Duplicate', onSelect: () => runCommand({ type: 'text-duplicate', textId: target.id, duplicateId: crypto.randomUUID() }) },
         { id: 'ctx-text-delete', label: 'Delete', onSelect: () => runCommand({ type: 'text-delete', textId: target.id }), shortcut: 'Del' },
       ]
-      case 'zoomRegion': return [{ id: 'ctx-zoom-delete', label: 'Delete', onSelect: () => runCommand({ type: 'zoom-region-delete', zoomId: target.id }), shortcut: 'Del' }]
+      case 'zoomRegion': {
+        const region = project.zoomRegions.find((item) => item.id === target.id)
+        return [
+          { id: 'ctx-zoom-duplicate', label: 'Duplicate', onSelect: () => { if (region) duplicateZoomRegion(region) } },
+          { id: 'ctx-zoom-delete', label: 'Delete', onSelect: () => runCommand({ type: 'zoom-region-delete', zoomId: target.id }), shortcut: 'Del' },
+        ]
+      }
       case 'blur': return [{ id: 'ctx-blur-delete', label: 'Delete', onSelect: () => runCommand({ type: 'blur-delete', blurId: target.id }), shortcut: 'Del' }]
       case 'effect': return [{ id: 'ctx-effect-delete', label: 'Delete', onSelect: () => runCommand({ type: 'effect-delete', effectId: target.id }), shortcut: 'Del' }]
       case 'empty': {
@@ -1759,7 +1803,7 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar">
-      <div className="brand"><img className="brand-mark" src="./favicon.png" alt="" /><div><strong>Caption Studio</strong><small title={project.title}>{project.title}</small></div></div>
+      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="KathaCut — Your local AI video toolkit." aria-label="KathaCut">Katha<span>Cut</span></strong><small title={project.title}>{project.title}</small></div></div>
       <div className="toolbar toolbar-workflow" role="group" aria-label="Captions">
         {pickedVideo && <AlignmentControls fingerprint={pickedVideo.fingerprint} mediaReady={pickedReady}
           cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}
@@ -2027,7 +2071,7 @@ export default function App() {
       editMode={editMode} onEditMode={setEditMode}
       onSelectClip={(clipId, options) => setSelection({ kind: 'clip', id: clipId, ...(options?.unlinked ? { unlinked: true } : {}) })}
       onClipMove={moveClip} onClipClone={(clip) => placeCopy(clip, clip.timelineStartUs, clip.trackId)} onClipTrim={trimClip}
-      onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomTrim={trimZoomRegion}
+      onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomClone={(region) => { runCommand({ type: 'zoom-region-add', region }) }} onZoomTrim={trimZoomRegion}
       onSelectBlur={(blurId) => setSelection({ kind: 'blur', id: blurId })} onBlurMove={moveBlurRegion} onBlurTrim={trimBlurRegion}
       onSelectEffect={(effectId) => setSelection({ kind: 'effect', id: effectId })} onEffectMove={moveEffect} onEffectTrim={trimEffect}
       onSelectText={(textId) => setSelection({ kind: 'text', id: textId })}

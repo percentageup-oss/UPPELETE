@@ -232,7 +232,11 @@ caption edges (which fixes schema 4's note that snapping computed in source time
 placed within the piece of the caption each block shows.
 
 Keys: Delete lifts the selected clip, Shift+Delete ripple-deletes it, ⌘/Ctrl+B splits clips at the
-playhead. **Per-clip thumbnails** go through `src/timeline/thumbnailQueue.ts`: cached by
+playhead, ⌘/Ctrl+C copies the selected clip/caption/text item and ⌘/Ctrl+V pastes a clone of it
+(`shortcuts.ts`'s `copy-item`/`paste-item`, dispatched through `App.tsx`'s `copySelection`/
+`pasteClipboard` against a `{ kind, id }` reference re-resolved at paste time — a caption clone gets
+the `duplicate` `CaptionCommand`, mirroring the existing `clip-add`/`text-duplicate` copy paths).
+**Per-clip thumbnails** go through `src/timeline/thumbnailQueue.ts`: cached by
 `(fingerprint, source range, count)`, at most 8 requests in flight, and only for clips intersecting
 the viewport — `THUMBNAIL_MAX_COUNT` bounds one request, not how many a long timeline makes.
 
@@ -451,7 +455,7 @@ the single scalar `output.width / 1080`.
 `workers/media/exportArguments.ts` becomes a deterministic builder over the manifest, snapshot-tested
 on both the argument array and the filtergraph string. Regions and clips are sorted by
 `(startUs, id)` before labels are assigned so output is independent of project order. When the
-graph exceeds a few KiB it is written to the job directory and passed with `-filter_complex_script`
+graph exceeds a few KiB it is written to the job directory and passed with `-/filter_complex <file>` (FFmpeg 7+; FFmpeg 8 removed `-filter_complex_script`)
 (Windows argv limit). Skeleton, in sequence time `t` after `setpts=PTS-STARTPTS`:
 
 ```

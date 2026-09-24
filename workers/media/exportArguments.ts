@@ -2,6 +2,7 @@ import {
   exportBitrate, exportFrameCountFor, exportOutputDurationUs, normalizeManifest, usDecimal,
   type ExportManifestV1, type ExportManifestV2, type ExportManifestV3, type ExportPlan, type ManifestBlurRegion, type ManifestClip,
 } from '../../src/export/plan'
+import { DEFAULT_VIDEO_ENCODER, videoEncoderArguments, videoEncoderPixelFormat, type VideoEncoderId } from '../../src/core/exportEncoder'
 import { zoomScaleCropExpressions } from '../../src/core/zoomRegion'
 import { activeMask } from '../../src/core/layerMask'
 import type { Fill, LayerMask } from '../../src/core/edit'
@@ -203,16 +204,19 @@ export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?
 
 export type ExportEncoding = { videoBitrateKbps: number }
 /** Without `encoding` this is exactly the historical `-b:v` class, keeping the parity snapshot byte-identical. */
-function videoRateArguments(width: number, height: number, encoding?: ExportEncoding): string[] {
-  return ['-b:v', encoding ? `${encoding.videoBitrateKbps}k` : exportBitrate(width, height)]
+/** Target bitrate in FFmpeg's spelling: the user's setting, else the resolution ladder. The encoder block adds the rest. */
+function videoBitrate(width: number, height: number, encoding?: ExportEncoding): string {
+  return encoding ? `${encoding.videoBitrateKbps}k` : exportBitrate(width, height)
 }
 
 /**
  * `filterComplexScriptPath` is set by the caller when the assembled graph is too large for argv
  * (the Windows limit `docs/EDITING.md` calls out) — it writes `exportFilterGraph`'s string to that
- * file and this passes `-filter_complex_script` instead of inlining it with `-filter_complex`.
+ * file and this passes `-/filter_complex <file>` instead of inlining it with `-filter_complex`. The `-/`
+ * prefix (FFmpeg 7+, the export minimum) reads an option's value from a file; FFmpeg 8 removed the
+ * older `-filter_complex_script` spelling, which fails there as an unrecognized option.
  */
-export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string, encoding?: ExportEncoding): string[] {
+export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string, encoding?: ExportEncoding, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
   const rate = `${plan.frameRate.numerator}/${plan.frameRate.denominator}`
   const edits = manifest ? normalizeManifest(manifest) : undefined
   const outputDurationUs = exportOutputDurationUs(plan, edits)
@@ -224,9 +228,9 @@ export function exportArguments(inputPath: string, outputPath: string, plan: Exp
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', '-ss', usDecimal(plan.range.startUs),
     // FFmpeg autorotates on decode, so `[0:v]` is already display-oriented; `-noautorotate` is never emitted.
     '-autorotate', '-i', inputPath, '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...clipInputs,
-    ...(filterComplexScriptPath ? ['-filter_complex_script', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
+    ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
-    '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-profile:v', 'high', ...videoRateArguments(plan.width, plan.height, encoding), '-pix_fmt', 'yuv420p',
+    ...videoEncoderArguments(videoEncoder, videoBitrate(plan.width, plan.height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),
     '-r', rate, '-fps_mode', 'cfr', '-frames:v', String(exportFrameCountFor(outputDurationUs, plan.frameRate)), '-t', duration,
     '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', outputPath]
 }
@@ -315,7 +319,7 @@ function maskInputIndexes(manifest: ExportManifestV3): { clip: Map<string, numbe
 }
 
 /** Quotes a file path for a literal FFmpeg filter option value (e.g. `lut3d=file=…`), never a shell —
- * this graph is always written to `filtergraph.txt` and passed via `-filter_complex_script`. Single
+ * this graph is always written to `filtergraph.txt` and passed via `-/filter_complex`. Single
  * quotes protect the path's own `:` (a Windows drive letter, and the filter graph's own key=value
  * separator) without per-character escaping; only a literal backslash or single quote inside the path
  * needs its own escape. */
@@ -608,7 +612,7 @@ function inputArguments(manifest: ExportManifestV3, rate: string): string[] {
   })
 }
 
-export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = [], preparedGraph?: ExportFilterGraph): string[] {
+export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = [], preparedGraph?: ExportFilterGraph, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
   const graph = preparedGraph ?? exportFilterGraphV3(manifest, hasAudioByInput)
@@ -619,9 +623,9 @@ export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string
   const plan: ExportPlan = { width, height, frameRate, range: { startUs: 0, endUs: manifest.sequenceDurationUs } }
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', ...inputArguments(manifest, rate),
     '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...maskInputArguments,
-    ...(filterComplexScriptPath ? ['-filter_complex_script', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
+    ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
-    '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-profile:v', 'high', ...videoRateArguments(width, height, encoding), '-pix_fmt', 'yuv420p',
+    ...videoEncoderArguments(videoEncoder, videoBitrate(width, height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),
     '-r', rate, '-fps_mode', 'cfr', '-frames:v', String(exportFrameCountFor(exportOutputDurationUs(plan, manifest), frameRate)), '-t', usDecimal(manifest.sequenceDurationUs),
     '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', outputPath]
 }

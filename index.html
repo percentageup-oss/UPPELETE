@@ -6,9 +6,12 @@
     <meta name="color-scheme" content="dark" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' media: blob:; img-src 'self' data: blob: media:; connect-src 'self' ws: http://localhost:* media:" />
     <link rel="icon" type="image/png" href="./favicon.png" />
-    <title>Caption Studio</title>
+    <title>KathaCut</title>
   </head>
   <body>
+    <div id="splash" role="status" aria-label="Loading KathaCut" style="position:fixed;inset:0;background:#090b10">
+      <div class="splash-inner"><img src="/src/assets/brand/logo-dark.png" alt="KathaCut — Your local AI video toolkit." /><div class="splash-bar"></div></div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

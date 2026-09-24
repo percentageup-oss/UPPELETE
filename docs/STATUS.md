@@ -1,5 +1,75 @@
 # Status
 
+## 2026-09-24 — Windows export froze at 46% with no message
+
+**Cause (not yet confirmed).** Reported: a Windows export stopped at 46% and stayed there. The frame loop had no deadline on any step. It waited on the host for a PNG and on FFmpeg to accept one, so a process that stayed alive but stopped making progress froze the bar without an error. Two gaps made this possible. (1) The host's 15 s paint deadline started only after `window.x1.render` returned, so a page render that never settled blocked the host. (2) After encoding, the worker also waited without limit for the host to exit. That wait would hang if Electron on Windows misses stdin EOF. This could not be reproduced here, so which process stalled at 46% is still unknown.
+
+**Changes.** Each frame step now has a 60 s stall deadline (`FRAME_STALL_MS`). A stall fails the export with `Export stalled at frame N of T: the caption renderer returned no frame…` or `…the h264_mf encoder accepted no frame…`, and attaches that process's stderr tail as the diagnostic. `ownedProcess` exposes `diagnostic()` for this. The host's deadline now covers the page render as well as the paint. After FFmpeg finishes, the host gets 2 s to exit and is then reaped. Files: `workers/media/export.ts`, `workers/media/exportProcesses.ts`, `scripts/export-frame-transport.mjs`, plus 3 tests in `export.test.ts`.
+
+**Verification (Linux only).** `tsc --noEmit` is clean and `build-export.mjs` builds. With `process.platform` stubbed to darwin, `workers/media` passes 138 tests (135 before, plus 3 new). Run unstubbed on Linux, the renderVideo tests stop at the encoder gate as they did before (14 fails before, 17 with the new tests). Nothing was run on Windows.
+
+**Limitations.** This makes the hang fail with a named cause; it does not fix the root cause. A frame that legitimately takes over 60 s would now fail.
+
+**Next.** Re-run the same export on Windows. It should now fail within about a minute and name the renderer or the encoder. Use that message and the `export` log line in `%APPDATA%\caption-studio\logs\export.log` to fix the root cause.
+
+## 2026-09-24 — Windows export: "[aost#0:1/aac] Terminating thread with return code -22"
+
+**Cause.** The AAC lines were FFmpeg's teardown, not the fault. On this machine (RTX 3070 Ti, driver 591.86) FFmpeg 9.0.2's NVENC needs API 13.1 (driver 610+), so the probe correctly rejected it and selection fell back to `h264_mf`. The probe was a bare `-c:v h264_mf` encode, which passed. The real export adds `-hw_encoding 1 … -pix_fmt yuv420p`, and the hardware Media Foundation encoder rejects yuv420p (`format negotiation failed (1/0)` → `Error while opening encoder`). No video packets were written, so AAC and the muxer failed after it. The notice showed only the last two stderr lines.
+
+**Changes.** `videoEncoderPixelFormat` hands `h264_mf` NV12, which is the same 8-bit 4:2:0 and still reads back as yuv420p. VideoToolbox and NVENC keep yuv420p, and the VideoToolbox arrays are unchanged. `encoderProbeArguments` now uses the export's own encoder block and pixel format, so a passing probe means the real flags open. The export notice now shows the first root-cause lines of stderr with FFmpeg's teardown lines removed (`src/core/exportDiagnostic.ts`). Files: `src/core/exportEncoder.ts`, `workers/media/exportArguments.ts`, `src/App.tsx` (+ tests).
+
+**Verification (Windows 11, FFmpeg 9.0.2 Gyan build).** `h264_mf -hw_encoding 1 -rate_control cbr -pix_fmt nv12` with AAC encodes 1080×1920 and 1920×1080 to valid h264+aac MP4s, including a v3-shaped `amix` graph. The same flags with yuv420p reproduce the failure. The new probe passes. `tsc --noEmit` is clean. `vitest run` has 20 failures, the same 20 as without this change (export.test.ts, thumbnails, panels, mcp config); the 9 new tests pass.
+
+**Limitations.** No in-app export to a finished MP4 has been re-run yet. Output from MF is Constrained Baseline profile. macOS is not re-tested; its arguments are pinned by snapshots. NVENC still needs a driver of 610 or newer for FFmpeg 9.
+
+**Next.** Export from the app on Windows (v2 single clip and a v3 multi-track timeline).
+
+## 2026-09-24 — Windows export: "Caption renderer closed before completing a frame"
+
+**Changes.** The export host had never run on Windows; three Windows-only faults made it exit silently (code 0) before its first frame. (1) Electron's `process.stdin` reports `end` immediately, so the host quit; it now reads fd 0 with `fs.createReadStream`. (2) `Electron.exe` prints a stray `\r\n` to stdout at startup, which would corrupt PNG framing; `PngReader` drops it once before the first frame. (3) Windows clamps the `BrowserWindow` constructor size to the display work area (1380 px tall here), so paints never matched the composition; the host now calls `setContentSize` after creation, and empty 0×0 startup paints count as stale. Files: `scripts/export-host.mjs`, `scripts/export-frame-transport.mjs`, `workers/media/exportProcesses.ts` (+ test).
+
+**Verification (Windows 11).** Ran `dist-export/host.cjs` directly with a real frame request: 1080×1920 and 1440×2560 each return PNG bytes and no stderr. New `PngReader` test passes; `tsc --noEmit` clean. 15 tests in `workers/media` fail identically with and without this change (they fail before it too).
+
+**Limitations.** No full in-app export was run to a finished MP4. The host still lingers ~seconds after `app.exit(1)` on a frame failure (the worker kills it). The export log records only code and message, not the host diagnostic.
+
+**Next.** Re-run the 1440p export in the app; if it fails, the diagnostic should now name the frame.
+
+## 2026-09-24 — Windows `npm run dev` no longer needs bash
+
+**Changes.** `predev` ran `bash scripts/stop-stale.sh`. On Windows `bash` is the WSL launcher, so `.\dev.ps1` failed with `execvpe(/bin/bash) failed` when no distro was installed. The hook is now `node scripts/stop-stale.mjs`. On macOS/Linux it runs the unchanged `stop-stale.sh`. On Windows it lists processes via CIM, stops those whose command line contains this checkout's `node_modules\` path or that hold port 5173 with a command line inside the checkout, skips its own ancestors, and uses `taskkill /T /F`.
+
+**Verification (Windows 11).** With nothing stale, the hook exits 0. A Vite process started from `node_modules` was found and stopped. Not re-run on macOS; that path still only calls `bash stop-stale.sh` as before.
+
+**Limitations.** `tools:whisper` and `convert:hf-whisper` still need bash, and are not used by `dev.ps1`.
+
+**Next.** Continue the Windows export validation below.
+
+## 2026-09-24 — Rebrand to KathaCut
+
+**Changes.** The app is now **KathaCut** ("Your local AI video toolkit."). This covers the window/page title, the toolbar wordmark (bold "Katha", lighter accent "Cut", no space, "K" mark), the native app name and About panel (`app.setName`), the project file-dialog filter and the MCP overview tool text, plus the README heading. Internal identifiers stay as they were so existing installs keep working: the userData folder (pinned explicitly to the old `caption-studio` path, so models, caches, logs and secrets are kept), the `CAPTION_STUDIO_*` env vars, `caption-studio.local.json`, the `.cstudio`/`.captionstudio.json` project extensions, `window.captionStudio` and the npm package name.
+
+**Logo.** The source art is in `img/logo.png` and `img/logo-icon-only.png`. Their near-black parts are unreadable on the #090b10 UI, so dark-UI variants were made with ffmpeg: neutral pixels inverted, gradient kept, padding cropped. They are `src/assets/brand/logo-dark.png`, used for the launch splash in `index.html` (dismissed by `main.tsx` after ~0.7 s, with an indeterminate sweep and no progress figure), and `src/assets/brand/icon-dark.png`, used for the toolbar mark and favicon. `build/icon.png` (the icon on a white rounded tile, 1024²) is the window icon and the dev-run dock icon. The "Cut" in the wordmark uses the logo's pink→orange gradient.
+
+**Theme.** The UI accent moved from lime `#c8ff3d` to the logo's blue-violet, `#6a58fc`, sampled from the top of the diagonal stroke. It is now a set of `:root` tokens in `src/styles.css`: `--accent`, `--accent-hover`, `--accent-text` (#a597ff, for small text/icons on dark, where #6a58fc is too dim), `--on-accent` (white), `--accent-glow`, `--accent-wash`, `--accent-bg` and `--accent-border`. The inspector's `--ins-accent` points at these tokens. Two things stay as they were on purpose. Caption style defaults and templates (`src/captions/style.ts`, `templates.ts`) keep their lime/yellow, because they are video content, stored in projects and burned into exports. The green "agent running" chip keeps its live-status colour.
+
+**Verification.** `npm run typecheck`; `vitest run` (991 passed); `vite build` rewrites the splash and favicon asset URLs. macOS only.
+
+**Limitations.** Not checked in the GUI: the wordmark, the splash and the toolbar icon, the macOS app-menu/About name, and whether the dev-run dock name changes (unpackaged Electron may still show "Electron"). Older docs and tickets still say "Caption Studio". Packaging (D2) must set `productName: KathaCut` while keeping the userData path, and build `.icns`/`.ico` from `build/icon.png`.
+
+**Next.** Check the toolbar and About panel in a dev run. Then resume the Windows export validation below.
+
+## 2026-09-24 — Windows export (NVENC / Media Foundation) and `dev.ps1`
+
+Export no longer stops at macOS. See [ADR 0007](decisions/0007-windows-export-encoders.md).
+
+**Changes.** New `src/core/exportEncoder.ts` (encoder ids, per-platform candidates, exact argument blocks) and `workers/media/exportEncoderSelect.ts` (lists encoders, runs a real test encode, caches the winner). `exportArguments`/`exportArgumentsV3` take an optional encoder (default VideoToolbox, macOS output unchanged). `exportSupportFromConfiguration` keeps the strict profile on macOS and accepts FFmpeg >= 7 + PNG + NVENC/`h264_mf` elsewhere. `electron/exportIpc.ts` and the worker's `exportSupport` use the selection and log the chosen encoder. New root `dev.ps1` finds or downloads FFmpeg and whisper-cli, writes `caption-studio.local.json` without a BOM, and launches.
+
+**Verification (macOS only).** `npm run typecheck` and the full `npx vitest run` (110 files, 991 tests) pass, including new tests for the Windows gate, exact NVENC/MF arguments and the fallback order. Not run: any real export, `dev.ps1` (no PowerShell here), anything on Windows.
+
+**Limitations.** Windows is unvalidated: NVENC/`h264_mf` output, the FFmpeg/whisper download URLs and checksum handling, and PowerShell 5.1 behaviour are untested. FFmpeg comes from a rolling BtbN asset, so the checksum guards corruption only. whisper-cli uses the `b5130` build tag because v1.9.4 has no binaries. No Settings UI for the encoder (env `CAPTION_STUDIO_EXPORT_ENCODER` only). GPL FFmpeg builds are accepted for local use.
+
+**Next.** Run `.\dev.ps1` on the Windows PC and export once with NVENC and once with `CAPTION_STUDIO_EXPORT_ENCODER=h264_mf`; confirm `h264_nvenc` in the export log.
+
 ## 2026-09-24 — Signature looks, live look thumbnails, Match reference image
 
 **Changes**: Six new bundled looks (Cartel Dusk, Neon Assassin, Wanderlust Teal & Orange, Moody Matte, Cold Forest, Golden Drift) built on a new hue-band + matte extension of `Look` (`hues`, `fade`; Oklab helpers in `oklab.ts`). Film-look tiles now show the playhead frame (or a drawn sample scene) graded through each look. New "Match reference image…" in My LUTs derives a tone/color transfer from a picked still (`referenceMatch.ts`), previews it with a strength slider and saves a `.cube` via new `lut:save-generated` IPC, then adds it as a `lut` asset. Fixed `inspectLut` never registering LUTs in `inspectedMedia`, which made export throw "LUT … is missing" for any imported LUT. Looks are named for a genre, not a film or creator; the banned-name test now also rejects those names.
@@ -2996,3 +3066,35 @@ Completed: an iPhone ProRes 422 HQ 10-bit Apple Log `.mov` (1920×1080) previewe
 Verification: `tsc --noEmit`; `vitest run src/core src/app` (725 tests, new `shouldRequestPlaybackProxy` cases). Not run in the GUI with the real clip.
 
 Limitations: detection needs one load attempt of the original first; the proxy is ungraded Log (flat) until a Log→Rec.709 look/LUT is applied.
+
+## 2026-09-24 — Ctrl/Cmd+C, Ctrl/Cmd+V to clone a timeline item
+
+Completed: ⌘/Ctrl+C copies the selected timeline item (caption, clip or text overlay) and ⌘/Ctrl+V pastes a clone of it, on both macOS (⌘) and Windows/Linux (Ctrl) — `shortcuts.ts`'s `shortcutForEvent` unifies `ctrlKey`/`metaKey` into one `modifier`, so both platforms share the same routing with no platform branch needed. New `ShortcutAction`s `copy-item`/`paste-item`; `App.tsx` stores the copy as a `{ kind, id }` reference (not a snapshot) in new `clipboardItem` state, re-resolved against the live project at paste time, so pasting after the source was deleted fails with a clear notice instead of resurrecting stale data. Clips and text overlays already had duplicate logic (`duplicateSelectedClip`/`placeCopy`, the `text-duplicate` command) that paste now reuses (`duplicateSelectedClip` was split into a reusable `duplicateClip(clip)`); captions had none, so a new `duplicate` `CaptionCommand` (`captionCommands.ts`) was added, mirroring `text-duplicate`'s 250ms-offset-with-room-check approach but clamped instead of failed (a cue that already fills its video's duration lands on top of itself, which is a warning-only overlap, not an error) and generating fresh word IDs (`${duplicateId}-w${index}`) since word IDs must be unique project-wide, not just per-cue. Wired into the schema boundary (`editCommandSchema.ts`) for the MCP agent bridge.
+
+Verification (Windows 11): `npx tsc --noEmit -p .` clean. New/updated tests: `shortcuts.test.ts` (Ctrl and Cmd variants of C/V route correctly; still null in editable targets and with no modifier), `captionCommands.test.ts` (duplicate offsets timing/words correctly, clamps to video duration instead of failing, rejects a missing cue or reused ID), `editCommandSchema.test.ts` (`duplicate` covered by both the type-coverage check and a round-trip case). Full `npx vitest run`: 1521/1554 pass; the 20 failures (`EffectsPanel.test.tsx`, `TemplatesPanel.test.tsx`, `keynoteTemplates.test.tsx`, `electron/mcp/config.test.ts`, `workers/media/export.test.ts`, `workers/media/thumbnails.test.ts`) reproduce identically on this branch with the change stashed — confirmed pre-existing (mostly Windows path-separator and FFmpeg-host-script assumptions in an environment without the pinned FFmpeg build), not caused by this change.
+
+Limitations: not run in the actual app — no manual confirmation that copy/paste feels right at the UI level (e.g. pasting a clip picks a free track via existing `placementTrack` logic, which was not re-verified interactively here). Blur regions, zoom regions, effect regions and markers are not yet copyable (copy shows a "can't be copied yet" notice for those kinds) — no existing duplicate command for them to reuse; a future slice could add one. Repeated Ctrl+V always offsets from the *original* copied item's current position, not from the previous paste, so pasting the same cue/text twice in a row lands both copies at the same offset from the source (a minor stacking quirk, not a correctness issue — each copy still gets a unique ID). This is Windows-only verification so far; macOS ⌘ routing is covered by the unified `modifier` test but not run on real macOS hardware.
+
+Next: a manual GUI pass (ideally on both macOS and Windows) exercising copy/paste on a caption, a clip, and a text overlay, including cross-selection paste (copy A, select B, paste — should still clone A); consider extending copy/paste to blur/zoom/effect regions and markers if users ask for it.
+
+## 2026-09-24 — Export fails on FFmpeg 8: "Unrecognized option 'filter_complex_script'"
+
+Completed: exports whose filtergraph exceeds the 8 KiB argv limit (cuts, many clips) write it to `filtergraph.txt` and passed it with `-filter_complex_script`, which FFmpeg 7 deprecated and FFmpeg 8 removed — so on an 8.x build (e.g. gyan.dev 8.0 on Windows) FFmpeg rejected the argument list and the export failed immediately. `exportArguments`/`exportArgumentsV3` now pass `-/filter_complex <file>` (the generic "read this option's value from a file" prefix, present since FFmpeg 7.0, which is already the export minimum; the macOS pin 9.0.1 needs it too).
+
+Verification (Linux): `exportArguments.test.ts` and `exportArgumentsV3.test.ts` pass; `tsc --noEmit` clean. Checked by hand that FFmpeg 7.0.1 reads the graph file's contents as the `filter_complex` value when given `-/filter_complex <file>`. `export.test.ts` fails the same 17 tests with or without this change, because on Linux the encoder check stops the run before these arguments are built. Not run against a real FFmpeg 8 on Windows or macOS.
+
+Next: re-run the failing Windows export to confirm.
+
+## 2026-09-24 — Export stall: "Fragmented shaping run" on title-motion text
+
+Completed. Two separate bugs caused one export failure on Windows ("Export stalled at frame 1395 of 2996: the caption renderer returned no frame for 60 s — export host: frame 135 failed … Fragmented shaping run"):
+- **The shaping check rejected a correct frame.** The export harness requires every leaf under `[data-caption-line]` to hold the full line text. `TitleMotionLine` paints nothing for words whose motion has not started yet: the motion's first frame, or a later line waiting its turn. That leaves the line with no text, which the check reported as fragmented. The check now lives in `src/export/shaping.ts` (`isFragmentedLine`) and lets a line that painted nothing pass. A line split into words or graphemes still fails.
+- **A failed host hung the export for 60 s instead of failing it.** `ownedProcess` settled only on `close`, which waits for every holder of the stdio pipes. On Windows, Electron's helper processes can keep the host's pipes open after it exits. It now also watches `exit`: 500 ms later, if `close` has not come, it destroys the pipes and settles with the exit code and stderr. The PNG reader then ends at once and the host's own message is reported.
+
+Verification (Linux): `tsc --noEmit` clean.
+- New `src/export/shaping.test.ts`.
+- New `workers/media/exportProcesses.test.ts`, run with a real child process that exits 1 while a helper process keeps its pipes open. The test times out without the fix and passes with it.
+- `export.test.ts` passes 27/27, with and without the change, in a copy with `process.platform` set to `darwin`. On Linux it fails the same 17 tests as before, because the encoder check stops them first.
+- No Electron export host or real export was run, and nothing was tested on Windows or macOS.
+
+Next: re-run the failing Windows export. It should get past 46.47 s, or any other failure should now appear within about a second.
