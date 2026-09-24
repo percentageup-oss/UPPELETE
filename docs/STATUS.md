@@ -1,5 +1,37 @@
 # Status
 
+## 2026-09-24 — Windows export: "[aost#0:1/aac] Terminating thread with return code -22"
+
+**Cause.** The AAC lines were FFmpeg's teardown, not the fault. On this machine (RTX 3070 Ti, driver 591.86) FFmpeg 9.0.2's NVENC needs API 13.1 (driver 610+), so the probe correctly rejected it and selection fell back to `h264_mf`. The probe was a bare `-c:v h264_mf` encode, which passed. The real export adds `-hw_encoding 1 … -pix_fmt yuv420p`, and the hardware Media Foundation encoder rejects yuv420p (`format negotiation failed (1/0)` → `Error while opening encoder`). No video packets were written, so AAC and the muxer failed after it. The notice showed only the last two stderr lines.
+
+**Changes.** `videoEncoderPixelFormat` hands `h264_mf` NV12, which is the same 8-bit 4:2:0 and still reads back as yuv420p. VideoToolbox and NVENC keep yuv420p, and the VideoToolbox arrays are unchanged. `encoderProbeArguments` now uses the export's own encoder block and pixel format, so a passing probe means the real flags open. The export notice now shows the first root-cause lines of stderr with FFmpeg's teardown lines removed (`src/core/exportDiagnostic.ts`). Files: `src/core/exportEncoder.ts`, `workers/media/exportArguments.ts`, `src/App.tsx` (+ tests).
+
+**Verification (Windows 11, FFmpeg 9.0.2 Gyan build).** `h264_mf -hw_encoding 1 -rate_control cbr -pix_fmt nv12` with AAC encodes 1080×1920 and 1920×1080 to valid h264+aac MP4s, including a v3-shaped `amix` graph. The same flags with yuv420p reproduce the failure. The new probe passes. `tsc --noEmit` is clean. `vitest run` has 20 failures, the same 20 as without this change (export.test.ts, thumbnails, panels, mcp config); the 9 new tests pass.
+
+**Limitations.** No in-app export to a finished MP4 has been re-run yet. Output from MF is Constrained Baseline profile. macOS is not re-tested; its arguments are pinned by snapshots. NVENC still needs a driver of 610 or newer for FFmpeg 9.
+
+**Next.** Export from the app on Windows (v2 single clip and a v3 multi-track timeline).
+
+## 2026-09-24 — Windows export: "Caption renderer closed before completing a frame"
+
+**Changes.** The export host had never run on Windows; three Windows-only faults made it exit silently (code 0) before its first frame. (1) Electron's `process.stdin` reports `end` immediately, so the host quit; it now reads fd 0 with `fs.createReadStream`. (2) `Electron.exe` prints a stray `\r\n` to stdout at startup, which would corrupt PNG framing; `PngReader` drops it once before the first frame. (3) Windows clamps the `BrowserWindow` constructor size to the display work area (1380 px tall here), so paints never matched the composition; the host now calls `setContentSize` after creation, and empty 0×0 startup paints count as stale. Files: `scripts/export-host.mjs`, `scripts/export-frame-transport.mjs`, `workers/media/exportProcesses.ts` (+ test).
+
+**Verification (Windows 11).** Ran `dist-export/host.cjs` directly with a real frame request: 1080×1920 and 1440×2560 each return PNG bytes and no stderr. New `PngReader` test passes; `tsc --noEmit` clean. 15 tests in `workers/media` fail identically with and without this change (they fail before it too).
+
+**Limitations.** No full in-app export was run to a finished MP4. The host still lingers ~seconds after `app.exit(1)` on a frame failure (the worker kills it). The export log records only code and message, not the host diagnostic.
+
+**Next.** Re-run the 1440p export in the app; if it fails, the diagnostic should now name the frame.
+
+## 2026-09-24 — Windows `npm run dev` no longer needs bash
+
+**Changes.** `predev` ran `bash scripts/stop-stale.sh`. On Windows `bash` is the WSL launcher, so `.\dev.ps1` failed with `execvpe(/bin/bash) failed` when no distro was installed. The hook is now `node scripts/stop-stale.mjs`. On macOS/Linux it runs the unchanged `stop-stale.sh`. On Windows it lists processes via CIM, stops those whose command line contains this checkout's `node_modules\` path or that hold port 5173 with a command line inside the checkout, skips its own ancestors, and uses `taskkill /T /F`.
+
+**Verification (Windows 11).** With nothing stale, the hook exits 0. A Vite process started from `node_modules` was found and stopped. Not re-run on macOS; that path still only calls `bash stop-stale.sh` as before.
+
+**Limitations.** `tools:whisper` and `convert:hf-whisper` still need bash, and are not used by `dev.ps1`.
+
+**Next.** Continue the Windows export validation below.
+
 ## 2026-09-24 — Rebrand to KathaCut
 
 **Changes.** The app is now **KathaCut** ("Your local AI video toolkit."). This covers the window/page title, the toolbar wordmark (bold "Katha", lighter accent "Cut", no space, "K" mark), the native app name and About panel (`app.setName`), the project file-dialog filter and the MCP overview tool text, plus the README heading. Internal identifiers stay as they were so existing installs keep working: the userData folder (pinned explicitly to the old `caption-studio` path, so models, caches, logs and secrets are kept), the `CAPTION_STUDIO_*` env vars, `caption-studio.local.json`, the `.cstudio`/`.captionstudio.json` project extensions, `window.captionStudio` and the npm package name.
@@ -3022,3 +3054,13 @@ Completed: an iPhone ProRes 422 HQ 10-bit Apple Log `.mov` (1920×1080) previewe
 Verification: `tsc --noEmit`; `vitest run src/core src/app` (725 tests, new `shouldRequestPlaybackProxy` cases). Not run in the GUI with the real clip.
 
 Limitations: detection needs one load attempt of the original first; the proxy is ungraded Log (flat) until a Log→Rec.709 look/LUT is applied.
+
+## 2026-09-24 — Ctrl/Cmd+C, Ctrl/Cmd+V to clone a timeline item
+
+Completed: ⌘/Ctrl+C copies the selected timeline item (caption, clip or text overlay) and ⌘/Ctrl+V pastes a clone of it, on both macOS (⌘) and Windows/Linux (Ctrl) — `shortcuts.ts`'s `shortcutForEvent` unifies `ctrlKey`/`metaKey` into one `modifier`, so both platforms share the same routing with no platform branch needed. New `ShortcutAction`s `copy-item`/`paste-item`; `App.tsx` stores the copy as a `{ kind, id }` reference (not a snapshot) in new `clipboardItem` state, re-resolved against the live project at paste time, so pasting after the source was deleted fails with a clear notice instead of resurrecting stale data. Clips and text overlays already had duplicate logic (`duplicateSelectedClip`/`placeCopy`, the `text-duplicate` command) that paste now reuses (`duplicateSelectedClip` was split into a reusable `duplicateClip(clip)`); captions had none, so a new `duplicate` `CaptionCommand` (`captionCommands.ts`) was added, mirroring `text-duplicate`'s 250ms-offset-with-room-check approach but clamped instead of failed (a cue that already fills its video's duration lands on top of itself, which is a warning-only overlap, not an error) and generating fresh word IDs (`${duplicateId}-w${index}`) since word IDs must be unique project-wide, not just per-cue. Wired into the schema boundary (`editCommandSchema.ts`) for the MCP agent bridge.
+
+Verification (Windows 11): `npx tsc --noEmit -p .` clean. New/updated tests: `shortcuts.test.ts` (Ctrl and Cmd variants of C/V route correctly; still null in editable targets and with no modifier), `captionCommands.test.ts` (duplicate offsets timing/words correctly, clamps to video duration instead of failing, rejects a missing cue or reused ID), `editCommandSchema.test.ts` (`duplicate` covered by both the type-coverage check and a round-trip case). Full `npx vitest run`: 1521/1554 pass; the 20 failures (`EffectsPanel.test.tsx`, `TemplatesPanel.test.tsx`, `keynoteTemplates.test.tsx`, `electron/mcp/config.test.ts`, `workers/media/export.test.ts`, `workers/media/thumbnails.test.ts`) reproduce identically on this branch with the change stashed — confirmed pre-existing (mostly Windows path-separator and FFmpeg-host-script assumptions in an environment without the pinned FFmpeg build), not caused by this change.
+
+Limitations: not run in the actual app — no manual confirmation that copy/paste feels right at the UI level (e.g. pasting a clip picks a free track via existing `placementTrack` logic, which was not re-verified interactively here). Blur regions, zoom regions, effect regions and markers are not yet copyable (copy shows a "can't be copied yet" notice for those kinds) — no existing duplicate command for them to reuse; a future slice could add one. Repeated Ctrl+V always offsets from the *original* copied item's current position, not from the previous paste, so pasting the same cue/text twice in a row lands both copies at the same offset from the source (a minor stacking quirk, not a correctness issue — each copy still gets a unique ID). This is Windows-only verification so far; macOS ⌘ routing is covered by the unified `modifier` test but not run on real macOS hardware.
+
+Next: a manual GUI pass (ideally on both macOS and Windows) exercising copy/paste on a caption, a clip, and a text overlay, including cross-selection paste (copy A, select B, paste — should still clone A); consider extending copy/paste to blur/zoom/effect regions and markers if users ask for it.

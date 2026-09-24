@@ -1,4 +1,5 @@
 import { app, BrowserWindow, net, protocol } from 'electron'
+import { createReadStream } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { MessageDecoder } from '../workers/media/wire.ts'
@@ -26,8 +27,11 @@ for (let i = 0; i < process.argv.length; i++) {
 let window, marker = 0, busy = false, framesRendered = 0
 const decoder = new MessageDecoder()
 const stop = () => { window?.destroy(); app.exit(0) }
-process.stdin.on('end', stop)
-process.stdin.on('error', stop)
+// Electron's `process.stdin` on Windows reports `end` immediately (the GUI-subsystem exe has no
+// console input), so the host would exit 0 before its first frame. Reading fd 0 directly works everywhere.
+const input = createReadStream(null, { fd: 0, autoClose: false })
+input.on('end', stop)
+input.on('error', stop)
 process.stdout.on('error', stop)
 process.on('SIGTERM', stop)
 process.on('SIGINT', stop)
@@ -40,6 +44,9 @@ async function render(value) {
       enableLargerThanScreen: true, transparent: true, backgroundColor: '#00000000',
       webPreferences: { offscreen: true, nodeIntegration: false, contextIsolation: true, sandbox: true,
         backgroundThrottling: false, partition: `export-${process.pid}` } })
+    // Windows clamps the constructor size to the display work area (1080x1920 on a 1080p screen
+    // becomes ~1380 tall); resizing afterwards is not clamped, so the paint matches the composition.
+    window.setContentSize(request.composition.width, request.composition.height)
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     window.webContents.on('will-navigate', (event) => event.preventDefault())
     window.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
@@ -68,7 +75,7 @@ function describeFailure(error, value) {
     : ''
   return `export host: frame ${framesRendered + 1} failed${at}, window ${window ? 'created' : 'not created'}: ${error instanceof Error ? error.message : String(error)}\n`
 }
-process.stdin.on('data', (chunk) => {
+input.on('data', (chunk) => {
   try {
     decoder.push(chunk, (value) => {
       if (busy) throw new Error('Only one frame may be in flight')

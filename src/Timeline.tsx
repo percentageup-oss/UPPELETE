@@ -66,6 +66,8 @@ type ZoomDrag = {
   kind: 'zoom'
   region: ZoomRegion
   mode: ZoomDragMode
+  /** Alt+drag on the body: the gesture places a copy and leaves the original where it is. */
+  clone: boolean
   originClientX: number
   pointerId: number
   contentWidthPx: number
@@ -144,6 +146,7 @@ type TimelineProps = {
   onCloseGap: (trackId: string, atUs: number) => void
   onSelectZoom?: (zoomId: string) => void
   onZoomMove?: (zoomId: string, startUs: number) => void
+  onZoomClone?: (region: ZoomRegion) => void
   onZoomTrim?: (zoomId: string, edge: 'start' | 'end', deltaUs: number) => void
   onSelectBlur?: (blurId: string) => void
   onBlurMove?: (blurId: string, startUs: number) => void
@@ -273,7 +276,9 @@ export function Timeline(props: TimelineProps) {
   const displayClips = clipPreview && drag?.kind === 'clip'
     ? drag.clone ? [...clips, clipPreview] : clips.map((clip) => clip.id === clipPreview.id ? clipPreview : partnerPreview.find((partner) => partner.id === clip.id) ?? clip)
     : clips
-  const displayZoomRegions = zoomPreview ? zoomRegions.map((region) => region.id === zoomPreview.id ? zoomPreview : region) : zoomRegions
+  const displayZoomRegions = zoomPreview
+    ? drag?.kind === 'zoom' && drag.clone ? [...zoomRegions, zoomPreview] : zoomRegions.map((region) => region.id === zoomPreview.id ? zoomPreview : region)
+    : zoomRegions
   const displayBlurRegions = blurPreview ? blurRegions.map((region) => region.id === blurPreview.id ? blurPreview : region) : blurRegions
   const displayEffects = effectPreview ? effects.map((effect) => effect.id === effectPreview.id ? effectPreview : effect) : effects
   const ticks = useRulerTicks(durationUs, zoom)
@@ -370,8 +375,10 @@ export function Timeline(props: TimelineProps) {
     event.stopPropagation()
     props.onSelectZoom?.(region.id)
     event.currentTarget.setPointerCapture(event.pointerId)
-    setDrag({ kind: 'zoom', region, mode, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
-    setZoomPreview(region)
+    const clone = mode === 'move' && event.altKey
+    const subject = clone ? { ...region, id: crypto.randomUUID() } : region
+    setDrag({ kind: 'zoom', region: subject, mode, clone, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setZoomPreview(subject)
   }
 
   const beginBlurDrag = (event: ReactPointerEvent<HTMLElement>, region: BlurRegion, mode: BlurDragMode) => {
@@ -499,7 +506,7 @@ export function Timeline(props: TimelineProps) {
     } else if (drag.kind === 'zoom') {
       // Zoom regions are sequence-timed with no clip/media clamping — the simplest of the three: a
       // free translation/resize (`previewZoomDrag`) clamped into the gap around every other region.
-      const dragged = zoomRegions.find((region) => region.id === drag.region.id)
+      const dragged = drag.clone ? drag.region : zoomRegions.find((region) => region.id === drag.region.id)
       if (!dragged) { setDrag(null); setZoomPreview(null); return }
       const { mode } = drag
       const others = zoomRegions.filter((region) => region.id !== dragged.id)
@@ -524,6 +531,8 @@ export function Timeline(props: TimelineProps) {
         const { preview } = previewAt(event.clientX)
         setDrag(null); setZoomPreview(null); setSnapGuideUs(null)
         if (!commit) return
+        // A bare Alt+click must not stamp a copy: the clamp would slide it beside the original.
+        if (drag.clone) { if (sequenceDelta(event.clientX) !== 0) callbacks.current.onZoomClone?.(preview); return }
         if (mode === 'move') {
           if (preview.startUs !== dragged.startUs) callbacks.current.onZoomMove?.(dragged.id, preview.startUs)
         } else {

@@ -232,7 +232,11 @@ caption edges (which fixes schema 4's note that snapping computed in source time
 placed within the piece of the caption each block shows.
 
 Keys: Delete lifts the selected clip, Shift+Delete ripple-deletes it, ⌘/Ctrl+B splits clips at the
-playhead. **Per-clip thumbnails** go through `src/timeline/thumbnailQueue.ts`: cached by
+playhead, ⌘/Ctrl+C copies the selected clip/caption/text item and ⌘/Ctrl+V pastes a clone of it
+(`shortcuts.ts`'s `copy-item`/`paste-item`, dispatched through `App.tsx`'s `copySelection`/
+`pasteClipboard` against a `{ kind, id }` reference re-resolved at paste time — a caption clone gets
+the `duplicate` `CaptionCommand`, mirroring the existing `clip-add`/`text-duplicate` copy paths).
+**Per-clip thumbnails** go through `src/timeline/thumbnailQueue.ts`: cached by
 `(fingerprint, source range, count)`, at most 8 requests in flight, and only for clips intersecting
 the viewport — `THUMBNAIL_MAX_COUNT` bounds one request, not how many a long timeline makes.
 

@@ -26,6 +26,7 @@ export type CaptionCommand =
   | { type: 'update-time'; cueId: string; startUs: number; endUs: number }
   | { type: 'shift-time'; cueId: string; deltaUs: number }
   | { type: 'add'; cue: Cue }
+  | { type: 'duplicate'; cueId: string; duplicateId: string }
   | { type: 'delete'; cueId: string }
   | { type: 'delete-word'; cueId: string; target: WordTarget }
   | { type: 'split'; cueId: string; atUs: number; rightCueId: string }
@@ -267,6 +268,26 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     if (cues.some((cue) => cue.id === command.cue.id)) return fail('Cue IDs must be unique.')
     cues = [...cues, command.cue].sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
     selectedId = command.cue.id
+  } else if (command.type === 'duplicate') {
+    const cue = cues.find((item) => item.id === command.cueId)
+    if (!cue) return fail('The selected cue no longer exists.')
+    if (cues.some((item) => item.id === command.duplicateId)) return fail('Cue IDs must be unique.')
+    const length = cue.endUs - cue.startUs
+    const bound = boundFor(cue.mediaAssetId, boundContext(project, context))
+    // Nudge the copy forward like text-duplicate does, but clamp to the video's own duration so the
+    // copy never trips the media-bounds error; a cue that already fills its bound lands on top of it.
+    const offset = bound != null ? Math.min(250_000, Math.max(0, bound - cue.endUs)) : 250_000
+    const startUs = cue.startUs + offset
+    const duplicate: Cue = {
+      ...cue,
+      id: command.duplicateId,
+      startUs,
+      endUs: startUs + length,
+      // Word IDs must stay unique across the whole project (validateCaptions), not just within a cue.
+      words: cue.words.map((word, index) => ({ ...word, id: `${command.duplicateId}-w${index}`, startUs: word.startUs + offset, endUs: word.endUs + offset })),
+    }
+    cues = [...cues, duplicate].sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
+    selectedId = duplicate.id
   } else if (command.type === 'delete') {
     if (!removeCue(command.cueId)) return fail('The selected cue no longer exists.')
   } else if (command.type === 'delete-word') {

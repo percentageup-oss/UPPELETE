@@ -40,6 +40,7 @@ const updateText = z.strictObject({ type: z.literal('update-text'), cueId: itemI
 const updateTime = z.strictObject({ type: z.literal('update-time'), cueId: itemId, startUs: z.number().int().nonnegative(), endUs: z.number().int().positive() })
 const shiftTime = z.strictObject({ type: z.literal('shift-time'), cueId: itemId, deltaUs: z.number().int() })
 const addCue = z.strictObject({ type: z.literal('add'), cue: cueSchema })
+const duplicateCue = z.strictObject({ type: z.literal('duplicate'), cueId: itemId, duplicateId: itemId })
 const deleteCue = z.strictObject({ type: z.literal('delete'), cueId: itemId })
 const deleteWord = z.strictObject({ type: z.literal('delete-word'), cueId: itemId, target: wordTarget })
 const split = z.strictObject({ type: z.literal('split'), cueId: itemId, atUs: z.number().int().nonnegative(), rightCueId: itemId })
@@ -72,7 +73,7 @@ const moveFromWordToNext = z.strictObject({ type: z.literal('move-from-word-to-n
 const moveThroughWordToPrevious = z.strictObject({ type: z.literal('move-through-word-to-previous'), cueId: itemId, wordId: z.string().min(1) })
 
 export const captionCommandSchema = z.discriminatedUnion('type', [
-  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, deleteCue, deleteWord, split, mergeNext,
+  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
   resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
 ])
@@ -257,7 +258,7 @@ export const itemCommandSchema = z.discriminatedUnion('type', [
  * `applyEditCommand`. `word-action-menu`/App.tsx-issued commands never cross this boundary and
  * stay on the plain TypeScript types; this is deliberately not the same object as `EditCommand`. */
 export const editCommandSchema = z.discriminatedUnion('type', [
-  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, deleteCue, deleteWord, split, mergeNext,
+  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
   resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,

@@ -19,6 +19,12 @@ describe('exportArguments', () => {
       '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', '/out/dest.mp4.tmp',
     ])
   })
+  it('hands Media Foundation NV12 (its hardware encoders reject yuv420p) and leaves the graph unchanged', () => {
+    const mf = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, undefined, undefined, undefined, 'h264_mf')
+    const vt = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true)
+    expect(mf[mf.indexOf('-pix_fmt') + 1]).toBe('nv12')
+    expect(mf[mf.indexOf('-filter_complex') + 1]).toBe(vt[vt.indexOf('-filter_complex') + 1])
+  })
   it('uses an explicit video bitrate only when encoding is given', () => {
     const args = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, undefined, undefined, { videoBitrateKbps: 12000 })
     expect(args[args.indexOf('-b:v') + 1]).toBe('12000k')

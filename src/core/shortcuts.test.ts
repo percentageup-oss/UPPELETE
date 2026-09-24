@@ -37,6 +37,15 @@ describe('shortcut routing', () => {
     expect(shortcutForEvent(key('Backspace', { shiftKey: true }), null)).toBe('ripple-delete')
   })
 
+  it('routes Cmd/Ctrl+C and Cmd/Ctrl+V to copy/paste on both macOS and Windows/Linux', () => {
+    expect(shortcutForEvent(key('c', { metaKey: true }), null)).toBe('copy-item')
+    expect(shortcutForEvent(key('C', { ctrlKey: true }), null)).toBe('copy-item')
+    expect(shortcutForEvent(key('v', { metaKey: true }), null)).toBe('paste-item')
+    expect(shortcutForEvent(key('V', { ctrlKey: true }), null)).toBe('paste-item')
+    expect(shortcutForEvent(key('c'), null)).toBeNull()
+    expect(shortcutForEvent(key('c', { metaKey: true }), { tagName: 'INPUT' } as unknown as EventTarget)).toBeNull()
+  })
+
   it('leaves shortcut keys alone in text, timestamp, and contenteditable fields', () => {
     const textarea = { tagName: 'TEXTAREA' } as unknown as EventTarget
     const input = { tagName: 'INPUT' } as unknown as EventTarget

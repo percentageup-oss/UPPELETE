@@ -20,7 +20,7 @@ const cue = (id: string): Cue => ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 
  * a new command variant that is added there but not mirrored in `editCommandSchema.ts` fails this
  * test instead of silently reaching the MCP agent bridge unvalidated. */
 const CAPTION_COMMAND_TYPES = [
-  'toggle-emphasis', 'estimate-words', 'update-text', 'update-time', 'shift-time', 'add', 'delete', 'delete-word',
+  'toggle-emphasis', 'estimate-words', 'update-text', 'update-time', 'shift-time', 'add', 'duplicate', 'delete', 'delete-word',
   'split', 'merge-next', 'regroup', 'regroup-many', 'set-timeline-display', 'set-display', 'set-caption-display',
   'apply-template', 'set-motion-override', 'reset-motion-overrides', 'set-placement-override', 'reset-placement-overrides',
   'line-break-before-word', 'split-before-word', 'move-from-word-to-next', 'move-through-word-to-previous',
@@ -55,6 +55,7 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'update-time', command: { type: 'update-time', cueId: 'c1', startUs: 0, endUs: 2 * US } },
     { name: 'shift-time', command: { type: 'shift-time', cueId: 'c1', deltaUs: -500_000 } },
     { name: 'add', command: { type: 'add', cue: cue('c-new') } },
+    { name: 'duplicate', command: { type: 'duplicate', cueId: 'c1', duplicateId: 'c1-copy' } },
     { name: 'delete', command: { type: 'delete', cueId: 'c1' } },
     { name: 'delete-word (wordId)', command: { type: 'delete-word', cueId: 'c1', target: { wordId: 'w1' } } },
     { name: 'delete-word (textStart)', command: { type: 'delete-word', cueId: 'c1', target: { textStart: 3 } } },

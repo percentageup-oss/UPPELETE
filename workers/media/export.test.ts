@@ -144,6 +144,13 @@ describe('PngReader', () => {
     expect(await reader.frame()).toEqual(a)
     expect(await reader.frame()).toEqual(b)
   })
+  it('drops the stray CRLF Electron.exe prints on Windows before the first frame, even split across chunks', async () => {
+    const a = pngFrame(1), b = pngFrame(2)
+    async function* chunks() { yield Buffer.from('\r'); yield Buffer.concat([Buffer.from('\n'), framed(a)]); yield framed(b) }
+    const reader = new PngReader(chunks())
+    expect(await reader.frame()).toEqual(a)
+    expect(await reader.frame()).toEqual(b)
+  })
   it('rejects a length header over the size limit', async () => {
     async function* chunks() { const header = Buffer.alloc(4); header.writeUInt32BE(65 * 1024 * 1024); yield header }
     await expect(new PngReader(chunks()).frame()).rejects.toMatchObject({ detail: { code: 'OUTPUT_LIMIT' } })

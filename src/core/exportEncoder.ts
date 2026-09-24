@@ -42,6 +42,15 @@ export function videoEncoderArguments(encoder: VideoEncoderId, bitrate: string):
   }
 }
 
+/**
+ * Pixel format handed to the encoder. Hardware Media Foundation encoders only negotiate NV12 and
+ * fail to open on yuv420p ("format negotiation failed"); NV12 is the same 8-bit 4:2:0, so the MP4
+ * is unchanged. Everything else keeps yuv420p (VideoToolbox's arguments are snapshot-pinned).
+ */
+export function videoEncoderPixelFormat(encoder: VideoEncoderId): string {
+  return encoder === 'h264_mf' ? 'nv12' : 'yuv420p'
+}
+
 function scaleBitrate(bitrate: string, factor: number): string {
   const match = /^(\d+(?:\.\d+)?)([kKmM]?)$/.exec(bitrate)
   if (!match) return bitrate
@@ -49,7 +58,12 @@ function scaleBitrate(bitrate: string, factor: number): string {
   return `${Number.isInteger(value) ? value : Math.round(value * 10) / 10}${match[2]}`
 }
 
-/** Arguments for a tiny real test encode; success proves the driver/GPU/build can actually encode. */
+/**
+ * Arguments for a tiny real test encode with the export's own encoder block and pixel format, so a
+ * passing probe means the real export's flags open too (a bare `-c:v h264_mf` probe passed while
+ * `-hw_encoding 1` with yuv420p then failed mid-export).
+ */
 export function encoderProbeArguments(encoder: VideoEncoderId): string[] {
-  return ['-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2:r=10', '-frames:v', '2', '-pix_fmt', 'yuv420p', '-c:v', encoder, '-f', 'null', '-']
+  return ['-v', 'error', '-nostdin', '-f', 'lavfi', '-i', 'color=c=black:s=256x256:d=0.2:r=10', '-frames:v', '2',
+    ...videoEncoderArguments(encoder, '2M'), '-pix_fmt', videoEncoderPixelFormat(encoder), '-f', 'null', '-']
 }

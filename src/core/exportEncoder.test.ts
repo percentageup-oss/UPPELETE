@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encoderCandidates, encoderProbeArguments, listedVideoEncoders, videoEncoderArguments } from './exportEncoder'
+import { encoderCandidates, encoderProbeArguments, listedVideoEncoders, videoEncoderArguments, videoEncoderPixelFormat } from './exportEncoder'
 
 describe('exportEncoder', () => {
   it('orders candidates per platform', () => {
@@ -21,5 +21,15 @@ describe('exportEncoder', () => {
   it('probes with a tiny null encode', () => {
     expect(encoderProbeArguments('h264_nvenc')).toContain('h264_nvenc')
     expect(encoderProbeArguments('h264_nvenc').slice(-2)).toEqual(['null', '-'])
+  })
+  it('feeds hardware Media Foundation NV12 and keeps yuv420p elsewhere', () => {
+    expect(videoEncoderPixelFormat('h264_mf')).toBe('nv12')
+    expect(videoEncoderPixelFormat('h264_videotoolbox')).toBe('yuv420p')
+    expect(videoEncoderPixelFormat('h264_nvenc')).toBe('yuv420p')
+  })
+  it('probes with the same encoder flags and pixel format as a real export', () => {
+    const probe = encoderProbeArguments('h264_mf').join(' ')
+    expect(probe).toContain(videoEncoderArguments('h264_mf', '2M').join(' '))
+    expect(probe).toContain('-pix_fmt nv12')
   })
 })

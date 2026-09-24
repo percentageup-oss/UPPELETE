@@ -45,8 +45,14 @@ export class PngReader {
     }
     return output
   }
+  private started = false
   async frame(): Promise<Buffer> {
-    const size = (await this.read(4)).readUInt32BE()
+    let header = await this.read(4)
+    // Electron.exe on Windows writes a stray "\r\n" to stdout at startup. As a length it would be
+    // >200 MiB, above the frame limit, so it is unambiguous: drop it once, before the first frame.
+    if (!this.started && header[0] === 0x0d && header[1] === 0x0a) header = Buffer.concat([header.subarray(2), await this.read(2)])
+    this.started = true
+    const size = header.readUInt32BE()
     if (size < 8 || size > 64 * 1024 * 1024) throw failure('OUTPUT_LIMIT', 'Caption PNG exceeded its limit')
     const bytes = await this.read(size)
     if (!bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw failure('TOOL_FAILED', 'Invalid caption PNG')
