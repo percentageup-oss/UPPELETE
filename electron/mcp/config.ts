@@ -24,7 +24,11 @@ export const MCP_CONFIG_FILE = 'mcp.json'
 /** What the top-bar "Agent connected" indicator sees — never the token. */
 export type McpStatus = { enabled: boolean; running: boolean; port: number | null; connections: number }
 /** What the Settings "AI agents" tab sees — the token, to show and copy once. */
-export type McpSettingsView = McpStatus & { token: string | null }
+export type McpSettingsView = McpStatus & {
+  token: string | null
+  /** The ready-to-paste `claude_desktop_config.json` entry for the stdio connector, or null when the connector script is not present (a dev run before `npm run build:electron`). */
+  desktopConfig: string | null
+}
 
 function newToken(): string {
   return randomBytes(32).toString('base64url')

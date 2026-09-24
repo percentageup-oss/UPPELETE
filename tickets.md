@@ -82,7 +82,9 @@ Model suggestions use the models currently available in Codex:
 ### Phase J — Local agent control (docs/MCP.md)
 
 - [x] **MCP1** Command schema/protocol, renderer bridge, MCP server core (get_project, get_captions, edit, set_caption_style, apply_template, list_style_options, seek, select, undo, redo), timeline markers, Settings tab, top-bar indicator
-- [ ] **MCP2** Vision loop and media: render_frame/prepare-snapshot, import_media, import_image_data, place_at_word, alpha-clip export support, Claude Desktop stdio bridge
+- [x] **MCP2a** Transcript-to-edit loop (code complete, not run end to end in the app): get_transcript, list_creative_options, add_title, auto_edit prompt, render_frame, match_color_to_reference, Claude Desktop stdio connector
+- [x] **MCP2b** Media: import_media (path/clipboard/base64/https url, covers import_image_data) and place_at_word plus editorial guidance and style recipes (code complete, not run end to end in the app)
+- [ ] **MCP2c** Alpha-clip (`hasAlpha`) export support, and animatable image clips (Ken Burns, pop/slide-in, border, shadow, tilt) with a Vox-collage style recipe
 - [ ] **MCP3** Job tools (transcribe, detect_silence, export_video, export_srt, get_job, cancel_job, save_project) and repo-shipped Claude Code skills (B-roll/ComfyUI, filler/Remotion recipes)
 - [ ] **MCP4** (separate, later) schema-6 text/title clip type and built-in parametric fillers rendered by the shared caption renderer, for in-app "Vox-style" edits without Node/Remotion
 

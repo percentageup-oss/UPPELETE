@@ -172,7 +172,13 @@ export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error',
         <pre><code>{claudeCodeCommand}</code></pre>
         <button type="button" onClick={() => copy(claudeCodeCommand)}>Copy command</button>
       </div>}
-      <p className="agent-note">Claude Desktop support is not available yet.</p>
+      {settings.desktopConfig
+        ? <div className="agent-snippet">
+          <p>Connect from Claude Desktop — add this to <code>claude_desktop_config.json</code> (Settings → Developer → Edit Config), merge it with any existing <code>mcpServers</code>, then restart Claude Desktop. KathaCut must be open with agent access on:</p>
+          <pre><code>{settings.desktopConfig}</code></pre>
+          <button type="button" onClick={() => copy(settings.desktopConfig!)}>Copy config</button>
+        </div>
+        : <p className="agent-note">The Claude Desktop connector is not built yet — run <code>npm run build:electron</code>.</p>}
     </>}
   </section>
 }

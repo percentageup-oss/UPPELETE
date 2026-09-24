@@ -24,7 +24,8 @@ vi.mock('electron', () => ({
 }))
 
 let directory: string
-let registerMcpIpc: () => void
+const unusedInspect = async (): Promise<never> => { throw new Error('inspect is not used in these tests') }
+let registerMcpIpc: (options: { inspectFile: () => Promise<never> }) => void
 let initMcp: () => Promise<void>
 let closeMcp: () => Promise<void>
 
@@ -39,7 +40,7 @@ beforeEach(async () => {
   registerMcpIpc = module.registerMcpIpc
   initMcp = module.initMcp
   closeMcp = module.closeMcp
-  registerMcpIpc()
+  registerMcpIpc({ inspectFile: unusedInspect })
 })
 afterEach(async () => {
   await closeMcp()
@@ -105,7 +106,7 @@ describe('registerMcpIpc', () => {
     mocks.handlers.clear()
     const module = await import('./ipc')
     registerMcpIpc = module.registerMcpIpc; initMcp = module.initMcp; closeMcp = module.closeMcp
-    registerMcpIpc()
+    registerMcpIpc({ inspectFile: unusedInspect })
     await initMcp()
     expect(await invoke<McpStatus>('agent:status')).toMatchObject({ enabled: true, running: true })
   })

@@ -1,10 +1,12 @@
 # Local agent control (MCP)
 
-Status: **core implemented 2026-09-21** — Claude Code can connect over HTTP today and drive
-inspection, editing, caption styling, playhead/selection and undo/redo. Media import, frame
-snapshots, transcription/export/job tools, the Claude Desktop stdio bridge and repo-shipped
-recipes are **not implemented yet** (see "Not implemented yet" below). This document is the
-contract; `tickets.md`'s MCP tickets track the remaining slices.
+Status: **core, the transcript-to-edit loop, judgment guidance and media import implemented 2026-09-24** — an agent can read the
+transcript in timeline time, look up valid looks/backgrounds/titles/effects, apply zooms, titles,
+backgrounds, effects and grades as one undo step, look at the result (`render_frame`), and grade a
+video to match a reference picture (`match_color_to_reference`), bring in images (`import_media`) and place them on a spoken word (`place_at_word`). Claude Code connects over HTTP;
+Claude Desktop connects through the bundled stdio connector. Job tools (transcribe, export, save)
+are **not implemented yet** (see "Not implemented yet"). This document is
+the contract; `tickets.md`'s MCP tickets track the remaining slices.
 
 ## Why
 
@@ -53,7 +55,7 @@ unauthenticated request gets a 401 and touches nothing else.
 
 ## Time bases and units
 
-Every tool speaks **integer microseconds**. Two time bases exist in this app
+Every tool speaks **integer microseconds**. `get_transcript` is the one to plan edits from: it is already in sequence time. Two time bases exist in this app
 (`docs/EDITING.md` "Schema 5"), and tools are explicit about which one they use:
 - **Captions** (`get_captions`) are in the **source time of the video they name** (`mediaAssetId`).
   `get_captions`'s `range` filters a cue's own stored `startUs`/`endUs` — not sequence time, since a
@@ -74,6 +76,13 @@ Composition space is always **1080 units wide** by `1080 / aspect` tall (`COMPOS
 | `set_caption_style` | Patches `{motion?, motionSpeed?, appearance?}` onto the current style (read via an internal `get_project`-equivalent call first) and applies it project-wide, exactly like the Style panel. |
 | `apply_template` | Applies one of the five built-in caption templates by id. |
 | `list_style_options` | Motions, installed font choices, built-in templates, and every appearance field's valid range/enum, generated from the real zod schema — no separate source of truth to drift. |
+| `get_transcript` | The transcript in **sequence** time (after cuts and speed changes), so it lines up with clips, zooms, effects and titles; `words: true`, `range`, paging. Reports `omitted` cues that fall inside removed ranges. Prefer this over `get_captions` when planning edits. |
+| `list_creative_options` | Looks, background presets, title treatments, and JSON Schemas for zoom regions, effects, text animations, backgrounds and grades — generated from the real zod schemas plus the same constants the UI uses. Every look, background, title and effect also carries `mood`/`useWhen`/`avoidWhen`, and the result adds `effectGuidance`, `zoomGuidance` and `styleRecipes` (see "Editorial judgment"). |
+| `import_media` | Brings an image (or audio/video) into the project from exactly one of: `path`, `fromClipboard`, `imageBase64` (≤ 5 MB) or `url` (public https, ≤ 25 MB). Images are identified by content, not extension; the same picture twice reuses one asset. With `placement` an image is also placed at `sequenceUs` in the same undo step. Bytes that did not come from a path are saved content-addressed to `<userData>/agent-media/`. |
+| `place_at_word` | Places an already-imported image at a spoken word or phrase (`text` + optional `occurrence`, or `cueId` + `wordIndex`), in sequence time, as one undo step. Reports `timing: ESTIMATED` when the word's timing is not aligned, and fails when the word is inside a removed range. |
+| `add_title` | One animated title from a built-in treatment (`title-*` templates) at sequence times, one undo step. |
+| `render_frame` | Up to 6 preview frames (as JPEG images, ≤1024 px) at sequence times: what the user sees, including zooms, titles, effects, grade and captions. Seeks the playhead. Needs the window visible. |
+| `match_color_to_reference` | Derives a LUT from a reference picture (`imagePath`, `fromClipboard`, or small `imageBase64`) against the frame at `sequenceUs` and adds it as one adjustment layer (one undo step). Reuses `src/color/referenceMatch.ts`. The LUT is saved silently to `<userData>/generated-luts/`. |
 | `seek` | Moves the playhead (sequence µs). |
 | `select` | Selects a cue/clip/blur/marker, or clears the selection. |
 | `undo` / `redo` | The same project history every ⌘/Ctrl+Z uses. |
@@ -96,29 +105,64 @@ in chat. `edit` creates/updates/deletes them like any other item (`marker-add`/`
   Autosave applies only when the project already has a path (existing behavior, unchanged).
 - Agent-produced caption text carries `textSource: 'user'`, so a later retranscription protects it
   exactly like a human correction (AGENTS.md: corrections are authoritative).
-- No tool opens a native dialog, reads an arbitrary file, or exposes model downloads, the Gemini
-  key, or app settings beyond what is listed above.
+- No tool opens a native dialog or exposes model downloads, the Gemini key, or app settings beyond
+  what is listed above. The one tool that reads a file, `match_color_to_reference`, accepts only an
+  absolute path to a png/jpg/webp/gif/bmp of at most 25 MB, uses it solely to derive a grade, and
+  never returns its pixels; the clipboard is read only when that call asks for it.
+- The server's `instructions` and the `auto_edit` prompt (`EDITING_GUIDE` in `electron/mcp/tools.ts`)
+  tell an agent to read the transcript, look at sampled frames, pick a style recipe, map beats to
+  tools, batch into one undo step and verify with `render_frame`.
+- `import_media` never overwrites a user file and never sends project data anywhere. `path` must be an
+  absolute image/audio/video path (the media probe, not the extension, decides what it is). `url` is the
+  one network call the app makes on an agent's behalf: https only, no credentials, no IP literals or
+  local names, each redirect re-validated, ≤ 25 MB, 20 s timeout, and the bytes must be a real
+  png/jpeg/webp/gif/bmp by magic number. It does **not** defend against a hostname that resolves to a
+  private address (DNS rebinding); the fetched bytes are only decoded as an image and never returned.
+  Image licensing is the user's responsibility; the guide tells the agent to name the source.
+
+## Editorial judgment
+
+The agent is expected to choose, not to be told. `src/core/editorialGuidance.ts` holds `mood`,
+`useWhen` and `avoidWhen` for every background preset, look, title treatment and effect kind (plus zoom
+guidance), and `src/core/styleRecipes.ts` holds five coherent packages (Tech explainer, Retro/nostalgia,
+Corporate clean, Energetic shorts, Calm storytelling). Both are served by `list_creative_options`.
+`editorialGuidance.test.ts` fails when a catalog entry has no guidance or a recipe names an id that does
+not exist, so guidance cannot drift. `EDITING_GUIDE` tells the agent to sample frames before planning,
+commit to one recipe, map transcript beats to tools (e.g. a moving grid for tech bridges, a short VHS
+only on a nostalgia beat, images on named things), keep density restrained, and report what it did and
+why. The guidance is advice; whether a given model applies it well is not something the app can enforce.
 - The renderer bridge serializes one request at a time; a hung or closed project window fails the
   in-flight call with an honest error rather than hanging forever (`RendererBridge`'s timeout/cancel).
 
+## Claude Desktop connector
+
+Claude Desktop starts local MCP servers as stdio child processes, so `electron/mcp-stdio.ts`
+(bundled to `dist-electron/mcp-stdio.cjs`) adapts stdio to the app's loopback endpoint. It reads the
+app's own `mcp.json` (port + token) on each launch, forwards JSON-RPC unchanged in both directions
+(`electron/mcp/stdioBridge.ts`), holds no state and adds no tools. The app's executable runs it as
+plain Node with `ELECTRON_RUN_AS_NODE=1`, so no separate Node install is needed. **Settings → AI
+agents** shows the exact `claude_desktop_config.json` entry for this machine; KathaCut must be open
+with agent access on, and Claude Desktop restarted after the config is added. If the app is closed or
+access is off, the connector says so on stderr and requests fail with a clear error.
+
 ## Not implemented yet
 
-These are real gaps, not just unlisted tools — tracked as separate `tickets.md` entries:
+Tracked as `tickets.md` entries:
 
-- **`render_frame`** (a captured preview PNG for Claude's vision loop — "does this match the
-  reference image?") and the `prepare-snapshot` renderer request it needs (frame-exact readiness,
-  `capturePage`) are not wired up. `useAgentBridge`'s dispatcher already has the request kind
-  reserved and returns an honest "not available yet" error if asked.
-- **`import_media` / `import_image_data`** (bringing a path or a pasted image into the project as
-  an asset) do not exist yet, so an agent cannot place new media — only edit what is already
-  imported.
-- **`place_at_word`** and alpha-clip (`hasAlpha`) export support for word-anchored fillers/overlays
-  are not implemented.
 - **Jobs** (`transcribe`, `detect_silence`, `export_video`, `export_srt`, `get_job`, `cancel_job`,
-  `save_project`) are not exposed over MCP.
-- **Claude Desktop**: no stdio bridge (`mcp-stdio.cjs`) exists yet, so only Claude Code (HTTP) can
-  connect today; the Settings tab says so plainly rather than showing a config snippet for a file
-  that does not exist.
+  `save_project`) are not exposed over MCP, so an agent cannot transcribe a video that has no
+  captions yet.
+- Alpha-clip (`hasAlpha`) export support for word-anchored fillers/overlays. `place_at_word` places
+  still images only (not video or audio), and `import_media` places images only.
+- **Vox-style image motion** (Ken Burns pan/zoom, pop/slide-in entrances, paper border, drop shadow,
+  tilt, highlighted words) needs animatable image clips, which the schema does not have yet: image
+  clips are static (position, opacity, fit, mask). Planned as the next slice with a "Vox collage"
+  recipe.
+- Claude Desktop cannot pass the bytes of an image attached in chat to a tool. It can give
+  `import_media` a public `url`, or you can copy the image and have it use `fromClipboard`; otherwise it
+  can only grade by eye with `edit` and check with `render_frame`.
+- Packaged builds: the connector relies on `ELECTRON_RUN_AS_NODE`; it works with the dev Electron
+  binary but has **not** been run from an installed KathaCut build.
 - No repo-shipped Claude Code skills yet for the B-roll/ComfyUI or Remotion-filler recipes below.
 
 ## Planned: word-anchored fillers and B-roll (external generators, not bundled)
@@ -153,7 +197,14 @@ rather than adding a bundled dependency:
 - `electron/mcp/config.ts` — token/port persistence.
 - `electron/mcp/rendererBridge.ts` — the one IPC round trip to the renderer.
 - `electron/mcp/server.ts` — the loopback HTTP + `StreamableHTTPServerTransport` + auth check.
-- `electron/mcp/tools.ts` — the registered tool set.
+- `electron/mcp/tools.ts` — the registered tool set, the `EDITING_GUIDE` and the `auto_edit` prompt.
+- `electron/mcp/referenceImage.ts` — pure path/size rules for reference pictures.
+- `electron/mcp/importMedia.ts` — pure rules and I/O for `import_media`: path/url validation, magic-number sniffing, capped fetch, atomic content-addressed save.
+- `src/core/wordAnchor.ts` — resolves a spoken word/phrase to sequence time for `place_at_word`.
+- `src/core/editorialGuidance.ts`, `src/core/styleRecipes.ts` — when-to-use guidance and style recipes served by `list_creative_options`.
+- `electron/mcp/stdioBridge.ts`, `electron/mcp-stdio.ts` — the Claude Desktop connector.
+- `src/core/creativeOptions.ts`, `src/core/backgroundPresets.ts` — the option catalogs.
+- `src/agent/framePaint.ts` — waits until a sought frame has actually painted before capture.
 - `electron/mcp/ipc.ts` — Settings-tab IPC (`agent:status`, `agent:settings-*`) and the app-lifetime
   start/stop/resume glue.
 - `src/SettingsDialog.tsx`'s `AgentSettings` — the Settings tab; `App.tsx`'s `agentStatus` state and
@@ -161,17 +212,28 @@ rather than adding a bundled dependency:
 
 ## Verification
 
-`npm run check` (strict TypeScript, tests, renderer build, Electron main/preload bundle, worker
-build) — **979 tests across 108 files** as of this slice. Notably real, not mocked: `electron/mcp/server.test.ts`
-starts an actual `startMcpServer` instance on a loopback port and drives it with the MCP SDK's own
-HTTP client (`tools/list`, `tools/call`, wrong/missing token → 401, input-schema rejection), and
-`electron/mcp/ipc.test.ts` exercises the real enable/disable/rotate/resume-after-restart lifecycle
-against a real server (only `electron`'s `app`/`BrowserWindow`/`ipcMain` are mocked). `useAgentBridge`'s
-request→response mapping and every editing-command schema round-trip are unit-tested directly.
+**What ran (Windows 11, 2026-09-24):** `tsc --noEmit` is clean. New unit tests pass: bridge dispatch
+for `get-transcript`/`prepare-snapshot`/`match-reference`, the creative-options catalogs, reference
+image rules, and `electron/mcp/server.test.ts` cases driving a real `startMcpServer` with the MCP SDK
+client for every new tool. `electron/mcp/stdioBridge.test.ts` pipes a real client through the bridge
+to a real server. The built `dist-electron/mcp-stdio.cjs` was run as a real child process by the SDK's
+stdio client against a real server (`tools/list` and `tools/call` succeeded), and starts under the dev
+Electron binary with `ELECTRON_RUN_AS_NODE=1`. Failures in the wider run are pre-existing and
+unrelated: `config.test.ts` (POSIX 0600 mode on Windows) and two `keynoteTemplates` tests, identical
+on a clean tree.
 
-**Not exercised in this slice:** the app was not launched interactively in this sandboxed
-environment, so no real Claude Code session was connected end to end, the Settings tab was not
-clicked through in a live window, and macOS/Windows packaging behavior is unverified here. The
-manual verification in the original plan (enable in Settings, `claude mcp add …`, restyle via
-`set_caption_style`, confirm the timeline/preview reflect it and ⌘Z reverts it) still needs to be
-run on an actual desktop build before this is called done end to end.
+**Not exercised:** the renderer-side handlers in `App.tsx` (`prepareSnapshot`, `matchReference`,
+`getTranscript`) and `capturePage` have only typecheck and the pure dispatch tests — no real window,
+video, Claude Code or Claude Desktop session ran. macOS is untested. Whether `match_color_to_reference`
+gives a pleasing grade on real footage is unjudged.
+
+**Judgment guidance and media import (Windows 11, 2026-09-24).** `tsc --noEmit` is clean. New unit tests pass:
+`editorialGuidance.test.ts` (coverage of every preset/look/title/effect, recipe ids), `wordAnchor.test.ts`
+(case/punctuation, phrases, occurrences, estimated timing, Malayalam NFC), `importMedia.test.ts` (magic
+numbers, path/url rules, redirects re-validated, size caps, atomic content-addressed save),
+`useAgentBridge.test.ts` (the two new request kinds and the preload schema), and `server.test.ts` cases
+driving a real server with the MCP SDK client for `import_media`, `place_at_word` and the guidance in
+`list_creative_options`. **Not exercised:** the renderer handlers `importInspected`/`placeImage` in
+`App.tsx` and `importSource` in `electron/mcp/ipc.ts` (clipboard, fetch, real probe) have only
+typecheck plus the tests above around them; no real window, footage, URL fetch, Claude Code or Claude
+Desktop session ran, and no exported video with an imported image was checked. macOS is untested.

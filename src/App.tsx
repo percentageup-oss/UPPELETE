@@ -11,7 +11,12 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { validateCaptions, type ValidationIssue } from './core/captionCommands'
 import { applyEditCommand, type CommandContext, type EditCommand } from './core/commands'
 import { validateItems } from './core/itemCommands'
-import { summarizeCue, summarizeProject, type CommandOutcome, type ProjectSummary } from './core/agentProtocol'
+import { summarizeCue, summarizeProject, type AgentRequest, type CommandOutcome, type ProjectSummary } from './core/agentProtocol'
+import { waitForFramePaint } from './agent/framePaint'
+import { NEUTRAL_GRADE } from './color/bake'
+import { loadReferencePixels } from './color/referenceImage'
+import { writeCube } from './color/cube'
+import { bakeMatch, deriveMatch } from './color/referenceMatch'
 import { useAgentBridge, type AgentBridgeHandlers } from './agent/useAgentBridge'
 import {
   activeClipsAt, activeCueAt, captionClips, clipEndUs, clipLengthUs, cuesInSequence, firstSequenceUsOf, sequenceDurationUs, sourceUsOfAssetAt,
@@ -57,7 +62,7 @@ import { LayersPanel } from './LayersPanel'
 import { defaultMaskBounds, itemStartUs, layerStackAt, type LayerRow } from './core/layerStack'
 import { defaultMask } from './core/layerMask'
 import type { MaskTarget } from './core/maskCommands'
-import { assetIdOf, type LayerMask, type MaskPathPoint, type MaskShape } from './core/edit'
+import { assetIdOf, gradeSchema, type LayerMask, type MaskPathPoint, type MaskShape } from './core/edit'
 import { paintAt } from './core/fill'
 import { CaptionStageEditor, type CaptionPlacementPatch } from './CaptionStageEditor'
 import { defaultOverlayRect } from './core/overlayDefaults'
@@ -1379,6 +1384,25 @@ export default function App() {
     if (next !== history) { projectRef.current = next.present; setHistory(next) }
     return summarizeAgentState(projectRef.current, selectionRef.current)
   }
+  /** An image clip (with the asset inline when it is new) placed by an agent: same default size and length as a dropped image, one `clip-add` so asset and clip undo together. */
+  const buildAgentImageClip = (asset: ProjectAsset, metadata: MediaMetadata | null, placement: Extract<AgentRequest, { kind: 'place-image' }>['placement'], inlineAsset?: ProjectAsset) => {
+    const startUs = Math.max(0, Math.round(placement.startUs))
+    const lengthUs = placement.durationUs ?? DEFAULT_IMAGE_CLIP_US
+    const { trackId, track } = placementTrack('image', { startUs, endUs: startUs + lengthUs }, placement.trackId)
+    const clip: Clip = { kind: 'image', id: crypto.randomUUID(), trackId, assetId: asset.id, timelineStartUs: startUs, sourceStartUs: 0, sourceEndUs: lengthUs,
+      rect: placement.rect ?? defaultOverlayRect(metadata, captionComposition), opacity: 1, fit: 'contain' }
+    const command: EditCommand = { type: 'clip-add', clip, asset: inlineAsset, track, idPrefix: crypto.randomUUID() }
+    return { clip, command }
+  }
+  /** `runCommands`, but a failure throws the real validation message (the bridge turns it into a tool error) instead of returning outcomes. */
+  const runAgentCommands = (commands: EditCommand[], what: string): ProjectSummary => {
+    const result = runCommands(commands)
+    if (result.failedIndex !== null) {
+      const failed = result.outcomes[result.failedIndex]
+      throw new Error(`${what} failed: ${failed && !failed.ok ? failed.errors.map((issue) => issue.message).join('; ') : 'unknown error'}`)
+    }
+    return result.state
+  }
   const agentHandlers: AgentBridgeHandlers = {
     getState: () => summarizeAgentState(projectRef.current, selectionRef.current),
     getCaptions: ({ range, cueIds }) => {
@@ -1387,11 +1411,82 @@ export default function App() {
         (!idSet || idSet.has(cue.id)) && (!range || (cue.startUs < range.endUs && cue.endUs > range.startUs)))
       return { cues, total: cues.length }
     },
+    getTranscript: () => {
+      const cues = cuesInSequence(projectRef.current.cues, captionClips(projectRef.current.tracks, projectRef.current.clips))
+      const kept = new Set(cues.map((cue) => cue.id.split(':')[0]))
+      return { cues, omitted: projectRef.current.cues.filter((cue) => !kept.has(cue.id)).length }
+    },
     runCommands,
     seek: (sequenceUs) => { seekTo(sequenceUs); return summarizeAgentState(projectRef.current, selectionRef.current) },
     select: (nextSelection) => { selectionRef.current = nextSelection; setSelection(nextSelection); return summarizeAgentState(projectRef.current, nextSelection) },
     undo: () => agentUndoRedo(undoHistory),
     redo: () => agentUndoRedo(redoHistory),
+    matchReference: async ({ imageBase64, mimeType, sequenceUs, startUs, endUs, strength, name }) => {
+      const before = projectRef.current
+      const at = Math.min(Math.max(0, Math.round(sequenceUs ?? clock.getUs())), durationUs)
+      const under = videoUnderPlayhead(at, before.tracks, before.clips)
+      if (!under || under.clip.kind !== 'video') throw new Error('No video clip plays at that time. Pass sequenceUs on a video clip so the match has a frame to start from.')
+      const frame = videoFrameRef.current
+      if (!frame) throw new Error('There is no preview to read a frame from.')
+      if (playback.playing) playback.pause()
+      seekTo(at)
+      if (!(await waitForFramePaint(frame, () => clock.getUs(), at))) throw new Error('The preview did not finish drawing that frame in time. Make sure the KathaCut window is visible, then retry.')
+      const source = captureFrame(playback.transport.elementFor(under.clip.trackId, under.clip.assetId) as HTMLVideoElement | null, 320)
+      if (!source) throw new Error('The frame could not be read from the video (still decoding, or an unsupported codec).')
+      const reference = await loadReferencePixels(`data:${mimeType};base64,${imageBase64}`)
+      const label = name ?? 'Reference match'
+      const cubeText = writeCube(bakeMatch(deriveMatch(source, reference), strength, 33, label))
+      const saved = await window.captionStudio?.saveGeneratedLut({ text: cubeText, name: label, defaultDir: null, silent: true })
+      if (!saved || !saved.ok) throw new Error(saved && !saved.ok ? saved.message : 'The LUT could not be saved.')
+      const { candidate } = saved
+      const known = findAssetByFingerprint(before.assets.filter((asset) => asset.kind === 'lut'), candidate.media)
+      const asset: ProjectAsset = known ?? { id: crypto.randomUUID(), kind: 'lut', ...candidate.media }
+      lut.register(asset.id, candidate.text!)
+      const range = { startUs: startUs ?? 0, endUs: endUs ?? sequenceDurationUs(before.clips) }
+      if (range.endUs <= range.startUs) throw new Error('The grade range is empty: endUs must be after startUs.')
+      const existingTrack = topAdjustmentTrackFor(before.tracks, before.clips, range)
+      const track = existingTrack ? undefined : newTrack('video')
+      const clip: Clip = { kind: 'adjustment', id: crypto.randomUUID(), trackId: existingTrack ?? track!.id, timelineStartUs: range.startUs, sourceStartUs: 0, sourceEndUs: range.endUs - range.startUs,
+        grade: gradeSchema.parse({ ...NEUTRAL_GRADE, input: { type: 'lut', assetId: asset.id } }) }
+      const commands: EditCommand[] = [...(known ? [] : [{ type: 'asset-add' as const, asset }]), { type: 'clip-add', clip, track, idPrefix: crypto.randomUUID() }]
+      const result = runCommands(commands)
+      if (result.failedIndex !== null) {
+        const failed = result.outcomes[result.failedIndex]
+        throw new Error(`The grade could not be added: ${failed && !failed.ok ? failed.errors.map((issue) => issue.message).join('; ') : 'unknown error'}`)
+      }
+      return { match: { lutName: candidate.media.name, lutPath: null, clipId: clip.id, startUs: range.startUs, endUs: range.endUs, sourceFrameUs: at }, state: result.state }
+    },
+    importInspected: ({ inspected, placement }) => {
+      if (placement && inspected.kind !== 'image') throw new Error('Only images can be placed on import. Import the file without a placement, then add it to the timeline.')
+      const current = projectRef.current
+      const existing = findAssetByFingerprint(current.assets.filter((asset) => asset.kind === inspected.kind), inspected.media)
+      const asset: ProjectAsset = existing ?? { id: crypto.randomUUID(), kind: inspected.kind, ...inspected.media }
+      media.register({ id: asset.id, kind: inspected.kind, fingerprint: inspected.media.fingerprint }, inspected.url)
+      const built = placement ? buildAgentImageClip(asset, inspected.media.metadata, placement, existing ? undefined : asset) : null
+      const commands: EditCommand[] = built ? [built.command] : existing ? [] : [{ type: 'asset-add', asset }]
+      const state = commands.length ? runAgentCommands(commands, 'The import') : summarizeAgentState(projectRef.current, selectionRef.current)
+      const imported = { assetId: asset.id, kind: inspected.kind, name: asset.name, alreadyInProject: Boolean(existing), clipId: built?.clip.id ?? null, startUs: built ? built.clip.timelineStartUs : null, endUs: built ? built.clip.timelineStartUs + (built.clip.sourceEndUs - built.clip.sourceStartUs) : null }
+      return { imported, state }
+    },
+    placeImage: ({ assetId, placement }) => {
+      const asset = projectRef.current.assets.find((candidate) => candidate.id === assetId)
+      if (!asset) throw new Error(`No asset "${assetId}" in the project. Call get_project for asset ids, or import_media first.`)
+      if (asset.kind !== 'image') throw new Error(`"${asset.name}" is a ${asset.kind}, not an image; only images can be placed this way.`)
+      const { clip, command } = buildAgentImageClip(asset, asset.metadata ?? null, placement)
+      const state = runAgentCommands([command], 'Placing the image')
+      return { placed: { clipId: clip.id, assetId, trackId: clip.trackId, startUs: clip.timelineStartUs, endUs: clip.timelineStartUs + (clip.sourceEndUs - clip.sourceStartUs) }, state }
+    },
+    prepareSnapshot: async (sequenceUs) => {
+      const frame = videoFrameRef.current
+      if (!frame) return null
+      if (stageView.scale !== 1) { setStageView({ scale: 1, x: 0, y: 0 }); await new Promise((resolve) => requestAnimationFrame(() => resolve(null))) }
+      const target = Math.min(Math.max(0, Math.round(sequenceUs)), durationUs)
+      if (playback.playing) playback.pause()
+      seekTo(target)
+      if (!(await waitForFramePaint(frame, () => clock.getUs(), target))) throw new Error('The preview did not finish drawing that frame in time. Make sure the KathaCut window is visible and the media is available, then retry.')
+      const { x, y, width, height } = frame.getBoundingClientRect()
+      return { x, y, width, height }
+    },
   }
   useAgentBridge(agentHandlers)
 

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { AgentRequest, AgentResponse, CaptionSummary, CommandOutcome, ProjectSummary } from '../core/agentProtocol'
+import type { AgentRequest, AgentResponse, CaptionSummary, CommandOutcome, ImportedMediaResult, MatchReferenceResult, PlacedImageResult, ProjectSummary } from '../core/agentProtocol'
 import { summarizeCue } from '../core/agentProtocol'
 import type { EditCommand } from '../core/commands'
 import type { Selection } from '../core/timelineItems'
@@ -22,11 +22,21 @@ export type GetCaptionsArgs = {
 export type AgentBridgeHandlers = {
   getState: () => ProjectSummary
   getCaptions: (args: GetCaptionsArgs) => { cues: Cue[]; total: number }
+  /** Cues in SEQUENCE time (`cuesInSequence`), plus how many cues fell entirely inside removed ranges. */
+  getTranscript: () => { cues: Cue[]; omitted: number }
   runCommands: (commands: EditCommand[]) => { outcomes: CommandOutcome[]; failedIndex: number | null; state: ProjectSummary }
   seek: (sequenceUs: number) => ProjectSummary
   select: (selection: Selection | null) => ProjectSummary
   undo: () => ProjectSummary
   redo: () => ProjectSummary
+  /** Seeks, waits until that frame has painted, and returns the preview frame's viewport rect (CSS px); null when there is no preview to capture. Rejects when the frame never settles. */
+  /** Derives a LUT from the reference picture against the frame at `sequenceUs`, and adds it as one adjustment layer in a single undo step. Rejects with a user-readable message. */
+  matchReference: (request: Extract<AgentRequest, { kind: 'match-reference' }>) => Promise<{ match: MatchReferenceResult; state: ProjectSummary }>
+  prepareSnapshot: (sequenceUs: number) => Promise<{ x: number; y: number; width: number; height: number } | null>
+  /** Registers a probed file as a project asset (reusing an identical one already there) and, for an image with a placement, adds it as a clip in the same undo step. Rejects with a user-readable message. */
+  importInspected: (request: Extract<AgentRequest, { kind: 'import-inspected' }>) => { imported: ImportedMediaResult; state: ProjectSummary }
+  /** Adds an image clip for an asset already in the project, as one undo step. Throws a user-readable message. */
+  placeImage: (request: Extract<AgentRequest, { kind: 'place-image' }>) => { placed: PlacedImageResult; state: ProjectSummary }
 }
 
 function paginate<T>(items: T[], limit: number | undefined, offset: number | undefined): { page: T[]; total: number } {
@@ -48,6 +58,12 @@ export async function dispatch(request: AgentRequest, handlers: AgentBridgeHandl
       const captions: CaptionSummary[] = page.map((cue) => summarizeCue(cue, request.words ?? false))
       return { id: request.id, ok: true, captions, total }
     }
+    case 'get-transcript': {
+      const { cues, omitted } = handlers.getTranscript()
+      const inRange = request.range ? cues.filter((cue) => cue.startUs < request.range!.endUs && cue.endUs > request.range!.startUs) : cues
+      const { page } = paginate(inRange, request.limit, request.offset)
+      return { id: request.id, ok: true, captions: page.map((cue) => summarizeCue(cue, request.words ?? false)), total: inRange.length, omitted }
+    }
     case 'run-commands': {
       const { outcomes, failedIndex, state } = handlers.runCommands(request.commands)
       return { id: request.id, ok: true, outcomes, failedIndex, state }
@@ -60,11 +76,22 @@ export async function dispatch(request: AgentRequest, handlers: AgentBridgeHandl
       return { id: request.id, ok: true, state: handlers.undo() }
     case 'redo':
       return { id: request.id, ok: true, state: handlers.redo() }
-    case 'prepare-snapshot':
-      // Wired up in the slice that adds `render_frame` (docs/MCP.md); every other request kind is
-      // implemented today, so an agent asking for this one now gets an honest "not yet" rather than
-      // a silent no-op.
-      return { id: request.id, ok: false, message: 'render_frame is not available yet.' }
+    case 'match-reference': {
+      const { match, state } = await handlers.matchReference(request)
+      return { id: request.id, ok: true, match, state }
+    }
+    case 'import-inspected': {
+      const { imported, state } = handlers.importInspected(request)
+      return { id: request.id, ok: true, imported, state }
+    }
+    case 'place-image': {
+      const { placed, state } = handlers.placeImage(request)
+      return { id: request.id, ok: true, placed, state }
+    }
+    case 'prepare-snapshot': {
+      const rect = await handlers.prepareSnapshot(request.sequenceUs)
+      return rect ? { id: request.id, ok: true, rect } : { id: request.id, ok: false, message: 'There is no preview to capture: the project has no video or captions yet.' }
+    }
   }
 }
 

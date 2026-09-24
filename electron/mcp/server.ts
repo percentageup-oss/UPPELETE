@@ -3,7 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { randomUUID, timingSafeEqual } from 'node:crypto'
 import type { McpStatus } from './config'
-import { registerTools, type McpToolDeps } from './tools'
+import { EDITING_GUIDE, registerTools, type McpToolDeps } from './tools'
 
 const LOOPBACK_HOST = '127.0.0.1'
 
@@ -44,7 +44,7 @@ export async function startMcpServer(options: { token: string; port?: number; on
   const address = httpServer.address()
   const port = typeof address === 'object' && address ? address.port : 0
 
-  const mcpServer = new McpServer({ name: 'caption-studio', version: '1.0.0' })
+  const mcpServer = new McpServer({ name: 'caption-studio', version: '1.0.0' }, { instructions: EDITING_GUIDE })
   registerTools(mcpServer, deps)
 
   let connections = 0

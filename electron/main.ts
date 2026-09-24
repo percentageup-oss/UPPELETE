@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } from 'electron'
 import { z } from 'zod'
-import { mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
@@ -49,7 +49,7 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 registerModelIpc()
-registerMcpIpc()
+registerMcpIpc({ inspectFile: (filePath) => inspectFileForBin(filePath, assetInspectDeps) })
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 const inspectedMedia = new Map<string, { path: string; media: ProjectMedia }>()
@@ -497,17 +497,20 @@ ipcMain.handle('lut:import', async () => {
   catch (error) { return { ok: false as const, message: errorMessage(error) } }
 })
 
-const saveGeneratedLutSchema = z.object({ text: z.string().max(MAX_LUT_BYTES), name: z.string().min(1).max(120), defaultDir: z.string().nullable() })
+const saveGeneratedLutSchema = z.object({ text: z.string().max(MAX_LUT_BYTES), name: z.string().min(1).max(120), defaultDir: z.string().nullable(), silent: z.boolean().optional() })
 
 /** "Match reference image" → Save: writes a renderer-generated `.cube` to a path the user picks in a
  * native save dialog (defaulting to the project folder), then imports it through `inspectLut` like
  * any other LUT, so it is fingerprinted, relinkable and exportable. The text is re-validated with
  * `parseCube` here — the renderer never chooses the path and main never trusts its content. */
 ipcMain.handle('lut:save-generated', async (_event, request: unknown) => {
-  const { text, name, defaultDir } = saveGeneratedLutSchema.parse(request)
+  const { text, name, defaultDir, silent } = saveGeneratedLutSchema.parse(request)
   try { parseCube(text) } catch (error) { return { ok: false as const, message: `The generated LUT is invalid: ${errorMessage(error)}` } }
   const safeName = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\.cube$/i, '').trim() || 'Reference match'
-  const result = await dialog.showSaveDialog({
+  // `silent` is the local-agent path (docs/MCP.md): no native dialog, so the file lands in an app-owned folder.
+  const silentDir = path.join(app.getPath('userData'), 'generated-luts')
+  if (silent) await mkdir(silentDir, { recursive: true })
+  const result = silent ? { canceled: false, filePath: path.join(silentDir, `${safeName}-${randomUUID().slice(0, 8)}.cube`) } : await dialog.showSaveDialog({
     defaultPath: path.join(defaultDir ?? app.getPath('documents'), `${safeName}.cube`),
     filters: [RELINK_FILTERS.lut],
   })
