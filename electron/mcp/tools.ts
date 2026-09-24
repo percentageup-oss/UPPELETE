@@ -52,7 +52,7 @@ const cueTarget = z.strictObject({ startUs: z.number().int().nonnegative(), endU
 export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('get_project', {
     title: 'Get project',
-    description: 'Overview of the open Caption Studio project: title, output format, assets, tracks, clips, blur regions, caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
+    description: 'Overview of the open KathaCut project: title, output format, assets, tracks, clips, blur regions, caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'get-state' }, stateOf))
 

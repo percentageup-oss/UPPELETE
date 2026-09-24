@@ -7,6 +7,8 @@ import {
 } from '../../src/export/plan'
 import { createLayerPlan } from '../../src/core/layerPlan'
 import { exportSupportFromConfiguration, type ExportSupport } from '../../src/core/exportSupport'
+import type { VideoEncoderId } from '../../src/core/exportEncoder'
+import { selectVideoEncoder } from './exportEncoderSelect'
 import { failure, MediaWorkerError, type MediaTask, type MediaResult, type ProgressMessage, type Toolchain } from './protocol'
 import { runExecutable } from './process'
 import { probeMedia } from './probe'
@@ -59,9 +61,15 @@ export async function exportSupport(tools: Toolchain | undefined, signal: AbortS
   dependencies: Pick<ExportDependencies, 'runTool'> = {}): Promise<ExportSupport> {
   if (!tools?.exportHost) return { supported: false, reason: 'The GPU export host is not configured for this build.' }
   const runTool = dependencies.runTool ?? runExecutable
-  const support = exportSupportFromConfiguration(await runTool(tools.ffmpegPath, ['-version'], signal), process.platform)
+  let encodersOutput: string | undefined
+  if (process.platform !== 'darwin') {
+    const selection = await selectVideoEncoder(tools.ffmpegPath, signal, runTool)
+    if ('reason' in selection) return { supported: false, reason: selection.reason }
+    encodersOutput = selection.encodersOutput
+  }
+  const support = exportSupportFromConfiguration(await runTool(tools.ffmpegPath, ['-version'], signal), process.platform, encodersOutput)
   if (!support.supported) return support
-  const probeSupport = exportSupportFromConfiguration(await runTool(tools.ffprobePath, ['-version'], signal), process.platform)
+  const probeSupport = exportSupportFromConfiguration(await runTool(tools.ffprobePath, ['-version'], signal), process.platform, encodersOutput)
   if (!probeSupport.supported) return probeSupport
   try {
     await stat(tools.exportHost.executable)
@@ -78,6 +86,9 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   const probe = dependencies.probe ?? probeMedia
   const support = await exportSupport(tools, signal, dependencies)
   if (!support.supported) throw failure('UNSUPPORTED_OPERATION', support.reason!)
+  const selection = await selectVideoEncoder(tools.ffmpegPath, signal, dependencies.runTool ?? runExecutable)
+  if ('reason' in selection) throw failure('UNSUPPORTED_OPERATION', selection.reason)
+  const videoEncoder = selection.encoder
   if (!path.isAbsolute(task.outputPath) || task.inputPaths.some((input) => path.resolve(input) === path.resolve(task.outputPath))) {
     throw failure('INVALID_MESSAGE', 'Export must use a new explicit destination')
   }
@@ -85,7 +96,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   if (manifestStat.size > 64 * 1024 * 1024) throw failure('OUTPUT_LIMIT', 'Export manifest exceeds 64 MiB')
   const manifest = exportManifestSchema.parse(JSON.parse(await readFile(task.renderManifestPath, 'utf8')))
   const plan = exportPlanSchema.parse({ width: task.width, height: task.height, range: task.range, frameRate: task.frameRate })
-  const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe) : await prepareV2(manifest, task, tools, signal, probe, plan)
+  const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, videoEncoder) : await prepareV2(manifest, task, tools, signal, probe, plan, videoEncoder)
   const controller = new AbortController()
   const cancel = () => controller.abort()
   signal.addEventListener('abort', cancel, { once: true })
@@ -198,7 +209,7 @@ type PreparedExport = {
 
 /** Manifests v1/v2: one source media, X2's byte-identical encoder arguments. */
 async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchema.parse>, ExportManifestV3>, task: ExportTask, tools: Toolchain,
-  signal: AbortSignal, probe: MediaProber, plan: ReturnType<typeof exportPlanSchema.parse>): Promise<PreparedExport> {
+  signal: AbortSignal, probe: MediaProber, plan: ReturnType<typeof exportPlanSchema.parse>, videoEncoder: VideoEncoderId): Promise<PreparedExport> {
   const edits = normalizeManifest(manifest)
   const [inputPath] = task.inputPaths
   // One plan for which source timestamp each output frame shows and which frames repeat.
@@ -222,7 +233,7 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
     layer,
     request: (index, frame) => frameRequestAt(manifest, plan, index, frame.sourceUs),
     graph: exportFilterGraph(plan, hasAudio, manifest),
-    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script),
+    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script, videoEncoder),
     overlayUrls: edits.overlays.map((overlay) => overlay.assetUrl),
     frameCount: exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate),
     width: plan.width, height: plan.height, frameRate: plan.frameRate,
@@ -234,7 +245,7 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
  * end of its file fails here with its name rather than as an opaque FFmpeg error — and every input
  * must be one the task declared.
  */
-async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: Toolchain, signal: AbortSignal, probe: MediaProber): Promise<PreparedExport> {
+async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: Toolchain, signal: AbortSignal, probe: MediaProber, videoEncoder: VideoEncoderId): Promise<PreparedExport> {
   const declared = new Set(task.inputPaths.map((input) => path.resolve(input)))
   const probes = new Map<string, Awaited<ReturnType<MediaProber>>>()
   const hasAudioByInput: boolean[] = []
@@ -264,7 +275,7 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
     layer,
     request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
     graph: exportFilterGraphV3(manifest, hasAudioByInput),
-    args: (script) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script),
+    args: (script) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, videoEncoder),
     overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
     frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),
     width, height, frameRate,

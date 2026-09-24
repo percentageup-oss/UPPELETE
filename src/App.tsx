@@ -69,6 +69,7 @@ import { findAssetByFingerprint, type InspectedFile } from './core/assetImport'
 import { useAssetUrls } from './app/useAssetUrls'
 import { useProjectPlayback } from './app/useProjectPlayback'
 import { createThumbnailQueue } from './timeline/thumbnailQueue'
+import brandIcon from './assets/brand/icon-dark.png'
 
 type Notice = { tone: 'info' | 'error' | 'warning'; text: string } | null
 type SaveStatus = { kind: 'saved'; at: number } | { kind: 'saving' } | { kind: 'error'; message: string }
@@ -1140,7 +1141,7 @@ export default function App() {
 
   return <main className="app-shell">
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">C</span><div><strong>Caption Studio</strong><small title={project.title}>{project.title}</small></div></div>
+      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="KathaCut — Your local AI video toolkit." aria-label="KathaCut">Katha<span>Cut</span></strong><small title={project.title}>{project.title}</small></div></div>
       <div className="toolbar toolbar-workflow" role="group" aria-label="Captions">
         {pickedVideo && <AlignmentControls fingerprint={pickedVideo.fingerprint} mediaReady={pickedReady}
           cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}

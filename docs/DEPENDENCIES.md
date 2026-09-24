@@ -242,3 +242,10 @@ pattern for the WebM proxy path), never a hardcoded or assumed capability. Full 
 verification (a real 10 s H.264/AAC export with captions/audio, a real 30000/1001-rate export, and a
 real mid-export cancellation) is recorded in ADR 0004 and `docs/STATUS.md`. Windows execution and a
 rotated-source real export remain unverified this session; see ADR 0004's limits.
+
+## Windows tools fetched by `dev.ps1` (development only, nothing bundled)
+
+| Tool | Source | License | Notes |
+| --- | --- | --- | --- |
+| FFmpeg (LGPL win64 build, `ffmpeg-n9.0-latest-win64-lgpl-9.0.zip`) | BtbN/FFmpeg-Builds `latest` release | LGPL-2.1+ (build includes NVENC via nv-codec-headers, MIT, and Media Foundation) | Rolling asset; checksum from the release's `checksums.sha256`. A user-installed GPL build is also accepted for local use. Record exact build/configuration before any release. |
+| whisper.cpp Windows binaries (`b5130`) | ggml-org/whisper.cpp release `b5130` | MIT | `cublas-12.4.0` variant bundles NVIDIA CUDA runtime DLLs (NVIDIA CUDA EULA redistribution terms apply; review before shipping). |

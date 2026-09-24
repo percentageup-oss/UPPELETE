@@ -2,6 +2,7 @@ import {
   exportBitrate, exportFrameCountFor, exportOutputDurationUs, normalizeManifest, usDecimal,
   type ExportManifestV1, type ExportManifestV2, type ExportManifestV3, type ExportPlan, type ManifestClip,
 } from '../../src/export/plan'
+import { DEFAULT_VIDEO_ENCODER, videoEncoderArguments, type VideoEncoderId } from '../../src/core/exportEncoder'
 
 /**
  * Builds the encoder invocation deterministically from the export plan and the versioned manifest.
@@ -118,7 +119,7 @@ export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?
  * (the Windows limit `docs/EDITING.md` calls out) — it writes `exportFilterGraph`'s string to that
  * file and this passes `-filter_complex_script` instead of inlining it with `-filter_complex`.
  */
-export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string): string[] {
+export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
   const rate = `${plan.frameRate.numerator}/${plan.frameRate.denominator}`
   const edits = manifest ? normalizeManifest(manifest) : undefined
   const outputDurationUs = exportOutputDurationUs(plan, edits)
@@ -132,7 +133,7 @@ export function exportArguments(inputPath: string, outputPath: string, plan: Exp
     '-autorotate', '-i', inputPath, '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...clipInputs,
     ...(filterComplexScriptPath ? ['-filter_complex_script', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
-    '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-profile:v', 'high', '-b:v', exportBitrate(plan.width, plan.height), '-pix_fmt', 'yuv420p',
+    ...videoEncoderArguments(videoEncoder, exportBitrate(plan.width, plan.height)), '-pix_fmt', 'yuv420p',
     '-r', rate, '-fps_mode', 'cfr', '-frames:v', String(exportFrameCountFor(outputDurationUs, plan.frameRate)), '-t', duration,
     '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', outputPath]
 }
@@ -245,7 +246,7 @@ function inputArguments(manifest: ExportManifestV3, rate: string): string[] {
   })
 }
 
-export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string): string[] {
+export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
   const graph = exportFilterGraphV3(manifest, hasAudioByInput)
@@ -254,7 +255,7 @@ export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string
     '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0',
     ...(filterComplexScriptPath ? ['-filter_complex_script', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
-    '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-profile:v', 'high', '-b:v', exportBitrate(width, height), '-pix_fmt', 'yuv420p',
+    ...videoEncoderArguments(videoEncoder, exportBitrate(width, height)), '-pix_fmt', 'yuv420p',
     '-r', rate, '-fps_mode', 'cfr', '-frames:v', String(exportFrameCountFor(exportOutputDurationUs(plan, manifest), frameRate)), '-t', usDecimal(manifest.sequenceDurationUs),
     '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', outputPath]
 }

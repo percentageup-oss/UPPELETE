@@ -1,5 +1,31 @@
 # Status
 
+## 2026-09-24 — Rebrand to KathaCut
+
+**Changes.** The app is now **KathaCut** ("Your local AI video toolkit."). This covers the window/page title, the toolbar wordmark (bold "Katha", lighter accent "Cut", no space, "K" mark), the native app name and About panel (`app.setName`), the project file-dialog filter and the MCP overview tool text, plus the README heading. Internal identifiers stay as they were so existing installs keep working: the userData folder (pinned explicitly to the old `caption-studio` path, so models, caches, logs and secrets are kept), the `CAPTION_STUDIO_*` env vars, `caption-studio.local.json`, the `.cstudio`/`.captionstudio.json` project extensions, `window.captionStudio` and the npm package name.
+
+**Logo.** The source art is in `img/logo.png` and `img/logo-icon-only.png`. Their near-black parts are unreadable on the #090b10 UI, so dark-UI variants were made with ffmpeg: neutral pixels inverted, gradient kept, padding cropped. They are `src/assets/brand/logo-dark.png`, used for the launch splash in `index.html` (dismissed by `main.tsx` after ~0.7 s, with an indeterminate sweep and no progress figure), and `src/assets/brand/icon-dark.png`, used for the toolbar mark and favicon. `build/icon.png` (the icon on a white rounded tile, 1024²) is the window icon and the dev-run dock icon. The "Cut" in the wordmark uses the logo's pink→orange gradient.
+
+**Theme.** The UI accent moved from lime `#c8ff3d` to the logo's blue-violet, `#6a58fc`, sampled from the top of the diagonal stroke. It is now a set of `:root` tokens in `src/styles.css`: `--accent`, `--accent-hover`, `--accent-text` (#a597ff, for small text/icons on dark, where #6a58fc is too dim), `--on-accent` (white), `--accent-glow`, `--accent-wash`, `--accent-bg` and `--accent-border`. The inspector's `--ins-accent` points at these tokens. Two things stay as they were on purpose. Caption style defaults and templates (`src/captions/style.ts`, `templates.ts`) keep their lime/yellow, because they are video content, stored in projects and burned into exports. The green "agent running" chip keeps its live-status colour.
+
+**Verification.** `npm run typecheck`; `vitest run` (991 passed); `vite build` rewrites the splash and favicon asset URLs. macOS only.
+
+**Limitations.** Not checked in the GUI: the wordmark, the splash and the toolbar icon, the macOS app-menu/About name, and whether the dev-run dock name changes (unpackaged Electron may still show "Electron"). Older docs and tickets still say "Caption Studio". Packaging (D2) must set `productName: KathaCut` while keeping the userData path, and build `.icns`/`.ico` from `build/icon.png`.
+
+**Next.** Check the toolbar and About panel in a dev run. Then resume the Windows export validation below.
+
+## 2026-09-24 — Windows export (NVENC / Media Foundation) and `dev.ps1`
+
+Export no longer stops at macOS. See [ADR 0007](decisions/0007-windows-export-encoders.md).
+
+**Changes.** New `src/core/exportEncoder.ts` (encoder ids, per-platform candidates, exact argument blocks) and `workers/media/exportEncoderSelect.ts` (lists encoders, runs a real test encode, caches the winner). `exportArguments`/`exportArgumentsV3` take an optional encoder (default VideoToolbox, macOS output unchanged). `exportSupportFromConfiguration` keeps the strict profile on macOS and accepts FFmpeg >= 7 + PNG + NVENC/`h264_mf` elsewhere. `electron/exportIpc.ts` and the worker's `exportSupport` use the selection and log the chosen encoder. New root `dev.ps1` finds or downloads FFmpeg and whisper-cli, writes `caption-studio.local.json` without a BOM, and launches.
+
+**Verification (macOS only).** `npm run typecheck` and the full `npx vitest run` (110 files, 991 tests) pass, including new tests for the Windows gate, exact NVENC/MF arguments and the fallback order. Not run: any real export, `dev.ps1` (no PowerShell here), anything on Windows.
+
+**Limitations.** Windows is unvalidated: NVENC/`h264_mf` output, the FFmpeg/whisper download URLs and checksum handling, and PowerShell 5.1 behaviour are untested. FFmpeg comes from a rolling BtbN asset, so the checksum guards corruption only. whisper-cli uses the `b5130` build tag because v1.9.4 has no binaries. No Settings UI for the encoder (env `CAPTION_STUDIO_EXPORT_ENCODER` only). GPL FFmpeg builds are accepted for local use.
+
+**Next.** Run `.\dev.ps1` on the Windows PC and export once with NVENC and once with `CAPTION_STUDIO_EXPORT_ENCODER=h264_mf`; confirm `h264_nvenc` in the export log.
+
 ## 2026-09-21 — MCP1: local agent control core (Claude Code can inspect and edit the project)
 
 Completed the first slice of local agent control ([MCP.md](MCP.md), `tickets.md` MCP1): an opt-in, loopback-only MCP server a Claude client can drive, forwarding every read/edit through the app's own command/undo path rather than a second editing model.

@@ -4,6 +4,7 @@ import path from 'node:path'
 import { exportSupportFromConfiguration, type ExportSupport } from '../src/core/exportSupport'
 import { exportStartRequestSchema, type ExportOutcome } from '../src/export/ipc'
 import { buildExportManifest, exportManifestSchema, planFromMedia, type BuiltExport, type ExportPlan } from '../src/export/plan'
+import { selectVideoEncoder } from '../workers/media/exportEncoderSelect'
 import { mediaUrlForPath } from './projectMedia'
 import { DEFAULT_CAPTION_STYLE } from '../src/captions/style'
 import type { MediaFingerprint, ProjectMedia } from '../src/core/media'
@@ -39,9 +40,16 @@ async function checkExportSupport(): Promise<ExportSupport> {
       const tools = configuredToolchain()
       if (!tools?.exportHost) return { supported: false, reason: 'The GPU export host is not configured for this build.' }
       const result = await getMediaWorker().start({ operation: 'inspectToolchain' }).result
-      const ffmpegSupport = exportSupportFromConfiguration(result.ffmpeg.versionOutput, process.platform)
+      let encodersOutput: string | undefined
+      if (process.platform !== 'darwin') {
+        const selection = await selectVideoEncoder(tools.ffmpegPath, new AbortController().signal)
+        if ('reason' in selection) return { supported: false, reason: selection.reason }
+        logExport('encoder', { encoder: selection.encoder, failedBeforeSelecting: selection.tried })
+        encodersOutput = selection.encodersOutput
+      }
+      const ffmpegSupport = exportSupportFromConfiguration(result.ffmpeg.versionOutput, process.platform, encodersOutput)
       if (!ffmpegSupport.supported) return ffmpegSupport
-      const ffprobeSupport = exportSupportFromConfiguration(result.ffprobe.versionOutput, process.platform)
+      const ffprobeSupport = exportSupportFromConfiguration(result.ffprobe.versionOutput, process.platform, encodersOutput)
       if (!ffprobeSupport.supported) return ffprobeSupport
       try {
         await stat(tools.exportHost.executable)

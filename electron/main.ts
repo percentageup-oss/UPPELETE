@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import { createReadStream } from 'node:fs'
+import { createReadStream, existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { planMediaRange } from './mediaRange'
 import { getMediaWorker, closeMediaWorker, configuredToolchain } from './mediaWorker'
@@ -29,6 +29,13 @@ import { closeJobs } from './jobs'
 import { registerAlignmentIpc } from './alignmentIpc'
 import { appMenuTemplate } from './appMenu'
 import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
+
+// Display name for menus, the About panel and the dock. userData stays at the original 'caption-studio' folder so
+// downloaded models, caches, logs and stored secrets survive the rename.
+const userDataPath = app.getPath('userData')
+app.setName('KathaCut')
+app.setPath('userData', userDataPath)
+app.setAboutPanelOptions({ applicationName: 'KathaCut', credits: 'Your local AI video toolkit.' })
 
 // Must run before the app is ready. Marks the scheme as fetchable from any page origin (dev
 // server included) and as a secure context, without weakening default webSecurity/CSP elsewhere.
@@ -56,14 +63,18 @@ registerTranscriptionIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fing
 registerExportIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerAlignmentIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 
+const appIconPath = path.join(app.getAppPath(), 'build', 'icon.png')
+const appIcon = existsSync(appIconPath) ? appIconPath : undefined
+
 function createWindow() {
   const window = new BrowserWindow({
+    ...(appIcon ? { icon: appIcon } : {}),
     width: 1440,
     height: 920,
     minWidth: 940,
     minHeight: 680,
     backgroundColor: '#090b10',
-    title: 'Caption Studio',
+    title: 'KathaCut',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -497,6 +508,8 @@ function isAppOrigin(url: string): boolean {
 }
 
 app.whenReady().then(async () => {
+  // Unpackaged runs otherwise show Electron's dock icon; a packaged .app uses its bundle icon.
+  if (appIcon && !app.isPackaged) app.dock?.setIcon(appIcon)
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     callback(ALLOWED_PERMISSIONS.has(permission) && isAppOrigin(details.requestingUrl))
   })

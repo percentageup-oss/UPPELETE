@@ -1,6 +1,6 @@
 # ADR 0004 — MP4 export encoding profile and pipeline
 
-Date: 2026-09-16. Status: accepted for X2, macOS arm64 only; Windows validation remains required.
+Date: 2026-09-16. Status: accepted for X2, macOS arm64 only; Windows validation remains required. Amended by [ADR 0007](0007-windows-export-encoders.md) (Windows encoders).
 Scope: X2. Builds on [ADR 0003](0003-export-renderer.md)'s GPU offscreen caption-frame renderer and
 [ADR 0001](0001-media-worker-and-ffmpeg.md)'s project-controlled FFmpeg/ffprobe build decision.
 
