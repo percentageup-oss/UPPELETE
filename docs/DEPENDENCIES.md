@@ -247,12 +247,13 @@ rotated-source real export remain unverified this session; see ADR 0004's limits
 
 Grading (`src/color/`) adds no npm package, no bundled or downloaded weights, and no new FFmpeg
 build flag: `lut3d` is a standard `libavfilter` filter, not gated behind GPL/nonfree/a separate
-library the way `libx264`/`libopenh264` are, so the X2 pair above should already carry it — **not
-yet confirmed against the actual built binary** (`ffmpeg -filters | grep lut3d`); do before shipping.
+library the way `libx264`/`libopenh264` are. The configured macOS arm64 FFmpeg 9.0.1 binary was
+checked with `ffmpeg -filters` on 2026-09-24 and reports `TS lut3d V->V`; the real export parity
+case used that filter successfully. A Windows build remains unverified.
 The camera log curves (`transfer.ts`) are transcribed from each vendor's own published white paper
 (Fujifilm F-Log/F-Log2, Sony S-Log3, Apple Log, Panasonic V-Log, Canon C-Log3 — the constants cite
 their source document) and cross-checked against the independent open-source `colour-science`
-library rather than copied from any proprietary LUT or tool. The eleven bundled film looks
+library rather than copied from any proprietary LUT or tool. The seventeen bundled film looks
 (`looks.ts`) are original, parametric work built from this app's own primaries pipeline — no
 third-party `.cube` file, camera preset or film-stock LUT is bundled, reverse-engineered or copied,
 and no camera/film-stock brand name appears in any id, name or description a user or an agent can

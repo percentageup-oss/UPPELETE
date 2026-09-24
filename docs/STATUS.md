@@ -1,5 +1,15 @@
 # Status
 
+## 2026-09-24 — Signature looks, live look thumbnails, Match reference image
+
+**Changes**: Six new bundled looks (Cartel Dusk, Neon Assassin, Wanderlust Teal & Orange, Moody Matte, Cold Forest, Golden Drift) built on a new hue-band + matte extension of `Look` (`hues`, `fade`; Oklab helpers in `oklab.ts`). Film-look tiles now show the playhead frame (or a drawn sample scene) graded through each look. New "Match reference image…" in My LUTs derives a tone/color transfer from a picked still (`referenceMatch.ts`), previews it with a strength slider and saves a `.cube` via new `lut:save-generated` IPC, then adds it as a `lut` asset. Fixed `inspectLut` never registering LUTs in `inspectedMedia`, which made export throw "LUT … is missing" for any imported LUT. Looks are named for a genre, not a film or creator; the banned-name test now also rejects those names.
+
+**Verification**: `tsc --noEmit` and `npm run build` pass. New unit tests for hue-band looks, `referenceMatch` (identity, monotone curve, cast and split-toning transfer, strength, `.cube` round trip) and thumbnails all pass. Rendered the reference still through the new looks with the real bake/sample code and checked them visually. `npm test`: 1533 pass, 4 fail in `EffectsPanel`, `TemplatesPanel` and `keynoteTemplates` tests (Effects/Templates code, not touched here; not checked against a clean tree).
+
+**Limitations**: Not GUI-tested: thumbnails on seek, the match dialog and save flow, and that a generated LUT exports. The export fix has no automated test (needs Electron main). Look parameters were tuned by eye on one still. Match quality depends on how alike the two images are. macOS only; Windows unvalidated.
+
+**Next**: Manual acceptance of the Color tab flow and an export using a saved match LUT; tune looks on more footage; add a test that exports a project with a LUT.
+
 ## 2026-09-24 — Light particles effect
 
 **Changes**: Added the **Light particles** Effects tile and preset, effect lane/header, inspector controls (amount, size, speed, color), effect command support, masks, bypass and undo through the existing frame-effect command path. The shared frame evaluator generates an effect-ID-seeded particle field from absolute sequence time at 60 Hz, with a 200 ms edge fade; the shared preview/export painter renders up to 72 warm radial particles with occasional bright cores behind captions and titles. Added the evaluated particle parameters to the export frame request and frame signature so animated frames are repainted. No external asset or FFmpeg filter is used, and the current project schema version remains 16.
@@ -2946,3 +2956,43 @@ Verification: careful manual read-through of every new/changed file against its 
 Limitations: no GUI pass at all — dragging a Color tile onto a clip, stacking two adjustment layers, the WebGL2 canvas actually painting a graded frame, importing/relinking a `.cube`, and the preview-vs-export match are all unverified by running the app. Many GL contexts (one per simultaneously graded picture layer, no shared-context pooling) is an accepted v1 limitation for typical small clip counts. The preview grade-stack bake cache (`previewGrade.ts`) is capped at 64 entries and clears itself entirely past that, rather than evicting LRU-style — acceptable for v1, crude under a long slider-drag session. No per-channel RGB lift/gamma/gain wheel UI (master slider only, per above). Not tested on Windows or Linux.
 
 Next: an actual GUI/app pass covering everything in Limitations above, in whichever order the next session can reach a running build; then the parity measurement case this entry deliberately left undone.
+
+## 2026-09-24 — Color grading repair and measured export parity
+
+The uncommitted slices 3–6 were buildable only after repair. `ColorPanel` passed the evaluator's runtime grade type into the persisted clip schema, so TypeScript rejected four tile variants. It now validates a persisted default grade once. The export worker built a `lut3d` graph with the job's `.cube` paths, but `exportArgumentsV3` rebuilt an inline graph without those paths; a normal short graded export silently lost its grade. The worker now passes its prepared graph to the argument builder, and a missing baked LUT path aborts instead of yielding an ungraded graph. Unit and real export coverage caught that regression.
+
+The export plan now routes images through FFmpeg when adjustment clips exist, giving upper-track images the same per-layer LUT path as videos. Images stay full-range RGB before `lut3d`; video clips use the explicit BT.709/TV-range conversion. Hidden adjustment tracks no longer grade export while remaining hidden in preview. A LUT that resolves late or is relinked changes the preview cache key, so the prior null or stale bake is not reused. The stage shows a missing-LUT badge while rendering ungraded, and the Export control blocks on a used unresolved LUT. A paused video redraws on grade changes without waiting for a new decoded frame.
+
+Verification on macOS arm64: `npm run typecheck` and `npm run build` pass; the targeted grading/export tests pass, including new image/hidden-track/relink tests. The full `npm test` run has 1510 passing tests and four failures in `EffectsPanel.test.tsx`, `TemplatesPanel.test.tsx`, and `keynoteTemplates.test.tsx`; these unrelated failures were already present before this repair. The configured FFmpeg 9.0.1 reports `lut3d` in `-filters`. `env -u ELECTRON_RUN_AS_NODE npm run parity:export -- --only color` ran a real S-Log3-coded H.264 source, the production v3 worker and FFmpeg export, and the production WebGL2 LUT renderer's `readPixels`: 27,648 interior channels, mean absolute delta 5.93/255, p95 23/255, maximum 43/255. Identity-LUT source-decode baseline: mean 3.83/255, p95 12/255, maximum 16/255. Full machine/build evidence is in `docs/decisions/evidence/x3-parity-2026-09-24.json`; these numbers describe this fixture, not a general codec tolerance.
+
+Limitations and next task: the Color tab's drag, trim, split, undo, stacking and `.cube` import/relink interactions have not been exercised in the running editor; the parity case uses synthetic H.264, not a real 10-bit camera log file. Run that manual Mac pass and broader camera/codec parity before declaring visual accuracy. Windows remains untested. Resolve the four unrelated suite failures in their own slice.
+
+## Graded preview: "Grade unavailable" fix (media: CORS)
+
+Completed — a graded layer showed the ungraded clip with a "Grade unavailable" badge in the real app. Cause: pooled `<video>`/graded `<img>` loaded from the `media:` scheme without `crossOrigin`, and the protocol handler sent no `Access-Control-Allow-Origin`, so the element was cross-origin-tainted and `texImage2D` threw a `SecurityError` (caught in `GradedVideo`, which falls back to plain playback). The parity harness missed it because it loads page and video over `file://` (same origin). Fix: `electron/main.ts` `mediaCorsHeaders` echoes the request origin (packaged `file://` → `null`, or the dev server origin only) on every `media:` response; the video pool factory (`src/app/useProjectPlayback.ts`) and `GradedVideo`'s images set `crossOrigin = 'anonymous'`; `GradedVideo` now `console.warn`s the underlying error when it falls back.
+
+Verification (macOS arm64): `npm run typecheck` passes; `electron/mediaRange.test.ts`, `src/color`, `src/playback`, `src/app` tests pass (109). The header itself has no automated test and the fix is not yet confirmed in the running app.
+
+Limitations: needs a manual GUI check — Cinema Soft on the ProRes clip (badge gone, look visible), scrub/play with audio, graded still image, and dev vs. packaged builds. Ungraded video now also loads in CORS mode, so any `media:` response lacking the header would fail to play.
+
+Next: user GUI confirmation; consider a preview-path parity case that loads over `media:` instead of `file://`.
+
+## Black preview after adjustment layers; preview/sequence settings discoverability
+
+Completed — with a graded clip in the timeline, preview went black outside the adjustment's range and stayed black after the adjustment was deleted (sequence size made no difference). Cause: the pooled `<video>` is handed between `GradedVideo` (sets `opacity: 0`, the WebGL canvas paints on top) and `VideoSlot`, which never reset opacity, so the ungraded video stayed invisible. Fix: `src/captions/pooledVideoStyle.ts` gives every mounter the complete style (including opacity); `GradedVideo` also restores `opacity: 1` on unmount. `LutRenderer.dispose()` now calls `WEBGL_lose_context`, so repeatedly crossing adjustment boundaries (one canvas mount per switch) no longer accumulates live GL contexts toward Chromium's ~16 cap.
+
+UX: new **View** menu (Sequence settings, preview Proxy/Original, proxy mode Off/Auto/Always, Playback settings) and a **Preview: Proxy|Original · W×H** chip in the transport bar with the same entries; importing a source above 1080p shows a one-time notice pointing at them. Settings gear tooltip mentions playback proxies.
+
+Verification (macOS arm64): `npm run typecheck` passes; `src/captions` + `src/color` tests pass except 2 `keynoteTemplates.test.tsx` failures that also fail with my changes stashed. New `pooledVideoStyle.test.ts`.
+
+Limitations: not confirmed in the running app (needs the 4K Apple Log repro: play across the adjustment boundary, delete the adjustment, scrub the boundary many times, use the View menu/chip). The menu/chip and large-source hint have no automated tests. Windows untested.
+
+Next: user GUI confirmation of the above.
+
+## 2026-09-24 — Auto playback proxy for undecodable video (iPhone ProRes)
+
+Completed: an iPhone ProRes 422 HQ 10-bit Apple Log `.mov` (1920×1080) previewed as a black frame with audio and no diagnostic. Chromium plays the PCM audio of a file whose video codec it cannot decode and fires no `error`, so `loadeddata` cleared any codec issue; and `auto` playback proxies only triggered above a 1080 short edge. Fixes: `useProjectPlayback` treats `loadeddata` with `videoWidth === 0` on a video asset as a media error (banner says the audio plays but the video cannot be decoded); `shouldRequestPlaybackProxy` takes an `undecodable` flag that makes `auto`/`always` request a proxy at any size (`off` still never does), fed from `App`'s codec issues. The banner shows "Creating a playback proxy automatically…" while that runs; the manual save-dialog conversion remains as "Save a playable copy…".
+
+Verification: `tsc --noEmit`; `vitest run src/core src/app` (725 tests, new `shouldRequestPlaybackProxy` cases). Not run in the GUI with the real clip.
+
+Limitations: detection needs one load attempt of the original first; the proxy is ungraded Log (flat) until a Log→Rec.709 look/LUT is applied.

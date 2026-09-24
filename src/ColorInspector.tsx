@@ -64,8 +64,10 @@ export function ColorInspector({ grade, lutAssets, onDraft, onCommit }: {
 
     <Row label="Input" htmlFor="grade-input-type">
       <Segmented id="grade-input-type" value={inputType} onChange={setInputType}
-        options={[{ value: 'none', label: 'None' }, { value: 'log', label: 'Camera log' }, { value: 'lut', label: 'LUT' }]} />
+        options={[{ value: 'none', label: 'None' }, { value: 'log', label: 'Camera log' },
+          ...(lutAssets.length || inputType === 'lut' ? [{ value: 'lut' as const, label: 'LUT' }] : [])]} />
     </Row>
+    {!lutAssets.length && grade.input.type !== 'lut' && <p className="clip-inspector-meta">Import a .cube LUT in the Color tab to use a custom input.</p>}
     {grade.input.type === 'log' && <Row label="Profile" htmlFor="grade-log-profile">
       <Select id="grade-log-profile" value={grade.input.profile} options={LOG_OPTIONS}
         onChange={(profile) => onCommit({ ...grade, input: { type: 'log', profile } })} />

@@ -187,9 +187,15 @@ export class LutRenderer {
 
   dispose(): void {
     const { gl } = this
+    const canvas = gl.canvas as HTMLCanvasElement
     gl.deleteTexture(this.sourceTexture)
     gl.deleteTexture(this.lutTexture)
     gl.deleteVertexArray(this.vao)
     gl.deleteProgram(this.program)
+    // Free the context once the canvas is really gone: grade on/off switches remount a canvas each
+    // time, and Chromium caps live WebGL contexts (~16), evicting the oldest. Losing it synchronously
+    // would break a same-canvas re-create (StrictMode's mount → cleanup → mount hands back the lost
+    // context), so wait a tick and skip if the canvas is still attached.
+    setTimeout(() => { if (!canvas.isConnected) gl.getExtension('WEBGL_lose_context')?.loseContext() }, 0)
   }
 }

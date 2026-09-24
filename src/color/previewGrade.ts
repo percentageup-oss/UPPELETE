@@ -16,6 +16,14 @@ import type { AdjustmentClip, Grade } from '../core/edit'
 const MAX_CACHE_ENTRIES = 64
 
 const cache = new Map<string, Cube3D | null>()
+const cubeIds = new WeakMap<Cube3D, number>()
+let nextCubeId = 1
+
+function cubeId(cube: Cube3D): number {
+  let id = cubeIds.get(cube)
+  if (id === undefined) { id = nextCubeId++; cubeIds.set(cube, id) }
+  return id
+}
 
 /** The persisted `Grade` as the runtime shape `bakeGrade`/`composeLuts` evaluate — mirrors
  * `resolveGrade` in `src/export/plan.ts`. `null` means a `lut`-type input names an asset this session
@@ -35,14 +43,16 @@ function resolveGrade(grade: Grade, cubes: ReadonlyMap<string, Cube3D>): BakedGr
  */
 export function bakedGradeStack(stack: readonly AdjustmentClip[], cubes: ReadonlyMap<string, Cube3D>): Cube3D | null {
   if (!stack.length) return null
-  const key = JSON.stringify(stack.map((clip) => clip.grade))
+  // An asset can resolve after the first preview, or be relinked to different cube data while
+  // its grade still names the same asset id. Include the resolved cube identities in the key.
+  const resolved = stack.map((clip) => resolveGrade(clip.grade, cubes))
+  if (resolved.some((grade) => grade === null)) return null
+  const key = JSON.stringify(stack.map((clip) => [clip.grade, clip.grade.input.type === 'lut' ? cubeId(cubes.get(clip.grade.input.assetId)!) : null]))
   if (cache.has(key)) return cache.get(key)!
   if (cache.size >= MAX_CACHE_ENTRIES) cache.clear()
   let composed: Cube3D | null = null
-  for (const adjustment of stack) {
-    const resolved = resolveGrade(adjustment.grade, cubes)
-    if (!resolved) { cache.set(key, null); return null }
-    const baked = bakeGrade(resolved)
+  for (const grade of resolved) {
+    const baked = bakeGrade(grade!)
     composed = composed ? composeLuts(composed, baked) : baked
   }
   cache.set(key, composed)

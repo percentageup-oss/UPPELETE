@@ -40,6 +40,12 @@ describe('shouldRequestPlaybackProxy', () => {
     expect(shouldRequestPlaybackProxy('auto', { width: 1080, height: 1920 })).toBe(false)
     expect(shouldRequestPlaybackProxy('auto', { width: 2160, height: 3840 })).toBe(true)
   })
+  it('under auto or always, requests one for an undecodable source of any size, but never when off', () => {
+    expect(shouldRequestPlaybackProxy('auto', { width: 1920, height: 1080 }, true)).toBe(true)
+    expect(shouldRequestPlaybackProxy('auto', null, true)).toBe(true)
+    expect(shouldRequestPlaybackProxy('always', { width: 640, height: 360 }, true)).toBe(true)
+    expect(shouldRequestPlaybackProxy('off', { width: 1920, height: 1080 }, true)).toBe(false)
+  })
   it('never requests one when dimensions are not yet known', () => {
     expect(shouldRequestPlaybackProxy('always', { width: null, height: null })).toBe(false)
     expect(shouldRequestPlaybackProxy('always', null)).toBe(false)

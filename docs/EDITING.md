@@ -1106,10 +1106,13 @@ audio track { solo?: boolean, volume?: 0..4 }         // solo silences unsoloed 
 
 ## Color: adjustment layers (schema 16)
 
+> Pooled `<video>` ownership: the same element moves between `VideoSlot` and `GradedVideo`, so every mounter applies the full `pooledVideoStyle` (including `opacity`) — never a partial style, or a leftover `opacity: 0` blanks the preview once the grade goes away.
+
 A **DaVinci-style adjustment layer**: a clip with no asset that grades every video/image clip on
 the tracks below it, for its own time range, instead of carrying a picture of its own — a new
-**Color** rail tab, after Effects. Preview and export sample the exact same baked 3D LUT, so parity
-is by construction rather than measured after the fact.
+**Color** rail tab, after Effects. Preview and export share the baked 3D LUT and trilinear sampling;
+video decode, half-float upload, `.cube` serialization and H.264 encoding still create measured
+pixel differences (see the evidence below).
 
 ```ts
 grade = { input: {type:'none'} | {type:'log', profile} | {type:'lut', assetId}, primaries, look: {id, strength} | null, intensity: 0..1 }
@@ -1120,11 +1123,22 @@ projectAsset { kind: 'lut', ... }                             // a user-imported
 - **Pipeline** (`src/color/`): input transform (`transfer.ts`+`gamut.ts` for the six built-in camera
   log curves — F-Log, F-Log2, S-Log3, Apple Log, V-Log, C-Log3 — or a user `.cube`) → primaries
   (`primaries.ts`: exposure, white balance, contrast, highlights/shadows, lift/gamma/gain, saturation)
-  → an optional bundled film look (`looks.ts`, 11 original procedural looks, no camera/film brand
-  anywhere) → an intensity mix back toward the untouched input. `bakeGrade` (`bake.ts`) evaluates
+  → an optional bundled film look (`looks.ts`, 17 original procedural looks, no camera/film brand
+  or creator name anywhere; six are hue-selective — `hues` bands in OkLCh via `oklab.ts`, plus an
+  optional matte `fade` — so teal-and-orange or neon grades can move skin and sky in opposite
+  directions) → an intensity mix back toward the untouched input. `bakeGrade` (`bake.ts`) evaluates
   that pipeline at every point of a 33³ lattice; `composeLuts` folds two baked LUTs into one for a
   stack of adjustment layers, bottom-up by track order. A `color` (generated background) clip is
   never graded.
+- **Look thumbnails and reference matching** (Color tab). Film-look tiles show the frame under the
+  playhead (captured from the pooled `<video>` once the playhead has been still 250 ms, only while
+  the Color tab is open) graded through each look's own baked 17³ lattice (`lookThumbnail.ts`), or a
+  drawn sample scene with no clip. "Match reference image…" (My LUTs) picks a still and derives a
+  grade from the playhead frame (`referenceMatch.ts`: Oklab quantile-matched, slope-limited tone
+  curve plus per-shadow/mid/highlight chroma shift and gain), previews before/after with a strength
+  slider, and saves a `.cube` through `lut:save-generated` (native save dialog, defaulting to the
+  project folder; main re-validates with `parseCube`), which then joins the project as a normal `lut`
+  asset. It is a statistical transfer, not scene understanding.
 - **Grade resolution** (`src/core/gradeStack.ts`): `adjustmentsOver`/`gradeStackFor` pick the
   enabled adjustment clips on a track above a picture clip that overlap it — shared verbatim by the
   export plan (which splits a clip into constant-stack segments before baking, `src/export/plan.ts`)
@@ -1143,7 +1157,8 @@ projectAsset { kind: 'lut', ... }                             // a user-imported
   segment gets a `lutId` naming a manifest-level baked LUT (deduped by content); the export worker
   writes each into its job's temp directory as a real `.cube` file (`src/color/cube.ts`) and inserts
   `lut3d=interp=trilinear` into the FFmpeg filtergraph, right after retiming, with an explicit
-  `in_color_matrix=bt709:in_range=tv` so FFmpeg's YUV→RGB matches Chromium's.
+  `in_color_matrix=bt709:in_range=tv` for video YUV→RGB. Images remain full-range RGB and pass
+  through FFmpeg when adjustment layers are present, so they can receive the same per-layer LUT.
 - **Placement** (`src/core/clipEdits.ts`'s `adjustmentTrackAbove`/`topAdjustmentTrackFor`,
   `src/ColorPanel.tsx`). A Color tile is a drag payload carrying a starting `grade`
   (`COLOR_DRAG_TYPE`, `src/core/dragPayload.ts`). Dropped onto an existing clip, the new adjustment
@@ -1160,7 +1175,17 @@ projectAsset { kind: 'lut', ... }                             // a user-imported
   `candidatePaths`), just without ffprobe; its `.cube` text is hydrated into the renderer's
   `useLutAssets` cache in the same round trip. Until a missing or mismatched LUT is relinked (the
   same `assets:relink` IPC, a `lut`-specific branch), any grade naming it renders ungraded with a
-  warning, in both preview and export.
+  warning in preview; export blocks with a relink message rather than writing an ungraded MP4.
+
+The macOS arm64 synthetic S-Log3 + Cinema Soft parity run (`npm run parity:export -- --only color`,
+2026-09-24) compared 27,648 interior RGB channels from a real WebGL2 `readPixels` preview against
+the production v3/FFmpeg H.264 export. Mean absolute difference was 5.93/255, 95th percentile
+23/255 and observed maximum 43/255. An identity-LUT comparison against the source decode alone
+measured 3.83/255 mean, 12/255 at the 95th percentile and 16/255 maximum. These are observations
+for this fixture and machine, not a general tolerance for all codecs or camera footage. See
+`docs/decisions/evidence/x3-parity-2026-09-24.json`. Windows and a real log-camera file remain
+unmeasured.
+
 - **Out of scope for v1.** Keyframed grades, scopes/waveforms, HSL qualifiers and power windows, 1D
   LUTs, grading a `color` (background) clip, HDR output. The primaries inspector exposes lift/gamma/
   gain as one master slider per wheel (all three channels together) rather than per-channel R/G/B —

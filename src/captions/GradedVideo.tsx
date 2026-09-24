@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react'
 import type { Cube3D } from '../color/cube'
 import { LutRenderer } from '../color/webglLut'
+import { pooledVideoStyle } from './pooledVideoStyle'
 
 /** Not every TS DOM lib version this app builds against types the Media Capture callback yet — the
  * same optional extension `src/playback/videoPool.ts`'s `VideoLike` declares. */
@@ -39,10 +40,14 @@ export function GradedVideo({ source, grade, fit, style }: {
   useLayoutEffect(() => {
     const parent = hostRef.current
     if (!parent || !element) return
-    Object.assign(element.style, { width: '100%', height: '100%', display: 'block', objectFit, opacity: unavailable ? '1' : '0' })
+    Object.assign(element.style, pooledVideoStyle(fit, unavailable))
     parent.insertBefore(element, parent.firstChild)
-    return () => { if (element.parentNode === parent) parent.removeChild(element) }
-  }, [element, objectFit, unavailable])
+    return () => {
+      // Hand the element back visible: the next mounter (or none) must never inherit `opacity: 0`.
+      element.style.opacity = '1'
+      if (element.parentNode === parent) parent.removeChild(element)
+    }
+  }, [element, fit, unavailable])
 
   // One GL context per mounted canvas, recreated after a context loss. `webglcontextlost` must call
   // `preventDefault()` or the browser never fires `webglcontextrestored` (the WebGL spec's own rule).
@@ -51,7 +56,7 @@ export function GradedVideo({ source, grade, fit, style }: {
     if (!canvas) return
     const create = () => {
       try { rendererRef.current = new LutRenderer(canvas); setUnavailable(false) }
-      catch { rendererRef.current = null; setUnavailable(true) }
+      catch (error) { console.warn('Grade preview unavailable:', error); rendererRef.current = null; setUnavailable(true) }
     }
     const onLost = (event: Event) => { event.preventDefault(); rendererRef.current = null; setUnavailable(true) }
     const onRestored = () => create()
@@ -70,7 +75,7 @@ export function GradedVideo({ source, grade, fit, style }: {
     const renderer = rendererRef.current
     if (!renderer || width <= 0 || height <= 0) return
     try { renderer.uploadLut(grade); renderer.draw(media, width, height) }
-    catch { rendererRef.current = null; setUnavailable(true) }
+    catch (error) { console.warn('Grade preview draw failed:', error); rendererRef.current = null; setUnavailable(true) }
   }
 
   // Video: redraw every presented frame via `requestVideoFrameCallback` (arms/disarms exactly like
@@ -81,8 +86,10 @@ export function GradedVideo({ source, grade, fit, style }: {
   useEffect(() => {
     if (unavailable || !element) return
     const video = element as FrameCallbackVideo
+    // A slider edit changes the LUT while playback is paused, without presenting a new video
+    // frame. Draw the already-decoded frame immediately so the inspector feels live.
+    if (video.readyState >= 2) draw(video, video.videoWidth, video.videoHeight)
     if (!video.requestVideoFrameCallback) {
-      if (video.readyState >= 2) draw(video, video.videoWidth, video.videoHeight)
       return
     }
     let handle: number | null = null
@@ -99,13 +106,14 @@ export function GradedVideo({ source, grade, fit, style }: {
   useEffect(() => {
     if (unavailable || source.kind !== 'image') return
     const image = new Image()
+    image.crossOrigin = 'anonymous'
     image.onload = () => draw(image, image.naturalWidth, image.naturalHeight)
     image.src = source.url
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source.kind, source.kind === 'image' ? source.url : null, grade, unavailable])
 
   return <div ref={hostRef} style={{ ...style, position: 'relative', overflow: 'hidden' }}>
-    {source.kind === 'image' && <img src={source.url} draggable={false} alt="" style={{ width: '100%', height: '100%', objectFit, display: 'block', opacity: unavailable ? 1 : 0, position: unavailable ? 'static' : 'absolute', inset: 0 }} />}
+    {source.kind === 'image' && <img src={source.url} crossOrigin="anonymous" draggable={false} alt="" style={{ width: '100%', height: '100%', objectFit, display: 'block', opacity: unavailable ? 1 : 0, position: unavailable ? 'static' : 'absolute', inset: 0 }} />}
     <canvas ref={canvasRef} style={{ width: '100%', height: '100%', objectFit, display: 'block', position: 'absolute', inset: 0, opacity: unavailable ? 0 : 1, pointerEvents: 'none' }} />
     {unavailable && <span style={{ position: 'absolute', right: 4, bottom: 4, padding: '2px 6px', borderRadius: 3, fontSize: 10,
       background: '#10101099', color: '#ffda8b', border: '1px solid #ffda8b55' }}>Grade unavailable</span>}

@@ -589,7 +589,11 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   // sits above every video; only an image genuinely under a video is composited by FFmpeg (ADR 0005).
   // A generated background is composited by FFmpeg like video, so it counts as "under" a host image too.
   const videoTrackTop = Math.max(-1, ...visual.filter((clip) => clip.kind === 'video' || clip.kind === 'color').map((clip) => order.get(clip.trackId) ?? 0))
-  const hostImages = visual.every((clip) => clip.kind !== 'image' || (order.get(clip.trackId) ?? 0) > videoTrackTop)
+  const hiddenAdjustmentTracks = new Set(project.tracks.filter((track) => track.hidden).map((track) => track.id))
+  const adjustments = project.clips.filter((clip): clip is AdjustmentClip => clip.kind === 'adjustment' && clip.enabled !== false && !hiddenAdjustmentTracks.has(clip.trackId))
+  // Host-painted images bypass FFmpeg's per-clip LUT chain. Route images through FFmpeg whenever
+  // an adjustment is present so a graded image can never disappear from the grading path.
+  const hostImages = adjustments.length === 0 && visual.every((clip) => clip.kind !== 'image' || (order.get(clip.trackId) ?? 0) > videoTrackTop)
   // One input per clip FFmpeg reads — never shared — so each clip gets its own decoder, seeked
   // straight to its source range (workers/media/exportArguments.ts `exportFilterGraphV3`).
   const inputs: { path: string; kind: 'video' | 'image' | 'audio' }[] = []
@@ -599,7 +603,8 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   // A grade-free timeline never enters any of the code below (skipped by `hasAdjustments`, checked
   // once here), so its manifest — and FFmpeg arguments — stay byte-for-byte what they were before
   // this feature existed.
-  const hasAdjustments = project.clips.some((clip) => clip.kind === 'adjustment' && clip.enabled !== false)
+  const hasAdjustments = adjustments.length > 0
+  const gradingClips: readonly Clip[] = [...visual, ...adjustments]
   const lutCache = new Map<string, { id: string; cube: Cube3D }>()
   const lutAssetOf = (assetId: string): ProjectAsset => {
     const asset = assets.get(assetId)
@@ -631,7 +636,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     // Video or image, FFmpeg-composited: split at grade boundaries when any adjustment layer exists
     // anywhere in the project — a segment with no adjustment above it bakes to no `lutId` at all.
     const range = { startUs: clip.timelineStartUs, endUs: clipEndUs(clip) }
-    const segments = hasAdjustments ? gradeSegments(project.clips, order, trackIndex, range) : [{ range, grades: [] as AdjustmentClip[] }]
+    const segments = hasAdjustments ? gradeSegments(gradingClips, order, trackIndex, range) : [{ range, grades: [] as AdjustmentClip[] }]
     segments.forEach((segment, segmentIndex) => {
       const lutId = segment.grades.length ? bakeStackLut(segment.grades, (assetId) => resolver.lutCube(lutAssetOf(assetId)), lutCache) : undefined
       // A clip with nothing to split it (the overwhelming common case) keeps its own stored source

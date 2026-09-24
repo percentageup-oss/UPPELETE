@@ -90,7 +90,7 @@ export function GeminiKeySettings({ status, onStatus, onMessage }: {
 
 const PLAYBACK_PROXY_MODES: { id: PlaybackProxyMode; label: string; hint: string }[] = [
   { id: 'off', label: 'Off', hint: 'Preview always plays the original file, whatever its size.' },
-  { id: 'auto', label: 'Auto (recommended)', hint: 'A lighter local copy is generated in the background only for video above 1080p, and used for preview once ready.' },
+  { id: 'auto', label: 'Auto (recommended)', hint: 'A lighter local copy is generated in the background for video above 1080p or that the player cannot decode (e.g. iPhone ProRes), and used for preview once ready.' },
   { id: 'always', label: 'Always', hint: 'A lighter local copy is generated in the background for every video, however small.' },
 ]
 

@@ -4,6 +4,7 @@ import { fillCss, paintAt, type FillPaint } from '../core/fill'
 import { GridPicture } from './GridPicture'
 import { GradedVideo } from './GradedVideo'
 import { maskStyle } from './maskStyle'
+import { pooledVideoStyle } from './pooledVideoStyle'
 import { compositionScale } from '../core/composition'
 import type { FrameEffects, PictureEffects } from '../core/frameEffects'
 import type { Cube3D } from '../color/cube'
@@ -137,7 +138,7 @@ function VideoSlot({ element, style, fit }: { element: HTMLVideoElement | null; 
   useLayoutEffect(() => {
     const parent = host.current
     if (!parent || !element) return
-    Object.assign(element.style, { width: '100%', height: '100%', display: 'block', objectFit: fit === 'stretch' ? 'fill' : fit })
+    Object.assign(element.style, pooledVideoStyle(fit, true))
     parent.appendChild(element)
     return () => { if (element.parentNode === parent) parent.removeChild(element) }
   }, [element, fit])

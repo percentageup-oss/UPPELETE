@@ -42,6 +42,9 @@ describe('bakedGradeStack', () => {
     const grade: Grade = { ...NEUTRAL_GRADE, input: { type: 'lut', assetId: 'user-lut' } }
     const cube = bakedGradeStack([adjustment('a', grade)], new Map([['user-lut', identity]]))
     expect(cube).not.toBeNull()
+    const replaced: Cube3D = { ...identity, data: Float32Array.from(identity.data, (value) => 1 - value) }
+    const afterRelink = bakedGradeStack([adjustment('a', grade)], new Map([['user-lut', replaced]]))
+    expect(afterRelink).not.toBe(cube)
   })
 
   it('memoizes by the stack content: two calls with equal (but not identical) grades share a cube', () => {

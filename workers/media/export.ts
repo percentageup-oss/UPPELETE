@@ -292,11 +292,12 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
     cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays, effects: manifest.effects, textOverlays: manifest.textOverlays,
     timeline: manifestTimeline(manifest), output: { width, height },
   })
+  const graph = exportFilterGraphV3(manifest, hasAudioByInput, lutPaths)
   return {
     layer,
     request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
-    graph: exportFilterGraphV3(manifest, hasAudioByInput, lutPaths),
-    args: (script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles),
+    graph,
+    args: (script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graph),
     overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
     masks: maskTargets(manifest),
     frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),

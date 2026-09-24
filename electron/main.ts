@@ -130,6 +130,9 @@ async function inspectLut(filePath: string, expected: ProjectMedia | null = null
   const controller = new AbortController()
   const fingerprint = await fingerprintMedia(filePath, controller.signal)
   const media: ProjectMedia = { name: path.basename(filePath), reference: { relativePath: null, absolutePath: filePath }, fingerprint, metadata: null }
+  // Export resolves a LUT asset by fingerprint through this same registry (`buildExportForProject`),
+  // so a LUT that was imported but never registered here made every export using it fail as "missing".
+  inspectedMedia.set(fingerprintKey(fingerprint), { path: filePath, media })
   return { path: filePath, url: '', media, mismatches: expected ? describeMediaMismatches(expected, media) : [], text }
 }
 
@@ -487,6 +490,30 @@ ipcMain.handle('lut:import', async () => {
   catch (error) { return { ok: false as const, message: errorMessage(error) } }
 })
 
+const saveGeneratedLutSchema = z.object({ text: z.string().max(MAX_LUT_BYTES), name: z.string().min(1).max(120), defaultDir: z.string().nullable() })
+
+/** "Match reference image" → Save: writes a renderer-generated `.cube` to a path the user picks in a
+ * native save dialog (defaulting to the project folder), then imports it through `inspectLut` like
+ * any other LUT, so it is fingerprinted, relinkable and exportable. The text is re-validated with
+ * `parseCube` here — the renderer never chooses the path and main never trusts its content. */
+ipcMain.handle('lut:save-generated', async (_event, request: unknown) => {
+  const { text, name, defaultDir } = saveGeneratedLutSchema.parse(request)
+  try { parseCube(text) } catch (error) { return { ok: false as const, message: `The generated LUT is invalid: ${errorMessage(error)}` } }
+  const safeName = name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\.cube$/i, '').trim() || 'Reference match'
+  const result = await dialog.showSaveDialog({
+    defaultPath: path.join(defaultDir ?? app.getPath('documents'), `${safeName}.cube`),
+    filters: [RELINK_FILTERS.lut],
+  })
+  if (result.canceled || !result.filePath) return null
+  const filePath = /\.cube$/i.test(result.filePath) ? result.filePath : `${result.filePath}.cube`
+  try {
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`
+    await writeFile(temporaryPath, text, { encoding: 'utf8', flag: 'wx' })
+    await rename(temporaryPath, filePath)
+    return { ok: true as const, candidate: await inspectLut(filePath) }
+  } catch (error) { return { ok: false as const, message: errorMessage(error) } }
+})
+
 const MEDIA_BIN_EXTENSIONS = [...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS, ...SUBTITLE_EXTENSIONS]
 
 /** Multi-select import for the media bin (Media panel "Import…" button). Each picked file is
@@ -569,6 +596,16 @@ function isAppOrigin(url: string): boolean {
   return isDev && !!process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL)
 }
 
+/** CORS headers for a `media:` response, so a `<video>`/`<img>` loaded with `crossOrigin="anonymous"`
+ * stays untainted and WebGL can upload it as a texture (the graded preview). Only the app's own
+ * origin is echoed; a packaged `file://` page sends `Origin: null`. */
+function mediaCorsHeaders(origin: string | null): Record<string, string> {
+  if (!origin) return {}
+  const devOrigin = isDev && process.env.VITE_DEV_SERVER_URL ? new URL(process.env.VITE_DEV_SERVER_URL).origin : null
+  if (origin !== 'null' && origin !== devOrigin) return {}
+  return { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' }
+}
+
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback, details) => {
     callback(ALLOWED_PERMISSIONS.has(permission) && isAppOrigin(details.requestingUrl))
@@ -593,9 +630,10 @@ app.whenReady().then(async () => {
     let sizeBytes: number
     try { sizeBytes = (await stat(filePath)).size } catch { return new Response('Not Found', { status: 404 }) }
     const plan = planMediaRange(request.headers.get('range'), sizeBytes, filePath)
-    if (plan.status === 416 || request.method === 'HEAD') return new Response(null, { status: plan.status, headers: plan.headers })
+    const headers = { ...plan.headers, ...mediaCorsHeaders(request.headers.get('origin')) }
+    if (plan.status === 416 || request.method === 'HEAD') return new Response(null, { status: plan.status, headers })
     const stream = Readable.toWeb(createReadStream(filePath, { start: plan.start, end: plan.end })) as ReadableStream
-    return new Response(stream, { status: plan.status, headers: plan.headers })
+    return new Response(stream, { status: plan.status, headers })
   })
 
   // Developer-only, read-only smoke entry; no renderer IPC is exposed by M1.

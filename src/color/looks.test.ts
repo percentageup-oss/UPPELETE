@@ -8,7 +8,7 @@ describe('LOOKS', () => {
   })
 
   it('names and descriptions mention no camera or film brand (docs/DEPENDENCIES.md: original work only)', () => {
-    const banned = /fuji|fujifilm|leica|kodak|canon|sony|panasonic|arri|red\b/i
+    const banned = /fuji|fujifilm|leica|kodak|canon|sony|panasonic|arri|red\b|wick|kolder|mckinnon|keanu|netflix/i
     for (const look of LOOKS) {
       expect(look.name).not.toMatch(banned)
       expect(look.description).not.toMatch(banned)
@@ -54,6 +54,49 @@ describe('applyLook', () => {
     for (const look of LOOKS) {
       const [r, g, b] = applyLook([0.5, 0.5, 0.5], look, 1)
       for (const v of [r, g, b]) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(1) }
+    }
+  })
+})
+
+describe('hue-band looks', () => {
+  const bands = LOOKS.filter((look) => look.hues?.length || look.fade)
+
+  it('ships the signature looks', () => {
+    for (const id of ['cartel-dusk', 'neon-assassin', 'wanderlust', 'moody-matte', 'cold-forest', 'golden-drift']) {
+      expect(lookById(id)).toBeDefined()
+    }
+  })
+
+  it('is the identity at strength 0', () => {
+    const px: RGB = [0.7, 0.4, 0.3]
+    for (const look of bands) expect(applyLook(px, look, 0)).toEqual(px)
+  })
+
+  it('keeps a mid grey neutral for looks without split-toning or matte', () => {
+    const look = lookById('wanderlust')!
+    const [r, g, b] = applyLook([0.5, 0.5, 0.5], look, 1)
+    expect(Math.abs(r - g)).toBeLessThan(0.02)
+    expect(Math.abs(g - b)).toBeLessThan(0.02)
+  })
+
+  it('wanderlust pushes sky blue toward teal and skin toward orange', () => {
+    const look = lookById('wanderlust')!
+    const sky = applyLook([0.35, 0.55, 0.9], look, 1)
+    expect(sky[1]).toBeGreaterThan(sky[0]) // cyan-ish: green above red
+    expect(sky[1] / sky[2]).toBeGreaterThan(0.55 / 0.9)
+    const skin = applyLook([0.85, 0.62, 0.5], look, 1)
+    expect(skin[0]).toBeGreaterThan(skin[2] + 0.25)
+  })
+
+  it('a matte look lifts pure black', () => {
+    const look = lookById('moody-matte')!
+    const [r, g, b] = applyLook([0, 0, 0], look, 1)
+    expect(Math.min(r, g, b)).toBeGreaterThan(0.02)
+  })
+
+  it('stays inside 0-1 for every look over a color grid', () => {
+    for (const look of LOOKS) for (const r of [0, 0.5, 1]) for (const g of [0, 0.5, 1]) for (const b of [0, 0.5, 1]) {
+      for (const v of applyLook([r, g, b], look, 1)) { expect(v).toBeGreaterThanOrEqual(0); expect(v).toBeLessThanOrEqual(1) }
     }
   })
 })

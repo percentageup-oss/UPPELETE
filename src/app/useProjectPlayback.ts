@@ -31,10 +31,22 @@ export function useProjectPlayback(project: CaptionProject, durationUs: number, 
   const live = useRef({ project, urlOf, handlers, bump: () => setPoolVersion((version) => version + 1) })
   live.current = { project, urlOf, handlers, bump: live.current.bump }
   const clock = useMemo(() => createSequenceClock(), [])
-  const pool = useMemo(() => createVideoPool<HTMLVideoElement>(() => document.createElement('video'), {
+  const pool = useMemo(() => createVideoPool<HTMLVideoElement>(() => {
+    // CORS-clean (the `media:` handler sends Access-Control-Allow-Origin) so the graded preview can
+    // upload frames to WebGL; must be set before `src` is assigned.
+    const element = document.createElement('video')
+    element.crossOrigin = 'anonymous'
+    return element
+  }, {
     onCreate: (entry) => {
       entry.element.addEventListener('error', () => live.current.handlers.onMediaError(entry.assetId, entry.element))
-      entry.element.addEventListener('loadeddata', () => live.current.handlers.onMediaReady(entry.assetId))
+      entry.element.addEventListener('loadeddata', () => {
+        // Chromium plays the audio of a file whose video codec it can't decode (e.g. iPhone ProRes
+        // .mov) and reports no error — the frame just stays black. No decoded dimensions means no video.
+        const asset = live.current.project.assets.find((candidate) => candidate.id === entry.assetId)
+        if (asset?.kind === 'video' && entry.element.videoWidth === 0) live.current.handlers.onMediaError(entry.assetId, entry.element)
+        else live.current.handlers.onMediaReady(entry.assetId)
+      })
       live.current.bump()
     },
   }), [])

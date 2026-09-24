@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld('captionStudio', {
   importAsset: (kind: 'image' | 'audio'): Promise<ImportedAsset | null> => ipcRenderer.invoke('assets:import', kind),
   relinkAsset: (expected: ProjectAsset): Promise<AssetRelinkResult | null> => ipcRenderer.invoke('assets:relink', expected),
   importLut: (): Promise<LutImportResult | null> => ipcRenderer.invoke('lut:import'),
+  saveGeneratedLut: (request: { text: string; name: string; defaultDir: string | null }): Promise<LutImportResult | null> => ipcRenderer.invoke('lut:save-generated', request),
   importAssetFiles: (): Promise<InspectedFile[] | null> => ipcRenderer.invoke('assets:import-files'),
   // The renderer only ever holds `File` objects from a drop event; the path is resolved here, inside
   // the sandboxed preload, so no filesystem path ever crosses into renderer-controlled code.

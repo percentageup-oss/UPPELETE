@@ -36,12 +36,16 @@ export function proxySupportFromConfiguration(ffmpegVersionOutput: string): Prox
 export const playbackProxyModeSchema = z.enum(['off', 'auto', 'always'])
 export type PlaybackProxyMode = z.infer<typeof playbackProxyModeSchema>
 
-/** 'auto' skips generating a proxy for a source whose short edge is already at or below this —
- * such a source already plays smoothly, so a proxy would only cost disk and CPU for no benefit. */
+/** 'auto' skips generating a proxy for a playable source whose short edge is already at or below
+ * this — such a source already plays smoothly, so a proxy would only cost disk and CPU for no benefit. */
 export const PLAYBACK_PROXY_AUTO_THRESHOLD = 1080
 
-export function shouldRequestPlaybackProxy(mode: PlaybackProxyMode, metadata: { width: number | null; height: number | null } | null): boolean {
-  if (mode === 'off' || !metadata?.width || !metadata.height) return false
+export function shouldRequestPlaybackProxy(mode: PlaybackProxyMode, metadata: { width: number | null; height: number | null } | null, undecodable = false): boolean {
+  if (mode === 'off') return false
+  // The embedded player reported it cannot decode this video (e.g. iPhone ProRes plays audio over a
+  // black frame): without a proxy there is no preview at all, whatever the resolution.
+  if (undecodable) return true
+  if (!metadata?.width || !metadata.height) return false
   if (mode === 'always') return true
   return Math.min(metadata.width, metadata.height) > PLAYBACK_PROXY_AUTO_THRESHOLD
 }

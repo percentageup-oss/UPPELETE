@@ -18,6 +18,8 @@ const meta = (durationUs: number) => ({ durationUs, width: 1920, height: 1080, r
 const track = (id: string, kind: Track['kind'] = 'video'): Track => ({ id, kind, name: '', muted: false, hidden: false, locked: false })
 const video = (id: string, trackId: string, timelineStartUs: number, lengthUs: number): Clip =>
   ({ kind: 'video', id, trackId, assetId: 'x', timelineStartUs, sourceStartUs: 0, sourceEndUs: lengthUs, opacity: 1, fit: 'contain', gain: 1 })
+const image = (id: string, trackId: string, timelineStartUs: number, lengthUs: number): Clip =>
+  ({ kind: 'image', id, trackId, assetId: 'image', timelineStartUs, sourceStartUs: 0, sourceEndUs: lengthUs, opacity: 1, fit: 'contain' })
 const color = (id: string, trackId: string, timelineStartUs: number, lengthUs: number): Clip =>
   ({ kind: 'color', id, trackId, timelineStartUs, sourceStartUs: 0, sourceEndUs: lengthUs, opacity: 1, fit: 'contain', fill: { type: 'solid', color: '#112233' } })
 const adjustment = (id: string, trackId: string, timelineStartUs: number, endUs: number, grade: Grade): AdjustmentClip =>
@@ -72,6 +74,22 @@ describe('buildExportManifest: grading', () => {
     const built = v3(buildExportManifest(project([color('bg', 'V1', 0, 10 * US), adjustment('adj', 'V2', 0, 10 * US, graded(2))]), resolver()))
     expect(built.clips).toHaveLength(1)
     expect(built.clips[0].kind).toBe('color')
+    expect(built.clips[0].lutId).toBeUndefined()
+    expect(built.luts).toEqual([])
+  })
+
+  it('sends an image on an upper track through FFmpeg when an adjustment layer grades it', () => {
+    const asset: ProjectAsset = { id: 'image', kind: 'image', name: 'image.png', reference: { relativePath: null, absolutePath: '/m/image.png' }, fingerprint: null, metadata: null }
+    const built = v3(buildExportManifest(project([
+      video('a', 'V1', 0, 10 * US), image('still', 'V2', 0, 10 * US), adjustment('adj', 'V3', 0, 10 * US, graded(1)),
+    ], [track('V1'), track('V2'), track('V3'), track('A1', 'audio')], [asset]), resolver()))
+    expect(built.overlays).toEqual([])
+    expect(built.clips.find((clip) => clip.id === 'still')?.lutId).toBeDefined()
+  })
+
+  it('ignores adjustment layers on hidden tracks', () => {
+    const hidden = { ...track('V2'), hidden: true }
+    const built = v3(buildExportManifest(project([video('a', 'V1', 0, 10 * US), adjustment('adj', 'V2', 0, 10 * US, graded(1))], [track('V1'), hidden]), resolver()))
     expect(built.clips[0].lutId).toBeUndefined()
     expect(built.luts).toEqual([])
   })

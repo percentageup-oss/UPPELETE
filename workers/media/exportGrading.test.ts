@@ -41,10 +41,17 @@ describe('exportFilterGraphV3: grading', () => {
     )
   })
 
-  it('a lutId with no matching path (should not happen once export.ts writes every lut) degrades to no grading rather than a broken filter', () => {
+  it('keeps an image in full RGB range before sampling its LUT', () => {
+    const graded = exportManifestV3Schema.parse({ ...manifest([clip('a', 0)]),
+      inputs: [{ path: '/m/still.png', kind: 'image' }], clips: [clip('still', 0, { kind: 'image', lutId: 'lut-1', gain: 0 })], luts: [LUT] })
+    const chain = exportFilterGraphV3(graded, [false], new Map([['lut-1', '/tmp/job/lut-1.cube']])).filterComplex
+    expect(chain).toContain("format=gbrp16le,lut3d=file='/tmp/job/lut-1.cube':interp=trilinear")
+    expect(chain).not.toContain('in_range=tv')
+  })
+
+  it('a lutId with no matching file aborts rather than silently exporting an ungraded frame', () => {
     const graded = manifest([clip('a', 0, { lutId: 'lut-1' })], [LUT])
-    const chains = exportFilterGraphV3(graded, [false], new Map()).filterComplex.split(';')
-    expect(chains[0]).not.toContain('lut3d')
+    expect(() => exportFilterGraphV3(graded, [false], new Map())).toThrow('Missing baked LUT file for lut-1')
   })
 
   it('quotes a path with a single quote and a backslash (a Windows temp dir under a display name) safely', () => {

@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir, cpus, totalmem, release } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -47,7 +48,8 @@ const helpersPath = join(await mkdtemp(join(scratchRoot, 'caption-x3-helpers-'))
 await build({ entryPoints: ['scripts/export-parity-helpers.ts'], outfile: helpersPath, bundle: true, platform: 'node', format: 'esm' })
 const { frameRequestAt, frameSourceUs, exportFrameCountFor, exportOutputDurationUs, exportPlanSchema,
   captionTokens, DEFAULT_CAPTION_STYLE, captionFixtures, CAPTION_TEMPLATES, titleTemplateChanges, defaultTextOverlay,
-  decorativeTextCue, textMotionAt, frameRequestV4Schema, readLocalToolConfig, resolveToolchain, LOCAL_TOOL_CONFIG_FILE } = await import(helpersPath)
+  decorativeTextCue, textMotionAt, frameRequestV4Schema, readLocalToolConfig, resolveToolchain, LOCAL_TOOL_CONFIG_FILE,
+  bakeGrade, NEUTRAL_GRADE, encodeLog, encodeCubeData } = await import(helpersPath)
 
 const tools = resolveToolchain(process.env, readLocalToolConfig(join(repoRoot, LOCAL_TOOL_CONFIG_FILE)), LOCAL_TOOL_CONFIG_FILE)
 if (!tools) throw new Error(`Configure ${LOCAL_TOOL_CONFIG_FILE} (or CAPTION_STUDIO_FFMPEG_PATH/CAPTION_STUDIO_FFPROBE_PATH) before running the parity suite`)
@@ -339,6 +341,71 @@ async function extractFrameRgba(mp4Path, frameIndex, composition) {
   return image.toBitmap() // BGRA on this platform's nativeImage bitmap; consistent for both sides of every comparison below.
 }
 
+/** S-Log3-coded source -> production v3 `lut3d` export vs the production WebGL LUT renderer.
+ * Both decode the same H.264 frame; the comparison is on interior pixels so chroma
+ * subsampling and H.264 edge ringing do not dominate the measurement. */
+async function colorGradeParity(workDir, report) {
+  const size = 128
+  const raw = Buffer.alloc(size * size * 3)
+  const levels = [0.02, 0.18, 0.5, 0.9]
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const col = Math.floor(x / 32), row = Math.floor(y / 32)
+    const linear = [levels[col], levels[row], levels[(col + row) % 4]]
+    for (let channel = 0; channel < 3; channel++) raw[(y * size + x) * 3 + channel] = Math.round(Math.max(0, Math.min(1, encodeLog('s-log3', linear[channel]))) * 255)
+  }
+  const rawPath = join(workDir, 'color-slog3.rgb')
+  const sourcePath = join(workDir, 'color-slog3.mp4')
+  await writeFile(rawPath, raw)
+  await ffmpeg(['-stream_loop', '-1', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', `${size}x${size}`, '-framerate', '30', '-i', rawPath,
+    '-t', '1', '-c:v', 'h264_videotoolbox', '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709', '-color_primaries', 'bt709', '-color_trc', 'bt709', sourcePath])
+  const cube = bakeGrade({ ...NEUTRAL_GRADE, input: { type: 'log', profile: 's-log3' }, look: { id: 'cinema-soft', strength: 0.8 } })
+  const manifest = {
+    version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { width: size, height: size, frameRate: { numerator: 30, denominator: 1 } },
+    sequenceDurationUs: 1_000_000, inputs: [{ path: sourcePath, kind: 'video' }],
+    clips: [{ id: 'color', inputIndex: 0, assetId: 'color', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0,
+      sourceEndUs: 1_000_000, opacity: 1, fit: 'contain', gain: 0, lutId: 'slog3-look' }],
+    overlays: [], blurRegions: [], luts: [{ id: 'slog3-look', size: cube.size, data: encodeCubeData(cube.data) }],
+  }
+  const result = await realExport(sourcePath, manifest, workDir, 'color-slog3-look')
+  const exported = await extractFrameRgba(result.outputPath, 15, { width: size, height: size })
+  const sourceDecoded = await extractFrameRgba(sourcePath, 15, { width: size, height: size })
+  const bundlePath = join(workDir, 'color-parity-harness.js')
+  await build({ entryPoints: ['scripts/color-parity-harness.ts'], outfile: bundlePath, bundle: true, platform: 'browser', format: 'esm' })
+  const htmlPath = join(workDir, 'color-parity.html')
+  await writeFile(htmlPath, '<!doctype html><canvas></canvas><script type="module" src="./color-parity-harness.js"></script>')
+  const window = createWindow({ width: size, height: size }, false)
+  try {
+    await window.loadFile(htmlPath)
+    await window.webContents.executeJavaScript('new Promise(resolve => { const check = () => window.renderColorParity ? resolve(true) : setTimeout(check, 10); check() })')
+    const render = (lut) => window.webContents.executeJavaScript(`window.renderColorParity(${JSON.stringify(pathToFileURL(sourcePath).href)}, ${JSON.stringify({ ...lut, data: Array.from(lut.data) })})`)
+    const measure = (preview, reference) => {
+      let total = 0, max = 0, count = 0
+      const signedByChannel = [0, 0, 0], deltas = []
+      for (let y = 4; y < size - 4; y++) for (let x = 4; x < size - 4; x++) {
+        if (x % 32 < 4 || x % 32 > 27 || y % 32 < 4 || y % 32 > 27) continue
+        // WebGL readPixels is bottom-up RGBA; nativeImage.toBitmap is top-down BGRA on macOS.
+        const pi = ((size - 1 - y) * size + x) * 4, ei = (y * size + x) * 4
+        for (let c = 0; c < 3; c++) {
+          const delta = Math.abs(preview[pi + c] - reference[ei + (2 - c)])
+          signedByChannel[c] += preview[pi + c] - reference[ei + (2 - c)]
+          total += delta; max = Math.max(max, delta); count++; deltas.push(delta)
+        }
+      }
+      deltas.sort((a, b) => a - b)
+      return { comparedChannels: count, meanAbsoluteChannelDelta: total / count,
+        p95ChannelDelta: deltas[Math.floor(deltas.length * 0.95)], maxChannelDelta: max,
+        meanSignedByChannel: signedByChannel.map((sum) => sum / (count / 3)) }
+    }
+    const sourceDecode = measure(await render(bakeGrade(NEUTRAL_GRADE)), sourceDecoded)
+    const graded = measure(await render(cube), exported)
+    report.colorGrade = { source: 'S-Log3-coded H.264', look: 'cinema-soft',
+      ...graded, sourceDecode,
+      preview: 'LutRenderer WebGL2 readPixels', export: 'v3 worker + FFmpeg lut3d + H.264 MP4',
+      tolerance: { kind: 'observed bound on this fixture and machine', maxChannelDelta: graded.maxChannelDelta } }
+  } finally { window.destroy() }
+}
+
 function compositeStraightAlpha(caption, backdrop) {
   const out = Buffer.alloc(caption.length)
   for (let i = 0; i < caption.length; i += 4) {
@@ -550,6 +617,12 @@ async function main() {
       await layerMaskParity(preview, exported, { width: 1920, height: 1920 }, report.layerMasks)
     }
     await saveEvidence()
+
+    if (include('color')) {
+      try { await colorGradeParity(workDir, report) }
+      catch (error) { report.notes.push({ tag: 'color-slog3-look', stage: 'color-parity', error: error?.stack || String(error) }); throw error }
+      await saveEvidence()
+    }
 
     // Stage (e)/(f): real exports. One job's failure is recorded and does not stop the rest —
     // the evidence file should show every case this run could reach, not abort on the first.

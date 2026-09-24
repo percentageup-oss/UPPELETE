@@ -25,3 +25,17 @@ export function lookSwatchGradient(lookId: string): string {
   })
   return `linear-gradient(90deg, ${stops.join(', ')})`
 }
+
+const HUES: readonly RGB[] = [
+  [0.85, 0.25, 0.25], [0.9, 0.6, 0.25], [0.9, 0.85, 0.3], [0.3, 0.75, 0.35],
+  [0.3, 0.7, 0.85], [0.3, 0.4, 0.85], [0.7, 0.35, 0.8], [0.85, 0.7, 0.6],
+]
+
+/** Like `lookSwatchGradient` but over saturated hue patches, so a look's color shifts and saturation
+ * changes are visible (a gray ramp alone looks monochrome for looks that only tint the extremes). */
+export function lookColorSwatchGradient(lookId: string): string {
+  const grade: Grade = { ...NEUTRAL_GRADE, look: { id: lookId, strength: 1 } }
+  const n = HUES.length
+  const stops = HUES.map((c, i) => `${toCss(evaluateGrade(c, grade))} ${(i / n) * 100}% ${((i + 1) / n) * 100}%`)
+  return `linear-gradient(90deg, ${stops.join(', ')})`
+}

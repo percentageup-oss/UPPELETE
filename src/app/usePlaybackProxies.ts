@@ -22,7 +22,12 @@ function loadMode(): PlaybackProxyMode {
  * parity all keep resolving media through `useAssetUrls`'s own `urlOf` directly and never call
  * anything here, so they always read the original source file.
  */
-export function usePlaybackProxies(assets: ProjectAsset[], originalUrlOf: (asset: ProjectAsset | null | undefined) => string | null) {
+export function usePlaybackProxies(
+  assets: ProjectAsset[],
+  originalUrlOf: (asset: ProjectAsset | null | undefined) => string | null,
+  /** Asset ids the embedded player has reported it cannot decode; 'auto' proxies these regardless of size. */
+  undecodable: ReadonlySet<string>,
+) {
   const [mode, setModeState] = useState<PlaybackProxyMode>(loadMode)
   const [override, setOverride] = useState<PlaybackProxyOverride>(null)
   const [statuses, setStatuses] = useState<Map<string, PlaybackProxyStatus>>(new Map())
@@ -45,13 +50,13 @@ export function usePlaybackProxies(assets: ProjectAsset[], originalUrlOf: (asset
     for (const asset of assets) {
       if (asset.kind !== 'video' || !asset.fingerprint || !asset.metadata?.durationUs) continue
       if (!originalUrlOf(asset)) continue
-      if (!shouldRequestPlaybackProxy(mode, asset.metadata)) continue
+      if (!shouldRequestPlaybackProxy(mode, asset.metadata, undecodable.has(asset.id))) continue
       const key = asset.fingerprint.value
       if (requested.current.has(key)) continue
       requested.current.add(key)
       api.ensurePlaybackProxy({ fingerprint: asset.fingerprint, durationUs: asset.metadata.durationUs })
     }
-  }, [assets, mode, originalUrlOf])
+  }, [assets, mode, originalUrlOf, undecodable])
 
   const urlOf = useCallback((asset: ProjectAsset | null | undefined): string | null => {
     const original = originalUrlOf(asset)

@@ -333,8 +333,11 @@ function ffmpegFilterPath(filePath: string): string {
 function lutChain(clip: ManifestClip, lutPaths: ReadonlyMap<string, string>): string {
   if (!clip.lutId) return ''
   const file = lutPaths.get(clip.lutId)
-  if (!file) return ''
-  return `,scale=in_color_matrix=bt709:in_range=tv,format=gbrp16le,lut3d=file=${ffmpegFilterPath(file)}:interp=trilinear`
+  if (!file) throw new Error(`Missing baked LUT file for ${clip.lutId}`)
+  // Video is normally limited-range YUV. Still images are already full-range RGB; forcing TV
+  // range on an image would shift its colors before the shared LUT is sampled.
+  const input = clip.kind === 'image' ? 'format=gbrp16le' : 'scale=in_color_matrix=bt709:in_range=tv,format=gbrp16le'
+  return `,${input},lut3d=file=${ffmpegFilterPath(file)}:interp=trilinear`
 }
 
 /**
@@ -605,10 +608,10 @@ function inputArguments(manifest: ExportManifestV3, rate: string): string[] {
   })
 }
 
-export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = []): string[] {
+export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = [], preparedGraph?: ExportFilterGraph): string[] {
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
-  const graph = exportFilterGraphV3(manifest, hasAudioByInput)
+  const graph = preparedGraph ?? exportFilterGraphV3(manifest, hasAudioByInput)
   const targets = maskTargets(manifest)
   if (maskFiles.length !== targets.length) throw new Error(`Export needs ${targets.length} rasterized mask images, got ${maskFiles.length}.`)
   // One looping still per masked layer, as long as that layer, so no decoder or frame is shared.

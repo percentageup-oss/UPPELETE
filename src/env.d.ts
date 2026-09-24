@@ -56,6 +56,7 @@ declare global {
       importAsset(kind: 'image' | 'audio'): Promise<ImportedAsset | null>
       relinkAsset(expected: ProjectAsset): Promise<AssetRelinkResult | null>
       importLut(): Promise<LutImportResult | null>
+      saveGeneratedLut(request: { text: string; name: string; defaultDir: string | null }): Promise<LutImportResult | null>
       importAssetFiles(): Promise<InspectedFile[] | null>
       inspectDroppedFiles(files: File[]): Promise<InspectedFile[]>
       loadWaveform(request: WaveformLoadRequest): Promise<WaveformLoadResult>

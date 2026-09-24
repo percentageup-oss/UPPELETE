@@ -60,13 +60,14 @@ import { assetIdOf, type LayerMask, type MaskPathPoint, type MaskShape } from '.
 import { paintAt } from './core/fill'
 import { CaptionStageEditor, type CaptionPlacementPatch } from './CaptionStageEditor'
 import { defaultOverlayRect } from './core/overlayDefaults'
-import type { BackgroundMotion, BlurRegion, CaptionTrack, Clip, ClipFit, ClipSpeed, CompositionRect, EffectRegion, Fill, Grade, ProjectAsset, TextOverlay, Track, VisualClip, ZoomRegion } from './core/edit'
+import type { AdjustmentClip, BackgroundMotion, BlurRegion, CaptionTrack, Clip, ClipFit, ClipSpeed, CompositionRect, EffectRegion, Fill, Grade, ProjectAsset, TextOverlay, Track, VisualClip, ZoomRegion } from './core/edit'
 import { linkIdOf, linkPartners } from './core/clipLinks'
 import { adjustmentTrackAbove, backgroundTrackFor, clipAt, freeTrackFor, gapsOnTrack, topAdjustmentTrackFor, trackEndUs, type ClipEdge, type EditMode } from './core/clipEdits'
 import { gradeStackFor } from './core/gradeStack'
 import { bakedGradeStack } from './color/previewGrade'
 import { useLutAssets } from './app/useLutAssets'
 import { ColorPanel } from './ColorPanel'
+import { captureFrame, useColorFrame } from './app/useColorFrame'
 import type { TrackFlags } from './core/trackCommands'
 import type { CaptionTrackFlags } from './core/captionTrackCommands'
 import { wordMotionAvailability, type CaptionFrame, type Size } from './captions/renderer'
@@ -157,7 +158,9 @@ export default function App() {
   const project = history.present
   const media = useAssetUrls()
   const lut = useLutAssets()
-  const playbackProxies = usePlaybackProxies(project.assets, media.urlOf)
+  const [codecIssues, setCodecIssues] = useState<Map<string, CodecIssue>>(new Map())
+  const undecodableAssetIds = useMemo(() => new Set(codecIssues.keys()), [codecIssues])
+  const playbackProxies = usePlaybackProxies(project.assets, media.urlOf, undecodableAssetIds)
   const primary = useMemo(() => primaryVideoAsset(project), [project.assets, project.clips])
   const assetById = useMemo(() => new Map(project.assets.map((asset) => [asset.id, asset])), [project.assets])
   const lutAssetsList = useMemo(() => project.assets.filter((asset) => asset.kind === 'lut'), [project.assets])
@@ -196,7 +199,6 @@ export default function App() {
   const [focusCueId, setFocusCueId] = useState<string | null | undefined>(undefined)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; target: TimelineMenuTarget } | null>(null)
   const [notice, setNotice] = useState<Notice>({ tone: 'info', text: 'Open a video to transcribe it, or import an SRT file.' })
-  const [codecIssues, setCodecIssues] = useState<Map<string, CodecIssue>>(new Map())
   const [proxyState, setProxyState] = useState<ProxyState>({ kind: 'idle' })
   const [exportState, setExportState] = useState<ExportState>({ kind: 'idle' })
   const addCueButtonRef = useRef<HTMLButtonElement>(null)
@@ -264,7 +266,7 @@ export default function App() {
       console.error('video.play() rejected', error, { mediaError: element.error, readyState: element.readyState })
       setNotice({ tone: 'error', text })
     },
-    onMediaError: (assetId, element) => setCodecIssues((issues) => new Map(issues).set(assetId, { kind: 'confirmed-unsupported', message: describeMediaError(element.error) ?? 'The embedded player could not play this media.' })),
+    onMediaError: (assetId, element) => setCodecIssues((issues) => new Map(issues).set(assetId, { kind: 'confirmed-unsupported', message: describeMediaError(element.error) ?? (element.videoWidth === 0 && element.readyState >= 2 ? 'The embedded player can play this file’s audio but cannot decode its video (e.g. ProRes from an iPhone). Create a playable proxy.' : 'The embedded player could not play this media.') })),
     onMediaReady: (assetId) => setCodecIssues((issues) => { if (!issues.has(assetId)) return issues; const next = new Map(issues); next.delete(assetId); return next }),
     onSoundIssue: (message) => setNotice({ tone: 'warning', text: `A sound could not be decoded: ${message}` }),
   })
@@ -338,6 +340,9 @@ export default function App() {
   const under = useMemo(() => videoUnderPlayhead(currentUs, project.tracks, project.clips), [currentUs, project.tracks, project.clips])
   const underAssetId = under ? assetIdOf(under.clip) : null
   const underAsset = underAssetId ? assetById.get(underAssetId) ?? null : null
+  // The frame under the playhead, for the Color tab's look thumbnails and "Match reference image".
+  const underElement = () => (under && underAssetId ? playback.transport.elementFor(under.clip.trackId, underAssetId) as HTMLVideoElement | null : null)
+  const colorFrame = useColorFrame(railTab === 'color', underElement, [Math.round(currentUs), under?.clip.id, playback.poolVersion])
   const pickedVideo = (pickedVideoId ? assetById.get(pickedVideoId) : undefined) ?? underAsset ?? primary
   const activeCue = activeCueAt(currentUs, project.tracks, project.clips, visibleCues)?.cue
   const timelineDisplay: CaptionDisplay = project.timelineDisplay ?? 'line'
@@ -420,6 +425,8 @@ export default function App() {
   }, [project.assets, media.urlOf])
   const issueAsset = (underAsset && codecIssues.has(underAsset.id) ? underAsset : null) ?? videoAssets(project).find((asset) => codecIssues.has(asset.id)) ?? null
   const codecIssue = issueAsset ? codecIssues.get(issueAsset.id)! : null
+  const issueProxyState = playbackProxies.statusOf(issueAsset)?.state
+  const autoProxyPending = issueProxyState === 'queued' || issueProxyState === 'generating'
 
   useEffect(() => {
     if (!codecIssue || !window.captionStudio || proxyState.kind !== 'idle') return
@@ -479,6 +486,9 @@ export default function App() {
   const hidden = new Set(project.tracks.filter((track) => track.hidden).map((track) => track.id))
   const exportAssets = [...new Set(project.clips.filter((clip) => !hidden.has(clip.trackId)).flatMap((clip) => assetIdOf(clip) ?? []))].flatMap((id) => assetById.get(id) ?? [])
   const offlineAssets = exportAssets.filter((asset) => !media.urlOf(asset))
+  const usedLutIds = new Set(project.clips.filter((clip): clip is AdjustmentClip => clip.kind === 'adjustment' && clip.enabled !== false
+    && !hidden.has(clip.trackId)).flatMap((clip) => clip.grade.input.type === 'lut' ? [clip.grade.input.assetId] : []))
+  const offlineLuts = lutAssetsList.filter((asset) => usedLutIds.has(asset.id) && !lut.cubes.has(asset.id))
   const offlineVideos = videoAssets(project).filter((asset) => project.clips.some((clip) => assetIdOf(clip) === asset.id) && !media.urlOf(asset))
 
   const startExportVideo = async (settings?: ExportSettings) => {
@@ -803,7 +813,23 @@ export default function App() {
     const result = await window.captionStudio.importLut()
     if (!result) return
     if (!result.ok) return setNotice({ tone: 'error', text: result.message })
-    const { candidate } = result
+    addLutCandidate(result.candidate)
+  }
+
+  /** "Match reference image" → Save: main writes the `.cube` (native save dialog, defaulting to the
+   * project folder) and returns it as an inspected LUT, which then joins the project like an import. */
+  const saveMatchLut = async ({ text, name }: { text: string; name: string }) => {
+    if (!window.captionStudio) return
+    const defaultDir = projectPath ? projectPath.replace(/[\\/][^\\/]*$/, '') : null
+    const result = await window.captionStudio.saveGeneratedLut({ text, name, defaultDir })
+    if (!result) return
+    if (!result.ok) return setNotice({ tone: 'error', text: result.message })
+    addLutCandidate(result.candidate)
+  }
+
+  /** Registers an inspected `.cube` as a project `lut` asset (or just re-registers it when its
+   * fingerprint is already in the project). Shared by Import and "Match reference image" → Save. */
+  const addLutCandidate = (candidate: MediaCandidate) => {
     const existing = findAssetByFingerprint(project.assets.filter((asset) => asset.kind === 'lut'), candidate.media)
     if (existing) { lut.register(existing.id, candidate.text!); setNotice({ tone: 'info', text: `${candidate.media.name} is already in the project.` }); return }
     const asset: ProjectAsset = { id: crypto.randomUUID(), kind: 'lut', ...candidate.media }
@@ -1598,6 +1624,7 @@ export default function App() {
     : !exportAssets.length && !project.clips.some((clip) => clip.kind === 'color') ? 'Add a video, image, sound or background to the timeline first'
     : !hasVideo && !project.format ? 'Add a video first: it sets the output size'
     : offlineAssets.length ? `Relink ${offlineAssets[0].name} first`
+    : offlineLuts.length ? `Relink ${offlineLuts[0].name} before exporting`
     : null
   const shortcutLabel = (key: string) => `${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}${key}`
   const fileEntries: MenuEntry[] = [
@@ -1693,6 +1720,43 @@ export default function App() {
   }
   const summaryAsset = underAsset ?? primary
 
+  // Preview quality + sequence size, surfaced in the View menu and the transport-bar chip (they were
+  // only reachable from the Timeline menu and 9px overlay chips on the video).
+  const proxyStatus = playbackProxies.statusOf(summaryAsset)
+  const proxyPreparing = proxyStatus?.state === 'queued' || proxyStatus?.state === 'generating'
+  const proxyReady = proxyStatus?.state === 'ready'
+  const proxyInUse = proxyReady && playbackProxies.override !== 'original' && playbackProxies.mode !== 'off'
+  const previewReason = proxyReady ? null : proxyPreparing ? 'Proxy is still being prepared' : 'No playback proxy for this clip'
+  const previewChipLabel = summaryAsset?.metadata
+    ? `Preview: ${proxyInUse ? 'Proxy' : 'Original'}${proxyPreparing ? ' · preparing…' : ''} · ${project.format ? `${project.format.width}×${project.format.height}` : `${summaryAsset.metadata.width ?? '?'}×${summaryAsset.metadata.height ?? '?'}`}`
+    : null
+  const previewEntries: MenuEntry[] = [
+    { id: 'preview-proxy', label: `${proxyInUse ? '✓ ' : ''}Preview with proxy (lighter, smoother)`, onSelect: () => playbackProxies.setOverride('proxy'), disabledReason: previewReason },
+    { id: 'preview-original', label: `${proxyInUse ? '' : '✓ '}Preview with original (full quality)`, onSelect: () => playbackProxies.setOverride('original'), disabledReason: summaryAsset ? null : 'Add a video first' },
+    { id: 'sep-preview-mode', separator: true },
+    ...(['off', 'auto', 'always'] as const).map((mode): MenuEntry => ({ id: `proxy-mode-${mode}`,
+      label: `${playbackProxies.mode === mode ? '✓ ' : ''}Proxies: ${mode === 'off' ? 'Off' : mode === 'auto' ? 'Auto (above 1080p or unplayable)' : 'Always'}`,
+      onSelect: () => playbackProxies.setMode(mode) })),
+    { id: 'sep-preview-settings', separator: true },
+    { id: 'sequence-settings-preview', label: 'Sequence settings…', onSelect: () => setSequenceSettingsOpen(true), disabledReason: project.format ? null : 'Add a video first' },
+    { id: 'playback-settings', label: 'Playback settings…', onSelect: () => setSettingsTab('playback') },
+  ]
+  const viewEntries: MenuEntry[] = [
+    { id: 'sequence-settings-view', label: 'Sequence settings…', onSelect: () => setSequenceSettingsOpen(true), disabledReason: project.format ? null : 'Add a video first' },
+    { id: 'sep-view', separator: true },
+    ...previewEntries.filter((entry) => entry.id !== 'sequence-settings-preview' && entry.id !== 'sep-preview-settings'),
+  ]
+  // One-time heads-up when a large source is added, so the proxy/sequence controls are discoverable.
+  const hintedLarge = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    const key = summaryAsset?.fingerprint?.value
+    const meta = summaryAsset?.metadata
+    if (!key || !meta?.width || !meta.height || hintedLarge.current.has(key)) return
+    if (Math.min(meta.width, meta.height) <= 1080) return
+    hintedLarge.current.add(key)
+    setNotice({ tone: 'info', text: `${meta.width}×${meta.height} source: preview uses a lighter proxy once ready. View › Sequence settings changes the output size.` })
+  }, [summaryAsset?.fingerprint?.value, summaryAsset?.metadata])
+
   return <main className="app-shell">
     <header className="topbar">
       <div className="brand"><img className="brand-mark" src="./favicon.png" alt="" /><div><strong>Caption Studio</strong><small title={project.title}>{project.title}</small></div></div>
@@ -1715,8 +1779,9 @@ export default function App() {
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />
         <MenuButton label="Timeline" entries={timelineEntries} />
+        <MenuButton label="View" entries={viewEntries} title="Sequence size and preview quality" />
         <MenuButton label="Export" className="accent" entries={exportEntries} />
-        <button className="icon-button" aria-label="Settings" title="Settings: speech models, Gemini API key, AI agents, shortcuts" onClick={() => setSettingsTab('models')}><SettingsIcon width={16} height={16} /></button>
+        <button className="icon-button" aria-label="Settings" title="Settings: speech models, playback proxies, Gemini API key, AI agents, shortcuts" onClick={() => setSettingsTab('models')}><SettingsIcon width={16} height={16} /></button>
       </div>
     </header>
     <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} geminiKey={geminiKey} onGeminiKey={setGeminiKey}
@@ -1769,8 +1834,8 @@ export default function App() {
           onEstimate={selectedText ? undefined : activeCue ? () => runCommand({ type: 'estimate-words', cueId: activeCue.id, idPrefix: crypto.randomUUID() }) : undefined}
           onAddText={addTextAtPlayhead} />}
         {railTab === 'effects' && <EffectsPanel onAddAtPlayhead={addEffectPreset} onAddBackground={(look) => addBackground(look, Math.round(currentUs))} />}
-        {railTab === 'color' && <ColorPanel lutAssets={lutAssetsList} lutIssues={media.issues}
-          onAddAtPlayhead={(grade) => addAdjustment(grade, Math.round(currentUs), null)} onImportLut={() => void importLut()} onRelinkLut={(assetId) => void relinkLut(assetId)} />}
+        {railTab === 'color' && <ColorPanel lutAssets={lutAssetsList} lutIssues={media.issues} frame={colorFrame} captureSource={() => captureFrame(underElement(), 320)}
+          onSaveMatch={saveMatchLut} onAddAtPlayhead={(grade) => addAdjustment(grade, Math.round(currentUs), null)} onImportLut={() => void importLut()} onRelinkLut={(assetId) => void relinkLut(assetId)} />}
         {railTab === 'layers' && <LayersPanel rows={layerRows} timeLabel={formatTimestamp(currentUs, ':')} units={captionComposition} focusKey={layerFocus}
           editing={editingMask !== null} drawing={editingMask?.drawing ?? false} offscreenSelection={offscreenSelection}
           onFocus={focusLayer} onAddMask={addMask} onEditOnStage={(row) => setMaskEdit({ key: row.key, drawing: false })} onStopEditing={() => setMaskEdit(null)}
@@ -1831,7 +1896,8 @@ export default function App() {
             onToggleProxyOverride={() => playbackProxies.setOverride(playbackProxies.override === 'original' ? null : 'original')} />}
           {issueAsset && codecIssue && <div className="codec-diagnostic" role="status">
             <span>{issueAsset.name}: {codecIssue.kind === 'confirmed-unsupported' ? codecIssue.message : 'This media’s codec is likely unsupported by the embedded player.'}</span>
-            {proxyState.kind === 'ready' && <button onClick={createProxy}>Create local proxy</button>}
+            {autoProxyPending && <span>Creating a playback proxy automatically…</span>}
+            {proxyState.kind === 'ready' && !autoProxyPending && <button onClick={createProxy}>Save a playable copy…</button>}
             {proxyState.kind === 'creating' && <><span>{`Converting${proxyState.percent === null ? '…' : ` ${proxyState.percent}%`}`}</span><button onClick={cancelProxyCreation}>Cancel</button></>}
             {proxyState.kind === 'unsupported' && <span>{proxyState.reason}</span>}
             {proxyState.kind === 'error' && <span>{proxyState.message}</span>}
@@ -1839,7 +1905,7 @@ export default function App() {
           </div>}
         </div>
         {/* The transport is the only one: with stacked tracks no single <video> owns playback. */}
-        <div className="transport" role="group" aria-label="Playback transport"><span aria-label={`Current time ${formatClock(currentUs)}`}>{formatClock(currentUs)}</span><button onClick={togglePlayback} disabled={!project.clips.length && !project.cues.length} aria-label={playback.playing ? 'Pause' : 'Play'} title="Play or pause (Space)">{playback.playing ? 'Pause' : 'Play'}</button><button onClick={() => seekBy(-US_PER_SECOND)} aria-label="Seek backward one second" title="Seek backward (Left Arrow)">−1 s</button><RangeInput ariaLabel="Playhead position" min={0} max={durationUs} value={Math.min(currentUs, durationUs)} onChange={seekTo} /><button onClick={() => seekBy(US_PER_SECOND)} aria-label="Seek forward one second" title="Seek forward (Right Arrow)">+1 s</button><span aria-label={`Duration ${formatClock(durationUs)}`}>{formatClock(durationUs)}</span></div>
+        <div className="transport" role="group" aria-label="Playback transport"><span aria-label={`Current time ${formatClock(currentUs)}`}>{formatClock(currentUs)}</span><button onClick={togglePlayback} disabled={!project.clips.length && !project.cues.length} aria-label={playback.playing ? 'Pause' : 'Play'} title="Play or pause (Space)">{playback.playing ? 'Pause' : 'Play'}</button><button onClick={() => seekBy(-US_PER_SECOND)} aria-label="Seek backward one second" title="Seek backward (Left Arrow)">−1 s</button><RangeInput ariaLabel="Playhead position" min={0} max={durationUs} value={Math.min(currentUs, durationUs)} onChange={seekTo} /><button onClick={() => seekBy(US_PER_SECOND)} aria-label="Seek forward one second" title="Seek forward (Right Arrow)">+1 s</button><span aria-label={`Duration ${formatClock(durationUs)}`}>{formatClock(durationUs)}</span>{previewChipLabel && <MenuButton label={previewChipLabel} entries={previewEntries} className="preview-quality-chip" title="Preview quality and sequence settings" />}</div>
       </section>
 
       <aside className="panel inspector-panel" aria-labelledby="inspector-heading">
@@ -2058,8 +2124,14 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   // The export host paints images only when every image track is above every video track. Mirror
   // that split in preview so those host-painted overlays stay pinned while the picture zooms.
   const trackOrder = new Map(tracks.map((track, index) => [track.id, index]))
+  const hiddenGradeTracks = new Set(tracks.filter((track) => track.hidden).map((track) => track.id))
+  const gradingClips = clips.filter((clip) => !hiddenGradeTracks.has(clip.trackId))
+  const hasAdjustments = gradingClips.some((clip) => clip.kind === 'adjustment' && clip.enabled !== false)
   const highestVideoTrack = Math.max(-1, ...clips.filter((clip) => clip.kind === 'video' || clip.kind === 'color').map((clip) => trackOrder.get(clip.trackId) ?? -1))
-  const hostPaintedImages = clips.every((clip) => clip.kind !== 'image' || (trackOrder.get(clip.trackId) ?? -1) > highestVideoTrack)
+  const hostPaintedImages = !hasAdjustments && clips.every((clip) => clip.kind !== 'image' || (trackOrder.get(clip.trackId) ?? -1) > highestVideoTrack)
+  const missingLut = activeVisual.flatMap(({ clip }) => gradeStackFor(gradingClips, trackOrder, clip, frameUs))
+    .map((adjustment) => adjustment.grade.input)
+    .find((input) => input.type === 'lut' && !lutCubes.has(input.assetId))
   const visualLayers = activeVisual.map(({ clip, track }): CompositionLayer => {
       if (clip.kind === 'color') return { kind: 'color', id: clip.id, paint: paintAt(clip, frameUs), rect: clip.rect ?? null, opacity: clip.opacity, mask: clip.mask }
       const asset = assetById.get(clip.assetId)
@@ -2067,7 +2139,7 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
       // Color: adjustment layers (docs/EDITING.md) — the same bottom-up stack the export plan bakes,
       // resolved here from the live LUT-asset cache instead of an on-disk `.cube` file. `null` (no
       // adjustment layer above it right now) draws the plain, ungraded layer, same as before Slice 4.
-      const grade = bakedGradeStack(gradeStackFor(clips, trackOrder, clip, frameUs), lutCubes)
+      const grade = bakedGradeStack(gradeStackFor(gradingClips, trackOrder, clip, frameUs), lutCubes)
       if (clip.kind === 'video') return { kind: 'video', id: `${track.id}/${clip.assetId}`, element: elementFor(track.id, clip.assetId), label, rect: clip.rect ?? null, opacity: clip.opacity, fit: clip.fit, mask: clip.mask, grade }
       return { kind: 'image', id: clip.id, url: urlOf(asset), label, rect: clip.kind === 'image' ? clip.rect ?? null : null, opacity: clip.kind === 'image' ? clip.opacity : 1, fit: clip.kind === 'image' ? clip.fit : 'contain', mask: clip.kind === 'image' ? clip.mask : undefined, grade }
     })
@@ -2137,6 +2209,8 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
       selectAll={editingTextSelectAll} onFinish={onFinishTextEdit} onCommit={(text) => onCommitText(editingTextItem.id, text)} />}
     {fallback && <span role="status" data-word-display-notice style={{ position: 'absolute', bottom: 8, right: 8, maxWidth: '40%',
       fontSize: 12, color: '#ffda8b', background: '#101010cc', padding: 4, zIndex: 2 }}>Showing the full caption: {fallback}</span>}
+    {missingLut && <span role="status" style={{ position: 'absolute', top: 8, right: 8, fontSize: 12,
+      color: '#ffda8b', background: '#101010cc', padding: 4, zIndex: 2 }}>Grade unavailable: relink the missing LUT</span>}
   </>
 }
 

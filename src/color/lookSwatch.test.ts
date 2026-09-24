@@ -18,3 +18,12 @@ describe('lookSwatchGradient', () => {
     expect(lookSwatchGradient(a.id)).not.toBe(lookSwatchGradient(b.id))
   })
 })
+
+describe('lookColorSwatchGradient', () => {
+  it('samples 8 hue patches and differs per look', async () => {
+    const { lookColorSwatchGradient } = await import('./lookSwatch')
+    const [a, b] = LOOKS
+    expect(lookColorSwatchGradient(a.id).match(/rgb\(/g)?.length).toBe(8)
+    expect(lookColorSwatchGradient(a.id)).not.toBe(lookColorSwatchGradient(b.id))
+  })
+})

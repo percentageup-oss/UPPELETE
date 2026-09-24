@@ -6,6 +6,7 @@
   "type": "module",
   "main": "dist-electron/main.cjs",
   "scripts": {
+    "predev": "bash scripts/stop-stale.sh",
     "dev": "concurrently -k -s first \"vite --strictPort\" \"npm:dev:electron\"",
     "dev:electron": "wait-on -t 60000 http-get://localhost:5173/ && npm run build:electron && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
     "build": "vite build && npm run build:electron",

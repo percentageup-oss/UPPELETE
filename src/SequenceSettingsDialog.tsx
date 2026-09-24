@@ -34,9 +34,9 @@ const FRAME_RATES: Stop<ExportFrameRate>[] = [
  * `formatAspect`/`compositionFor`), so a resolution-only change never reflows a caption or text
  * layer's placement; an aspect change would, and needs its own design.
  *
- * This does not, by itself, make preview playback lighter — the preview still decodes the original
- * source file. It fixes what gets rendered into (captions, effects, export default); lighter preview
- * playback of large source video is a separate, not-yet-built proxy path.
+ * This does not change what preview decodes: playback proxies (`src/core/proxy.ts`) make preview of
+ * large sources lighter, while this dialog sets what gets rendered into (captions, effects, export
+ * default). Reachable from the View menu and the transport-bar preview chip.
  */
 export function SequenceSettingsDialog({ open, format, onClose, onApply }: {
   open: boolean

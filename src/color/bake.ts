@@ -96,9 +96,10 @@ export function evaluateGrade(domain: RGB, grade: Grade): RGB {
   return map3(domain, (v, i) => v + (looked[i] - v) * clamp(grade.intensity, 0, 1))
 }
 
-/** Evaluates `grade` at every point of a `size`^3 lattice. 33 is the FFmpeg/DaVinci convention:
- * fine enough that trilinear error is invisible, coarse enough to bake and upload quickly. */
-export function bakeGrade(grade: Grade, size = 33): Cube3D {
+/** Evaluates `grade` at every point of a `size`^3 lattice. 65 rather than the usual 33: a log input
+ * curve is so steep in the shadows that 33 points trilinear-interpolate into visible blocky color
+ * patches. Preview and export both bake through here, so they keep sampling identical data. */
+export function bakeGrade(grade: Grade, size = 65): Cube3D {
   const data = new Float32Array(size ** 3 * 3)
   const step = 1 / (size - 1)
   for (let b = 0; b < size; b++) for (let g = 0; g < size; g++) for (let r = 0; r < size; r++) {
