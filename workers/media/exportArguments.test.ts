@@ -153,10 +153,10 @@ describe('cuts (segments) reach FFmpeg', () => {
     expect(args[args.indexOf('-frames:v') + 1]).toBe('120')
   })
 
-  it('passes -filter_complex_script instead of inlining the graph when a script path is given', () => {
+  it('passes -/filter_complex <file> instead of inlining the graph when a script path is given', () => {
     const args = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, cut, '/tmp/job/filtergraph.txt')
-    expect(args).toContain('-filter_complex_script')
-    expect(args[args.indexOf('-filter_complex_script') + 1]).toBe('/tmp/job/filtergraph.txt')
+    expect(args).toContain('-/filter_complex')
+    expect(args[args.indexOf('-/filter_complex') + 1]).toBe('/tmp/job/filtergraph.txt')
     expect(args).not.toContain('-filter_complex')
   })
 })

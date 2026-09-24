@@ -452,7 +452,7 @@ describe('renderVideo', () => {
     expect(encoderHandle.received.length).toBe(18)
   })
 
-  it('writes an oversized filtergraph to a script file in the job directory and passes -filter_complex_script', async () => {
+  it('writes an oversized filtergraph to a script file in the job directory and passes -/filter_complex <file>', async () => {
     // 200 kept segments produce a trim/concat graph well past the 8 KiB argv-safe inline limit.
     const segments = Array.from({ length: 200 }, (_, index) => ({ startUs: index * 10_000, endUs: index * 10_000 + 5_000 }))
     const { root, renderManifestPath } = await jobFixture({ segments })
@@ -464,7 +464,7 @@ describe('renderVideo', () => {
       encoderArgs = args as string[]
       // The job directory (and this script file) is removed once the job finishes, so it has to be
       // read synchronously here, right after export.ts writes it and before it spawns this process.
-      const scriptIndex = encoderArgs.indexOf('-filter_complex_script')
+      const scriptIndex = encoderArgs.indexOf('-/filter_complex')
       if (scriptIndex >= 0) scriptContentAtSpawnTime = readFileSync(encoderArgs[scriptIndex + 1], 'utf8')
       return fakeEncoder(s) as any
     }) as ExportDependencies['spawn']
@@ -474,7 +474,7 @@ describe('renderVideo', () => {
       operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 2_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
-    const scriptIndex = encoderArgs.indexOf('-filter_complex_script')
+    const scriptIndex = encoderArgs.indexOf('-/filter_complex')
     expect(scriptIndex).toBeGreaterThan(-1)
     expect(encoderArgs).not.toContain('-filter_complex')
     expect(encoderArgs[scriptIndex + 1].startsWith(root)).toBe(true)
@@ -502,7 +502,7 @@ describe('renderVideo', () => {
     const spawn: ExportDependencies['spawn'] = ((executable, args, s) => {
       if (executable === tools.exportHost!.executable) return fakeHost(s, () => pngFrame(1)) as any
       const encoderArgs = args as string[]
-      const graph = encoderArgs.includes('-filter_complex_script') ? readFileSync(encoderArgs[encoderArgs.indexOf('-filter_complex_script') + 1], 'utf8') : encoderArgs[encoderArgs.indexOf('-filter_complex') + 1]
+      const graph = encoderArgs.includes('-/filter_complex') ? readFileSync(encoderArgs[encoderArgs.indexOf('-/filter_complex') + 1], 'utf8') : encoderArgs[encoderArgs.indexOf('-filter_complex') + 1]
       const match = /lut3d=file='([^']+)'/.exec(graph)
       if (!match) console.error('GRAPH:', graph)
       expect(match).not.toBeNull()

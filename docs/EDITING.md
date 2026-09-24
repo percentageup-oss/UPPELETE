@@ -455,7 +455,7 @@ the single scalar `output.width / 1080`.
 `workers/media/exportArguments.ts` becomes a deterministic builder over the manifest, snapshot-tested
 on both the argument array and the filtergraph string. Regions and clips are sorted by
 `(startUs, id)` before labels are assigned so output is independent of project order. When the
-graph exceeds a few KiB it is written to the job directory and passed with `-filter_complex_script`
+graph exceeds a few KiB it is written to the job directory and passed with `-/filter_complex <file>` (FFmpeg 7+; FFmpeg 8 removed `-filter_complex_script`)
 (Windows argv limit). Skeleton, in sequence time `t` after `setpts=PTS-STARTPTS`:
 
 ```

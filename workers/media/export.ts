@@ -135,7 +135,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // filtergraph, since the graph embeds their on-disk paths as literal `lut3d=file=…` text.
     const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, hostProfileDirectory, videoEncoder) : await prepareV2(manifest, task, tools, signal, probe, plan, videoEncoder)
     // Cuts can chain hundreds of trim/concat filters; past the Windows argv limit the graph moves
-    // to a file passed with `-filter_complex_script` instead of being inlined (docs/EDITING.md).
+    // to a file passed with `-/filter_complex <file>` instead of being inlined (docs/EDITING.md).
     const graph = job.graph
     let filterComplexScriptPath: string | undefined
     if (Buffer.byteLength(graph.filterComplex, 'utf8') > FILTER_COMPLEX_ARGV_LIMIT_BYTES) {
