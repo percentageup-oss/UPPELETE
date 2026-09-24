@@ -3084,3 +3084,17 @@ Completed: exports whose filtergraph exceeds the 8 KiB argv limit (cuts, many cl
 Verification (Linux): `exportArguments.test.ts` and `exportArgumentsV3.test.ts` pass; `tsc --noEmit` clean. Checked by hand that FFmpeg 7.0.1 reads the graph file's contents as the `filter_complex` value when given `-/filter_complex <file>`. `export.test.ts` fails the same 17 tests with or without this change, because on Linux the encoder check stops the run before these arguments are built. Not run against a real FFmpeg 8 on Windows or macOS.
 
 Next: re-run the failing Windows export to confirm.
+
+## 2026-09-24 — Export stall: "Fragmented shaping run" on title-motion text
+
+Completed. Two separate bugs caused one export failure on Windows ("Export stalled at frame 1395 of 2996: the caption renderer returned no frame for 60 s — export host: frame 135 failed … Fragmented shaping run"):
+- **The shaping check rejected a correct frame.** The export harness requires every leaf under `[data-caption-line]` to hold the full line text. `TitleMotionLine` paints nothing for words whose motion has not started yet: the motion's first frame, or a later line waiting its turn. That leaves the line with no text, which the check reported as fragmented. The check now lives in `src/export/shaping.ts` (`isFragmentedLine`) and lets a line that painted nothing pass. A line split into words or graphemes still fails.
+- **A failed host hung the export for 60 s instead of failing it.** `ownedProcess` settled only on `close`, which waits for every holder of the stdio pipes. On Windows, Electron's helper processes can keep the host's pipes open after it exits. It now also watches `exit`: 500 ms later, if `close` has not come, it destroys the pipes and settles with the exit code and stderr. The PNG reader then ends at once and the host's own message is reported.
+
+Verification (Linux): `tsc --noEmit` clean.
+- New `src/export/shaping.test.ts`.
+- New `workers/media/exportProcesses.test.ts`, run with a real child process that exits 1 while a helper process keeps its pipes open. The test times out without the fix and passes with it.
+- `export.test.ts` passes 27/27, with and without the change, in a copy with `process.platform` set to `darwin`. On Linux it fails the same 17 tests as before, because the encoder check stops them first.
+- No Electron export host or real export was run, and nothing was tested on Windows or macOS.
+
+Next: re-run the failing Windows export. It should get past 46.47 s, or any other failure should now appear within about a second.

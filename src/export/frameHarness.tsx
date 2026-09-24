@@ -7,6 +7,7 @@ import { captionStyleInputs, type CaptionStyle } from '../captions/style'
 import type { CaptionFrame } from '../captions/renderer'
 import { frameRequestSchema, parityState, type FrameRequest } from './frameRequest'
 import { parityFixture } from './parityFixture'
+import { isFragmentedLine } from './shaping'
 import { emphasisRuns, sliceEmphasis } from '../core/emphasis'
 import { captionFixtures } from '../captions/fixtures'
 import { TextOverlayActor } from '../captions/TextOverlayActor'
@@ -115,7 +116,7 @@ async function ready() {
       }
     } else {
       const leaves = line.children.length ? [...line.querySelectorAll('*')].filter((element) => !element.children.length) : [line]
-      if (leaves.some((leaf) => leaf.textContent !== entry.text)) throw new Error('Fragmented shaping run')
+      if (isFragmentedLine(leaves.map((leaf) => leaf.textContent ?? ''), entry.text)) throw new Error('Fragmented shaping run')
     }
   }
   return { state: parityState(evaluated), readinessMs: performance.now() - start, fontsStatus: document.fonts.status }
