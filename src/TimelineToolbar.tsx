@@ -1,4 +1,5 @@
-import { CollapseIcon, ExpandIcon, MagnetIcon, MergeIcon, NextIcon, PlayheadIcon, PlusIcon, PrevIcon, ScissorsIcon, TrashIcon, TrimIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
+import { CollapseIcon, ExpandIcon, MagnetIcon, MergeIcon, NextIcon, PlayheadIcon, PlusIcon, PrevIcon, ScissorsIcon, TrashIcon, TrimEndIcon, TrimIcon, TrimStartIcon, MarkInIcon, MarkOutIcon, ClearRangeIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
+import { RangeInput } from './style/controls'
 import type { CaptionDisplay } from './captions/wordDisplay'
 import type { EditMode } from './core/clipEdits'
 
@@ -21,6 +22,14 @@ export type ClipTools = {
   /** Split at the playhead: the selected clip, or every clip under it on unlocked tracks. */
   split: () => void
   canSplit: boolean
+  /** Trim the start / end of the selected clip (or every clip under the playhead) to the playhead. */
+  trimTo: (edge: 'start' | 'end') => void
+  canTrimTo: boolean
+  /** The In/Out export range (I / O). Not part of the project and not undoable. */
+  markIn: () => void
+  markOut: () => void
+  clearRange: () => void
+  hasRange: boolean
   /** Delete the selected clip: a lift, or a ripple delete that closes the gap on its track. */
   remove: (ripple: boolean) => void
   hasClip: boolean
@@ -81,12 +90,17 @@ export function TimelineToolbar({ mode, onMode, snap, onSnap, zoom, zoomMin, zoo
         title="Ripple: a clip's change in length pushes or pulls everything after it on the same track">RIPPLE</button>
     </div>
     <button type="button" className="tool" onClick={clipTools.split} disabled={!clipTools.canSplit} aria-label="Split clips at playhead" title="Split clips at the playhead (⌘/Ctrl+B)"><ScissorsIcon /></button>
+    <button type="button" className="tool" onClick={() => clipTools.trimTo('start')} disabled={!clipTools.canTrimTo} aria-label="Trim clip start to playhead" title="Trim start to the playhead (Q)"><TrimStartIcon /></button>
+    <button type="button" className="tool" onClick={() => clipTools.trimTo('end')} disabled={!clipTools.canTrimTo} aria-label="Trim clip end to playhead" title="Trim end to the playhead (W)"><TrimEndIcon /></button>
+    <button type="button" className="tool" onClick={clipTools.markIn} aria-label="Mark In at playhead" title="Mark In at the playhead (I)"><MarkInIcon /></button>
+    <button type="button" className="tool" onClick={clipTools.markOut} aria-label="Mark Out at playhead" title="Mark Out at the playhead (O)"><MarkOutIcon /></button>
+    <button type="button" className="tool" onClick={clipTools.clearRange} disabled={!clipTools.hasRange} aria-label="Clear In and Out marks" title="Clear the In/Out range (X)"><ClearRangeIcon /></button>
     <button type="button" className="tool danger" onClick={() => clipTools.remove(editMode === 'ripple')} disabled={!clipTools.hasClip}
       aria-label="Delete selected clip" title={editMode === 'ripple' ? 'Ripple delete the selected clip (Shift+Delete)' : 'Lift the selected clip, leaving a gap (Delete)'}><TrashIcon /></button>
     <span className="tool-divider" />
     <div className="zoom-control">
       <button type="button" className="tool" onClick={() => onZoom(Math.max(zoomMin, zoom / 2))} disabled={zoom <= zoomMin} aria-label="Zoom out" title="Zoom out"><ZoomOutIcon /></button>
-      <input aria-label="Timeline zoom" type="range" min={zoomMin} max={zoomMax} step="1" value={zoom} onChange={(event) => onZoom(Number(event.target.value))} />
+      <RangeInput ariaLabel="Timeline zoom" min={zoomMin} max={zoomMax} step={1} value={zoom} onChange={onZoom} />
       <button type="button" className="tool" onClick={() => onZoom(Math.min(zoomMax, zoom * 2))} disabled={zoom >= zoomMax} aria-label="Zoom in" title="Zoom in"><ZoomInIcon /></button>
       <output aria-label="Zoom level">{zoom}×</output>
     </div>

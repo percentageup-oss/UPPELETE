@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
 import { CaptionPreview } from '../captions/CaptionPreview'
-import { CompositionLayers, type CompositionLayer } from '../captions/CompositionLayers'
+import { CompositionLayers, pinnedEffectLayers, type CompositionLayer } from '../captions/CompositionLayers'
 import { captionStyleInputs, type CaptionStyle } from '../captions/style'
 import type { CaptionFrame } from '../captions/renderer'
 import { frameRequestSchema, parityState, type FrameRequest } from './frameRequest'
@@ -38,18 +38,20 @@ function Harness() {
   // in a v2/v3 request is visible at exactly this frame's timestamp, so no further lookup or
   // filtering happens here.
   const images = request.version === 2 || request.version === 3 || request.version === 4
-    ? request.overlays.map((overlay) => ({ id: overlay.id, url: overlay.assetUrl, label: overlay.id, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit }))
+    ? request.overlays.map((overlay) => ({ id: overlay.id, url: overlay.assetUrl, label: overlay.id, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit, mask: overlay.mask }))
     : []
   // Frame-paint effects (docs/EDITING.md "Frame-paint effects"): already evaluated by
   // `frameEffectsAt` server-side (`plan.ts`'s `frameRequestAtSequence`) — this only paints them,
   // with the same `CompositionLayers` component and pinned/over-caption split live preview uses.
   const frameEffects = request.version === 3 || request.version === 4 ? request.frameEffects : {}
+  // v5 is a mask rasterization request: one opaque white fill through the mask, so alpha is the mask.
+  const maskFill: CompositionLayer[] = request.version === 5 ? [{ kind: 'fade', id: 'mask-fill', color: '#ffffff', opacity: 1, mask: request.maskFill }] : []
   const pinnedLayers: CompositionLayer[] = [
     ...images,
-    ...(frameEffects.vignette ? [{ kind: 'vignette' as const, id: 'vignette', amount: frameEffects.vignette.amount, softness: frameEffects.vignette.softness }] : []),
-    ...(frameEffects.letterbox ? [{ kind: 'letterbox' as const, id: 'letterbox', orientation: frameEffects.letterbox.orientation, barPx: frameEffects.letterbox.barPx, color: frameEffects.letterbox.color }] : []),
+    ...maskFill,
+    ...pinnedEffectLayers(frameEffects),
   ]
-  const fadeLayers: CompositionLayer[] = frameEffects.fade ? [{ kind: 'fade', id: 'fade', color: frameEffects.fade.color, opacity: frameEffects.fade.opacity }] : []
+  const fadeLayers: CompositionLayer[] = frameEffects.fade ? [{ kind: 'fade', id: 'fade', color: frameEffects.fade.color, opacity: frameEffects.fade.opacity, mask: frameEffects.fade.mask }] : []
   const textActors = request.version === 4 ? request.textActors : []
   const actorNode = (actor: (typeof textActors)[number]) => <TextOverlayActor key={actor.item.id} item={actor.item} timestampUs={actor.timestampUs} composition={request.composition}
     onFrame={(frame) => evaluatedTexts.set(actor.item.id, frame)} />
@@ -57,7 +59,7 @@ function Harness() {
   const aboveText = textActors.filter((actor) => actor.item.layerOrder >= 0).map(actorNode)
   return <>
     <div style={{ position: 'relative', ...request.composition }}>
-      <CaptionPreview {...request} inputs={inputs} motion={request.style.motion} onFrame={observe} diagnostics={false}
+      <CaptionPreview {...request} inputs={inputs} motion={request.style.motion} onFrame={observe} diagnostics={false} captionMask={request.captionMask}
         layers={<>{<CompositionLayers layers={pinnedLayers} composition={request.composition} />}{belowText}</>}
         overCaption={<>{aboveText}{fadeLayers.length ? <CompositionLayers layers={fadeLayers} composition={request.composition} /> : null}</>} />
     </div>
@@ -65,7 +67,9 @@ function Harness() {
       <label>Primary color <input id="parity-color" type="color" value={request.style.appearance.primaryColor}
         onChange={(event) => edit({ ...request.style, appearance: { ...request.style.appearance, primaryColor: event.target.value } })} /></label>
     </div>}
-    <div id="frame-marker" style={{ position: 'fixed', bottom: 0, right: 0, width: 1, height: 1 }} />
+    {/* Must stack above CaptionPreview's `zIndex: 2` context: full-frame layers (grain, VHS, vignette,
+      * letterbox, corner overlays) otherwise hide the marker and the host never sees a committed paint. */}
+    <div id="frame-marker" style={{ position: 'fixed', bottom: 0, right: 0, width: 1, height: 1, zIndex: 2147483647, pointerEvents: 'none' }} />
   </>
 }
 
@@ -98,9 +102,12 @@ async function ready() {
     throw new Error(`Overlay asset failed to load: ${img.src}`)
   })))
   for (const line of document.querySelectorAll('[data-caption-line]')) {
-    const entry = evaluated.layout.lines[Number((line as HTMLElement).dataset.captionLine)]
-    if (evaluated.layout.inputs.emphasized?.length) {
-      const runs = emphasisRuns(entry.text, sliceEmphasis(evaluated.layout.inputs.emphasized, entry.textStart, entry.textEnd))
+    const textId = line.closest<HTMLElement>('[data-text-overlay-id]')?.dataset.textOverlayId
+    const frame = textId ? evaluatedTexts.get(textId) : evaluated
+    if (!frame) throw new Error(`Missing text frame for shaping check: ${textId}`)
+    const entry = frame.layout.lines[Number((line as HTMLElement).dataset.captionLine)]
+    if (frame.layout.inputs.emphasized?.length) {
+      const runs = emphasisRuns(entry.text, sliceEmphasis(frame.layout.inputs.emphasized, entry.textStart, entry.textEnd))
       if (line.children.length !== runs.length) throw new Error('Selected emphasis run count differs')
       for (const [index, child] of [...line.children].entries()) {
         const leaves = child.children.length ? [...child.querySelectorAll('*')].filter((element) => !element.children.length) : [child]

@@ -13,6 +13,12 @@ describe('proxy conversion lifecycle', () => {
         expect(args.at(-1)).toBe('/tmp/job/proxy.webm')
         expect(args).toContain('libvpx')
         expect(args).toContain('libopus')
+        expect(args[args.indexOf('-b:v') + 1]).not.toBe('0')
+        expect(args).toContain('-crf')
+        const scaleExpr = args[args.indexOf('-vf') + 1]
+        expect(scaleExpr).toContain('min(1280,iw)')
+        expect(scaleExpr).toContain('min(1280,ih)')
+        expect(scaleExpr).toContain('format=yuv420p')
         observer?.onStdout?.(Buffer.from('out_time_us=1000000\nprogress=continue\nout_time_us=1950000\nprogress=end\n'))
         return { stdout: '', stderr: '' }
       },

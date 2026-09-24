@@ -53,3 +53,11 @@ describe('dropPlanForAsset', () => {
     expect(dropPlanForAsset({ kind: 'video', durationUs: null }, 0, tracks, []).kind).toBe('refused')
   })
 })
+
+describe('dropTimeAt with headroom', () => {
+  it('lands past the program end when the span includes a tail', () => {
+    const programUs = 60_000_000
+    const spanUs = programUs + 30_000_000
+    expect(dropTimeAt(900, { left: 0, width: 1000 }, spanUs)).toBeGreaterThan(programUs)
+  })
+})

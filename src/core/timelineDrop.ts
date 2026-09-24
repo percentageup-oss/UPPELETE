@@ -10,6 +10,11 @@ export function dropTimeAt(clientX: number, contentRect: { left: number; width: 
 
 /** A newly placed image lasts three seconds, like a new title in any editor. */
 export const DEFAULT_IMAGE_CLIP_US = 3_000_000
+/** A new background is short by default (trim or stretch it as needed), not the whole timeline. */
+export const DEFAULT_BACKGROUND_CLIP_US = 2_000_000
+/** A new adjustment layer dropped at an empty spot (docs/EDITING.md "Color: adjustment layers");
+ * one dropped onto a clip instead spans that clip's own range. */
+export const DEFAULT_ADJUSTMENT_CLIP_US = 5_000_000
 
 /** Where a dropped or imported asset lands. `trackId: null` means no existing track can take it and
  * the caller creates one (in the same undo step, via `clip-add`'s `track`). */
@@ -29,6 +34,9 @@ export type DropPlan = { kind: 'clip'; placement: DropPlacement } | { kind: 'ref
 export function dropPlanForAsset(asset: { kind: ProjectAsset['kind']; durationUs: number | null }, sequenceUs: number,
   tracks: readonly Track[], clips: readonly Clip[], targetTrackId?: string | null): DropPlan {
   const startUs = Math.max(0, Math.round(sequenceUs))
+  // A LUT asset has no clip kind of its own: it is dropped from the Color panel as an adjustment
+  // layer (docs/EDITING.md "Color: adjustment layers"), not from the bin through this generic path.
+  if (asset.kind === 'lut') return { kind: 'refused', reason: 'Drag a LUT from the Color tab onto a video track to grade it.' }
   if (asset.kind !== 'image' && asset.durationUs === null) return { kind: 'refused', reason: 'This file’s duration could not be read, so it cannot be placed on the timeline. Relink it first.' }
   const lengthUs = asset.kind === 'image' ? DEFAULT_IMAGE_CLIP_US : asset.durationUs!
   const target = targetTrackId ? tracks.find((track) => track.id === targetTrackId) : undefined

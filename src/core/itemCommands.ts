@@ -1,4 +1,4 @@
-import { COMPOSITION_WIDTH, type BlurRegion, type Clip, type ClipKind, type CompositionRect, type ProjectAsset, type SequenceFormat, type Track } from './edit'
+import { COMPOSITION_WIDTH, assetIdOf, type BlurRegion, type Clip, type ClipKind, type CompositionRect, type ProjectAsset, type SequenceFormat, type Track } from './edit'
 import { projectSchema, type CaptionProject } from './model'
 import { assetDurations, bindUnboundItems, defaultBindingAssetId } from './projectClips'
 import type { ClipEdge, EditMode } from './clipEdits'
@@ -12,6 +12,7 @@ import { applyClipCommand, type ClipCommand } from './clipCommands'
 import { applyZoomRegionCommand, type ZoomRegionCommand } from './zoomRegionCommands'
 import { applyEffectCommand, type EffectCommand } from './effectCommands'
 import { applyTextCommand, type TextCommand } from './textCommands'
+import { applyMaskCommand, type MaskCommand } from './maskCommands'
 
 /**
  * The second command union, beside `CaptionCommand`. It shares `CommandResult`/`ValidationIssue`
@@ -21,19 +22,20 @@ import { applyTextCommand, type TextCommand } from './textCommands'
  * `zoomRegionCommands.ts`; this module owns the union, the shared validation and the one epilogue
  * every item command runs through.
  */
-export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand
-export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, ClipEdge, EditMode }
+export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand | MaskCommand
+export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, MaskCommand, ClipEdge, EditMode }
 export type { BlurRegion, Clip, ClipKind, ProjectAsset, SequenceFormat, TimeRange, Track }
 
 export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<ItemCommand['type']>([
   'asset-add', 'asset-remove', 'asset-update',
   'track-add', 'track-remove', 'track-update', 'track-reorder',
   'caption-track-add', 'caption-track-remove', 'caption-track-update', 'caption-track-reorder', 'caption-track-move-cue',
-  'clip-add', 'clip-move', 'clip-trim', 'clip-update', 'clip-split', 'clip-delete', 'gap-close', 'clips-set', 'clips-restore', 'format-set',
+  'clip-add', 'clip-move', 'clip-trim', 'clip-trim-to', 'clip-update', 'clip-split', 'clip-delete', 'clips-link', 'clips-unlink', 'clip-detach-audio', 'gap-close', 'clips-set', 'clips-restore', 'format-set',
   'blur-add', 'blur-update', 'blur-delete',
   'zoom-region-add', 'zoom-region-move', 'zoom-region-trim', 'zoom-region-update', 'zoom-region-delete',
   'effect-add', 'effect-move', 'effect-trim', 'effect-update', 'effect-delete',
   'text-add', 'text-update', 'text-move', 'text-trim', 'text-duplicate', 'text-delete', 'text-reorder',
+  'mask-set',
   'marker-add', 'marker-update', 'marker-delete',
 ])
 
@@ -60,22 +62,23 @@ export function validateItems(project: CaptionProject, context: CommandContext =
       warnings.push(issue('rect-bounds', [id], `${what} extends below the visible frame at the current aspect ratio.`))
     }
   }
-  const noun: Record<ClipKind, string> = { video: 'A video clip', image: 'An image clip', audio: 'An audio clip' }
+  const noun: Record<ClipKind, string> = { video: 'A video clip', image: 'An image clip', color: 'A background', audio: 'An audio clip', adjustment: 'An adjustment layer' }
 
   for (const clip of project.clips) {
     const what = noun[clip.kind]
-    const asset = assets.get(clip.assetId)
-    if (!asset) errors.push(issue('asset-missing', [clip.id], `${what} references media that is no longer in the project.`))
-    else if (asset.kind !== clip.kind) errors.push(issue('asset-kind', [clip.id], `${what} must reference ${clip.kind === 'image' ? 'an image' : `a ${clip.kind}`} file.`))
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* generated: no asset */ }
+    else if (!asset) errors.push(issue('asset-missing', [clip.id], `${what} references media that is no longer in the project.`))
+    else if (asset.kind !== clip.kind && !(clip.kind === 'audio' && asset.kind === 'video')) errors.push(issue('asset-kind', [clip.id], `${what} must reference ${clip.kind === 'image' ? 'an image' : `a ${clip.kind}`} file.`))
     if (!Number.isSafeInteger(clip.timelineStartUs) || clip.timelineStartUs < 0 || !Number.isSafeInteger(clip.sourceStartUs) || clip.sourceStartUs < 0
       || !Number.isSafeInteger(clip.sourceEndUs) || clip.sourceEndUs <= clip.sourceStartUs) {
       errors.push(issue('invalid-duration', [clip.id], `${what} must end after its non-negative start.`))
-    } else if (clip.kind !== 'image') {
+    } else if (clip.kind === 'video' || clip.kind === 'audio') {
       const boundUs = durationOf(clip.assetId)
       if (boundUs !== null && clip.sourceEndUs > boundUs) errors.push(issue('media-bounds', [clip.id], `${what} must stay within its file’s known duration.`))
     }
-    if (clip.kind !== 'audio' && clip.rect) checkRect(clip.id, clip.rect, what)
-    if (clip.kind !== 'image' && !(clip.gain >= 0 && clip.gain <= 4)) errors.push(issue('gain-range', [clip.id], `${what}’s gain must be between 0 and 4.`))
+    if (clip.kind !== 'audio' && clip.kind !== 'adjustment' && clip.rect) checkRect(clip.id, clip.rect, what)
+    if ((clip.kind === 'video' || clip.kind === 'audio') && !(clip.gain >= 0 && clip.gain <= 4)) errors.push(issue('gain-range', [clip.id], `${what}’s gain must be between 0 and 4.`))
   }
   for (const region of project.blurRegions) {
     if (!Number.isSafeInteger(region.startUs) || !Number.isSafeInteger(region.endUs) || region.startUs < 0 || region.endUs <= region.startUs) {
@@ -111,7 +114,8 @@ export function validateItems(project: CaptionProject, context: CommandContext =
 }
 
 export function applyItemCommand(project: CaptionProject, command: ItemCommand, context: CommandContext = {}): CommandResult {
-  const step = command.type.startsWith('text-') ? applyTextCommand(project, command as TextCommand)
+  const step = command.type.startsWith('mask-') ? applyMaskCommand(project, command as MaskCommand)
+    : command.type.startsWith('text-') ? applyTextCommand(project, command as TextCommand)
     : command.type.startsWith('asset-') ? applyAssetCommand(project, command as AssetCommand, context)
     : command.type.startsWith('caption-track-') ? applyCaptionTrackCommand(project, command as CaptionTrackCommand)
     : command.type.startsWith('track-') ? applyTrackCommand(project, command as TrackCommand)

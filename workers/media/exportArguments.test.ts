@@ -19,6 +19,11 @@ describe('exportArguments', () => {
       '-map_metadata', '-1', '-metadata:s:v:0', 'rotate=0', '-movflags', '+faststart', '-f', 'mp4', '-progress', 'pipe:1', '/out/dest.mp4.tmp',
     ])
   })
+  it('uses an explicit video bitrate only when encoding is given', () => {
+    const args = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, undefined, undefined, { videoBitrateKbps: 12000 })
+    expect(args[args.indexOf('-b:v') + 1]).toBe('12000k')
+    expect(exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true)[args.indexOf('-b:v') + 1]).toBe('8M')
+  })
   it('omits the audio branch/map and uses -an when the source has no audio stream', () => {
     const args = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, false)
     expect(args).toContain('-an')
@@ -157,7 +162,7 @@ describe('v3 zoom filter placement', () => {
     inputs: [{ path: '/in.mp4', kind: 'video' }],
     clips: [{ id: 'c1', inputIndex: 0, assetId: 'v1', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 3_000_000,
       ...(stacked ? { rect: { x: 0, y: 0, width: 320, height: 180 } } : {}), opacity: 1, fit: 'contain', gain: 0 }],
-    overlays: [], blurRegions: [], effects: [], textOverlays: [],
+    overlays: [], blurRegions: [], effects: [], pictureEffects: [], textOverlays: [], captionMasks: {}, luts: [],
     zoomRegions: [{ id: 'z1', sequence: { startUs: 500_000, endUs: 2_500_000 }, rect: { x: 80, y: 45, width: 160, height: 90 }, easeInUs: 500_000, easeOutUs: 500_000 }],
   })
 

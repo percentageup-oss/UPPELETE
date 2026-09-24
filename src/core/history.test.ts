@@ -4,7 +4,7 @@ import { commitHistory, createHistory, redoHistory, undoHistory } from './histor
 import type { CaptionProject } from './model'
 
 const original: CaptionProject = {
-  schemaVersion: 11,
+  schemaVersion: 16,
   tracks: [],
   clips: [],
   assets: [],

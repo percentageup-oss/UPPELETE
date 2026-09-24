@@ -6,12 +6,16 @@ import type { CaptionTrackFlags } from '../core/captionTrackCommands'
 import type { TimelineRow } from '../core/timelineLayout'
 import type { EffectRegionKind } from '../core/edit'
 import { formatClock } from '../core/time'
-import { AudioIcon, BlurAreaIcon, CaptionsIcon, FadeIcon, GripIcon, LetterboxIcon, VideoIcon, VignetteIcon, ZoomRegionIcon } from '../TimelineIcons'
+import { AudioIcon, BlurAreaIcon, CaptionsIcon, FadeIcon, GlowIcon, GrainIcon, GripIcon, LetterboxIcon, ParticlesIcon, VhsIcon, VideoIcon, VignetteIcon, ZoomRegionIcon } from '../TimelineIcons'
 
 const EFFECT_LANE_HEADER: Record<EffectRegionKind, { label: string; icon: typeof VignetteIcon }> = {
   vignette: { label: 'Vignette', icon: VignetteIcon },
   letterbox: { label: 'Letterbox', icon: LetterboxIcon },
   fade: { label: 'Fade', icon: FadeIcon },
+  grain: { label: 'Film grain', icon: GrainIcon },
+  vhs: { label: 'VHS', icon: VhsIcon },
+  particles: { label: 'Light particles', icon: ParticlesIcon },
+  glow: { label: 'Dreamy glow', icon: GlowIcon },
 }
 
 export type TrackHeaderActions = {
@@ -28,6 +32,18 @@ export type CaptionTrackHeaderActions = {
   onAdd: () => void
 }
 
+/** The track fader: 0–200 % of unity, shown in dB. Local while dragging so one gesture is one undo step. */
+function TrackVolume({ track, label, onCommit }: { track: Track; label: string; onCommit: (volume: number) => void }) {
+  const stored = Math.min(2, track.volume ?? 1)
+  const [draft, setDraft] = useState<number | null>(null)
+  const value = draft ?? stored
+  const db = value <= 0 ? '−∞ dB' : `${(20 * Math.log10(value)).toFixed(1)} dB`
+  const commit = () => { if (draft !== null && draft !== stored) onCommit(draft); setDraft(null) }
+  return <input type="range" className="track-volume" min={0} max={2} step={0.01} value={value} aria-label={`${label} volume`} title={`${label} volume ${db} (double-click for 0 dB)`}
+    onChange={(event) => setDraft(Number(event.target.value))} onPointerUp={commit} onKeyUp={commit} onBlur={commit}
+    onDoubleClick={() => { setDraft(null); onCommit(1) }} />
+}
+
 function TrackHeader({ row, first, last, clipCount, actions }: {
   row: Extract<TimelineRow, { kind: 'track' }>; first: boolean; last: boolean; clipCount: number; actions: TrackHeaderActions
 }) {
@@ -35,8 +51,8 @@ function TrackHeader({ row, first, last, clipCount, actions }: {
   const [editing, setEditing] = useState(false)
   const [name, setName] = useState(track.name)
   const commit = () => { setEditing(false); if (name.trim() !== track.name) actions.onUpdate(track.id, { name }) }
-  const flag = (key: 'muted' | 'hidden' | 'locked', label: string, short: string) => <button type="button" className={`track-flag ${track[key] ? 'on' : ''}`}
-    aria-pressed={track[key]} title={`${label} ${row.label}`} aria-label={`${label} ${row.label}`}
+  const flag = (key: 'muted' | 'hidden' | 'locked' | 'solo', label: string, short: string) => <button type="button" className={`track-flag ${track[key] ? 'on' : ''}`}
+    aria-pressed={Boolean(track[key])} title={`${label} ${row.label}`} aria-label={`${label} ${row.label}`}
     onClick={() => actions.onUpdate(track.id, { [key]: !track[key] })}>{short}</button>
   // "Up" moves a track visually up: for video that is later in the array (painted on top).
   const upDirection = track.kind === 'video' ? 'forward' : 'backward'
@@ -48,8 +64,10 @@ function TrackHeader({ row, first, last, clipCount, actions }: {
         onChange={(event) => setName(event.target.value)} onBlur={commit}
         onKeyDown={(event) => { if (event.key === 'Enter') commit(); if (event.key === 'Escape') { setName(track.name); setEditing(false) } }} />
       : <span className="track-name" title="Double-click to rename" onDoubleClick={() => { setName(track.name); setEditing(true) }}>{row.label}</span>}
+    {track.kind === 'audio' && <TrackVolume track={track} label={row.label} onCommit={(volume) => actions.onUpdate(track.id, { volume })} />}
     <span className="track-flags">
       {flag('muted', track.muted ? 'Unmute' : 'Mute', 'M')}
+      {track.kind === 'audio' && flag('solo', track.solo ? 'Unsolo' : 'Solo', 'S')}
       {track.kind === 'video' && flag('hidden', track.hidden ? 'Show' : 'Hide', 'H')}
       {flag('locked', track.locked ? 'Unlock' : 'Lock', 'L')}
       <button type="button" className="track-flag" disabled={first} title="Move track up" aria-label={`Move ${row.label} up`} onClick={() => actions.onReorder(track.id, upDirection)}>↑</button>

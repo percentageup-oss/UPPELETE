@@ -325,8 +325,8 @@ Style controls beyond R2's original set, all still flowing through `captionStyle
 
 `src/style/localFonts.ts` wraps Chromium's Local Font Access API (`window.queryLocalFonts()`,
 ambient-typed in `env.d.ts` since it isn't in TS's `lib.dom` yet). It requires transient user
-activation, so it is only ever invoked from the Style panel's own "Load installed fonts" click —
-never automatically on mount — and `electron/main.ts`'s `setPermissionRequestHandler`/
+activation, so it is only ever invoked from the click that opens the Style panel's font menu
+(`Select`'s `onOpen`) — never automatically on mount — and a `needs-gesture` failure is retried on the next open — and `electron/main.ts`'s `setPermissionRequestHandler`/
 `setPermissionCheckHandler` grant only `local-fonts` and `fullscreen`, and only to this app's own
 origin. Faces are mapped to a numeric `weight`/`italic` pair (never a postscript name, so a saved
 style stays portable across machines) and grouped by family with `FONT_FAMILY_CHOICES` pinned

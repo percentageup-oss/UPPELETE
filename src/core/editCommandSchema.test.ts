@@ -89,6 +89,7 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'clip-move', command: { type: 'clip-move', clipId: 'c1', trackId: 'V1', startUs: US, mode: 'ripple', idPrefix: 'p' } },
     { name: 'clip-trim', command: { type: 'clip-trim', clipId: 'c1', edge: 'end', deltaUs: -1000, mode: 'overwrite' } },
     { name: 'clip-update (rect null)', command: { type: 'clip-update', clipId: 'c1', changes: { rect: null, opacity: 0.5 } } },
+    { name: 'clip-trim-to', command: { type: 'clip-trim-to', atUs: US, edge: 'start', mode: 'ripple' } },
     { name: 'clip-split', command: { type: 'clip-split', atUs: US, idPrefix: 'p' } },
     { name: 'clip-delete', command: { type: 'clip-delete', clipId: 'c1', mode: 'ripple' } },
     { name: 'gap-close', command: { type: 'gap-close', trackId: 'V1', atUs: 0 } },
@@ -100,6 +101,8 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'blur-delete', command: { type: 'blur-delete', blurId: 'b1' } },
     { name: 'marker-add', command: { type: 'marker-add', marker: marker('m1') } },
     { name: 'marker-update', command: { type: 'marker-update', markerId: 'm1', changes: { text: 'moved note', color: '#ff8800' } } },
+    { name: 'mask-set', command: { type: 'mask-set', target: { kind: 'clip', id: 'c1' }, mask: { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'ellipse', rect: { x: 0, y: 0, width: 100, height: 100 } } } } },
+    { name: 'mask-clear', command: { type: 'mask-set', target: { kind: 'captionTrack', id: 'ct' }, mask: null } },
     { name: 'marker-delete', command: { type: 'marker-delete', markerId: 'm1' } },
   ]
 

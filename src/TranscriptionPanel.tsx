@@ -29,6 +29,7 @@ const phaseLabels: Record<JobProgressPhase, string> = {
   aligning: 'Aligning…',
   rendering: 'Rendering…',
   encoding: 'Encoding…',
+  proxy: 'Generating a playback proxy…', // never shown here; transcription jobs never report this phase
 }
 
 const displayNames = (() => { try { return new Intl.DisplayNames(['en'], { type: 'language' }) } catch { return null } })()

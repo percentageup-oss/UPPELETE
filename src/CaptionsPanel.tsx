@@ -124,7 +124,7 @@ function CaptionTools({ style, selected, captionDisplay, onCaptionDisplay, onPro
     else onProjectStyle({ ...style, motionSpeed })
   }
   return <details className="caption-tools">
-    <summary>⚙ Caption Tools</summary>
+    <summary>Caption Tools</summary>
     <div className="caption-tools-popover">
     <section aria-label="Caption transition controls">
       <div className="caption-tools-row"><label>Apply to <select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)}><option value="all">All captions</option><option value="selected" disabled={!selected}>Selected caption</option></select></label>

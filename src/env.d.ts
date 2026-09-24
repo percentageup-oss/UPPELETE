@@ -1,4 +1,4 @@
-import type { AssetRelinkResult, ExportProgressEvent, ImportedAsset, OpenedProject, OpenedText, OpenedVideo, ProxyCreateResult, ProxyProgress, SaveRequest, SavedProject, SilenceProgress, ThumbnailsProgress, WaveformProgress } from '../electron/preload'
+import type { AssetRelinkResult, ExportProgressEvent, ImportedAsset, LutImportResult, OpenedProject, OpenedText, OpenedVideo, ProxyCreateResult, ProxyProgress, SaveRequest, SavedProject, SilenceProgress, ThumbnailsProgress, WaveformProgress } from '../electron/preload'
 import type { CaptionProject } from './core/model'
 import type { ProjectMedia } from './core/media'
 import type { ProjectAsset } from './core/edit'
@@ -6,7 +6,7 @@ import type { InspectedFile } from './core/assetImport'
 import type { WaveformLoadRequest, WaveformLoadResult } from './core/waveform'
 import type { SilenceDetectRequest, SilenceDetectResult } from './core/silenceIpc'
 import type { ThumbnailLoadRequest, ThumbnailLoadResult } from './core/thumbnails'
-import type { ProxyCreateRequest, ProxySupport } from './core/proxy'
+import type { ProxyCreateRequest, ProxySupport, PlaybackProxyEnsureRequest, PlaybackProxyStatus } from './core/proxy'
 import type { ExportSupport } from './core/exportSupport'
 import type { ExportOutcome, ExportStartRequest } from './export/ipc'
 
@@ -55,6 +55,7 @@ declare global {
       editText(action: 'undo' | 'redo'): Promise<void>
       importAsset(kind: 'image' | 'audio'): Promise<ImportedAsset | null>
       relinkAsset(expected: ProjectAsset): Promise<AssetRelinkResult | null>
+      importLut(): Promise<LutImportResult | null>
       importAssetFiles(): Promise<InspectedFile[] | null>
       inspectDroppedFiles(files: File[]): Promise<InspectedFile[]>
       loadWaveform(request: WaveformLoadRequest): Promise<WaveformLoadResult>
@@ -70,6 +71,8 @@ declare global {
       createProxy(request: ProxyCreateRequest): Promise<ProxyCreateResult | null>
       cancelProxy(requestId: string): Promise<void>
       onProxyProgress(callback: (message: ProxyProgress) => void): () => void
+      ensurePlaybackProxy(request: PlaybackProxyEnsureRequest): void
+      onPlaybackProxyStatus(callback: (status: PlaybackProxyStatus) => void): () => void
       checkExportSupport(): Promise<ExportSupport>
       startExport(request: ExportStartRequest): Promise<ExportOutcome | null>
       cancelExport(requestId: string): Promise<void>

@@ -4,9 +4,10 @@ import { displayCue, type CaptionDisplay } from '../captions/wordDisplay'
 import { compositionFor } from './composition'
 import { frameEffectsAt } from './frameEffects'
 
-import type { Clip, EffectRegion, Track } from './edit'
+import type { Clip, EffectRegion, TextOverlay, Track } from './edit'
 import type { Rational } from './media'
 import type { Cue } from './model'
+import { textMotionAt } from '../captions/textMotion'
 import { activeCueAt, type ActiveCue, type TimeRange } from './timelineModel'
 
 /**
@@ -41,6 +42,8 @@ export type LayerPlanInput = {
   /** Frame-paint effects (docs/EDITING.md "Frame-paint effects"): sequence-timed like `timeline`
    * overlays, since they only ever reach a project through the v3 manifest. */
   effects?: readonly EffectRegion[]
+  /** Authored text (schema 10): sequence-timed and animated, so each active item's motion joins the signature. */
+  textOverlays?: readonly TextOverlay[]
   /** Output pixel size; only the aspect matters, for the composition the style inputs are built in. */
   output?: { width: number; height: number }
 }
@@ -128,6 +131,8 @@ export function createLayerPlan(input: LayerPlanInput) {
     // Sequence-timed, like `timeline` overlays above — frame-paint effects only ever reach a
     // project through the v3 manifest, never the segment-mapped v2 path.
     const frameEffects = input.effects?.length ? frameEffectsAt(input.effects, sequenceUs, compositionFor(aspect)) : null
+    const textActors = (input.textOverlays ?? []).filter((item) => item.startUs <= sequenceUs && sequenceUs < item.endUs)
+      .map((item) => { const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs); return [item.id, item.layerOrder, motion] })
     // `elapsedUs` is excluded on purpose: it advances every frame but changes nothing visible.
     // `active?.id` already discriminates a placement override today (an override lives on the cue
     // itself, so a different cue is already a different signature); `placementOverride` is included
@@ -137,7 +142,7 @@ export function createLayerPlan(input: LayerPlanInput) {
       active?.id ?? null, active?.placementOverride ?? null, shown?.text ?? null, shown?.startUs ?? null, shown?.endUs ?? null,
       frame?.visible ?? false, frame?.opacity ?? 0, frame?.motion ?? null,
       frame?.words?.map((word) => [word.wordIndex, word.active, word.revealed, word.scale]) ?? null,
-      overlays, frameEffects,
+      overlays, frameEffects, textActors.length ? textActors : null,
     ])
     return { index, sequenceUs, sourceUs, activeCueId: active?.id ?? null, active: found, signature }
   }

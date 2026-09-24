@@ -4,7 +4,7 @@ import type { EffectChanges } from './core/effectCommands'
 import { formatTimestamp, parseEditedTimestamp } from './core/time'
 import { Row, SliderWithNumber, Segmented, TimeFields, Toggle, HexColorField } from './style/controls'
 
-const KIND_LABEL: Record<EffectRegion['kind'], string> = { vignette: 'Vignette', letterbox: 'Letterbox', fade: 'Fade' }
+const KIND_LABEL: Record<EffectRegion['kind'], string> = { vignette: 'Vignette', letterbox: 'Letterbox', fade: 'Fade', grain: 'Film grain', vhs: 'VHS', particles: 'Light particles', glow: 'Dreamy glow' }
 
 /**
  * The Edit-tab panel for a selected frame-paint effect (docs/EDITING.md "Frame-paint effects") —
@@ -77,6 +77,60 @@ export function EffectInspector({ effect, onMove, onLength, onEnabledChange, onD
         onDraft={(color) => onDraft({ color })} onCommit={(color) => onCommit({ color })} /></Row>
       {easeRow('easeInUs', 'Slide in', 'letterbox-ease-in', effect.easeInUs, (us) => ({ easeInUs: us }))}
       {easeRow('easeOutUs', 'Slide out', 'letterbox-ease-out', effect.easeOutUs, (us) => ({ easeOutUs: us }))}
+    </>}
+    {effect.kind === 'grain' && <>
+      <Row label="Amount" htmlFor="grain-amount">
+        <SliderWithNumber id="grain-amount" min={0} max={100} step={1} unit="%" value={Math.round(effect.amount * 100)}
+          onDraft={(percent) => onDraft({ amount: percent / 100 })} onCommit={(percent) => onCommit({ amount: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+      <Row label="Grain size" htmlFor="grain-size" hint="Cell size in frame units; the noise refreshes 24 times a second in preview and export alike.">
+        <SliderWithNumber id="grain-size" min={0.5} max={6} step={0.1} unit="" value={Math.round(effect.size * 10) / 10}
+          onDraft={(size) => onDraft({ size })} onCommit={(size) => onCommit({ size: Math.max(0.5, Math.min(6, size)) })} />
+      </Row>
+    </>}
+    {effect.kind === 'vhs' && <>
+      <Row label="Amount" htmlFor="vhs-amount" hint="An overlay look: it does not displace the picture itself. Captions stay clean above it.">
+        <SliderWithNumber id="vhs-amount" min={0} max={100} step={1} unit="%" value={Math.round(effect.amount * 100)}
+          onDraft={(percent) => onDraft({ amount: percent / 100 })} onCommit={(percent) => onCommit({ amount: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+      <Row label="Scanlines" htmlFor="vhs-scanlines">
+        <SliderWithNumber id="vhs-scanlines" min={0} max={100} step={1} unit="%" value={Math.round(effect.scanlines * 100)}
+          onDraft={(percent) => onDraft({ scanlines: percent / 100 })} onCommit={(percent) => onCommit({ scanlines: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+      <Row label="Tracking noise" htmlFor="vhs-tracking">
+        <SliderWithNumber id="vhs-tracking" min={0} max={100} step={1} unit="%" value={Math.round(effect.tracking * 100)}
+          onDraft={(percent) => onDraft({ tracking: percent / 100 })} onCommit={(percent) => onCommit({ tracking: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+    </>}
+    {effect.kind === 'particles' && <>
+      <Row label="Amount" htmlFor="particles-amount" hint="Controls how many drifting specks appear.">
+        <SliderWithNumber id="particles-amount" min={0} max={100} step={1} unit="%" value={Math.round(effect.amount * 100)}
+          onDraft={(percent) => onDraft({ amount: percent / 100 })} onCommit={(percent) => onCommit({ amount: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+      <Row label="Size" htmlFor="particles-size">
+        <SliderWithNumber id="particles-size" min={1} max={12} step={0.5} unit="" value={effect.size}
+          onDraft={(size) => onDraft({ size })} onCommit={(size) => onCommit({ size: Math.max(1, Math.min(12, size)) })} />
+      </Row>
+      <Row label="Speed" htmlFor="particles-speed">
+        <SliderWithNumber id="particles-speed" min={0} max={2} step={0.1} unit="×" value={effect.speed}
+          onDraft={(speed) => onDraft({ speed })} onCommit={(speed) => onCommit({ speed: Math.max(0, Math.min(2, speed)) })} />
+      </Row>
+      <Row label="Color" htmlFor="particles-color"><HexColorField id="particles-color" value={effect.color}
+        onDraft={(color) => onDraft({ color })} onCommit={(color) => onCommit({ color })} /></Row>
+    </>}
+    {effect.kind === 'glow' && <>
+      <Row label="Intensity" htmlFor="glow-amount" hint="Affects the picture only; captions stay crisp.">
+        <SliderWithNumber id="glow-amount" min={0} max={100} step={1} unit="%" value={Math.round(effect.amount * 100)}
+          onDraft={(percent) => onDraft({ amount: percent / 100 })} onCommit={(percent) => onCommit({ amount: Math.max(0, Math.min(1, percent / 100)) })} />
+      </Row>
+      <Row label="Glow size" htmlFor="glow-radius">
+        <SliderWithNumber id="glow-radius" min={2} max={80} step={1} unit="" value={Math.round(effect.radius)}
+          onDraft={(radius) => onDraft({ radius })} onCommit={(radius) => onCommit({ radius: Math.max(2, Math.min(80, radius)) })} />
+      </Row>
+      <Row label="Highlights" htmlFor="glow-threshold" hint="Only areas brighter than this bloom. Lower it for a hazier look.">
+        <SliderWithNumber id="glow-threshold" min={0} max={95} step={1} unit="%" value={Math.round(effect.threshold * 100)}
+          onDraft={(percent) => onDraft({ threshold: percent / 100 })} onCommit={(percent) => onCommit({ threshold: Math.max(0, Math.min(0.95, percent / 100)) })} />
+      </Row>
     </>}
     {effect.kind === 'fade' && <>
       <Row label="Shape" htmlFor="fade-shape">

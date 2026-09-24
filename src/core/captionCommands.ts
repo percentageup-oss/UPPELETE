@@ -395,13 +395,12 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
     captionDisplay = command.display
   } else if (command.type === 'apply-template') {
     captionStyle = command.style
-    const needsWords = command.style.motion === 'active-word-highlight'
-      || command.style.motion === 'word-pop'
-      || command.style.motion === 'progressive-word-reveal'
     let serial = 0
     const newId = () => `${command.idPrefix}-${++serial}`
     cues = cues.map((cue) => {
-      let updated = cue.motionOverride ? { ...cue, motionOverride: undefined } : cue
+      let updated = cue
+      const motion = cue.motionOverride?.motion ?? command.style.motion
+      const needsWords = motion === 'active-word-highlight' || motion === 'word-pop' || motion === 'progressive-word-reveal'
       if (!needsWords || !cuesNeedingWordTiming([updated]).length) return updated
       try {
         updated = { ...updated, words: estimateMissingWordTimings(updated, newId), needsReview: true }

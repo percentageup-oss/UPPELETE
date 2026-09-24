@@ -23,7 +23,7 @@ const timedWords = (text: string, idPrefix = 'w'): CaptionWord[] => captionToken
 }))
 
 const project = (...cues: Cue[]): CaptionProject => ({
-  schemaVersion: 11,
+  schemaVersion: 16,
   tracks: [],
   clips: [],
   assets: [],
@@ -36,9 +36,9 @@ const project = (...cues: Cue[]): CaptionProject => ({
 })
 
 describe('caption editing commands', () => {
-  it('applies a word-motion template with usable timing and clears caption overrides', () => {
+  it('applies a word-motion template with usable timing and preserves caption overrides', () => {
     const mint = CAPTION_TEMPLATES.find((template) => template.id === 'mint-reveal')!
-    const untimed = cue('a', 0, 3_000_000, 'ഒരു mint caption', { motionOverride: { motion: 'static-clean' } })
+    const untimed = cue('a', 0, 3_000_000, 'ഒരു mint caption', { motionOverride: { motion: 'word-pop' } })
     const aligned = cue('b', 4_000_000, 5_000_000, 'kept', { words: [
       { id: 'kept-word', text: 'kept', startUs: 4_000_000, endUs: 5_000_000, timingSource: 'aligned', needsReview: false },
     ] })
@@ -46,7 +46,7 @@ describe('caption editing commands', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.project.captionStyle).toEqual(mint.style)
-    expect(result.project.cues[0].motionOverride).toBeUndefined()
+    expect(result.project.cues[0].motionOverride).toEqual({ motion: 'word-pop' })
     expect(result.project.cues[0].words.length).toBe(3)
     expect(result.project.cues[0].words.every((word) => word.timingSource === 'estimated' && word.needsReview)).toBe(true)
     expect(result.project.cues[0].needsReview).toBe(true)

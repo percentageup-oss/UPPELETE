@@ -1,3 +1,4 @@
+import { DEFAULT_CAPTION_STYLE } from '../captions/style'
 import { describe, expect, it } from 'vitest'
 import { applyEditCommand, isItemCommand } from './commands'
 import { applyItemCommand, validateItems, type ItemCommand } from './itemCommands'
@@ -24,7 +25,7 @@ const cue = (id: string, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 11, id: 'project', title: 'Test', cues: [cue('cue-a')],
+  schemaVersion: 16, id: 'project', title: 'Test', cues: [cue('cue-a')],
   assets: [asset('x', 'video'), asset('y', 'video', 10 * US), asset('img', 'image'), asset('snd', 'audio', 4 * US)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')],
   clips: [video('c1', 'V1', 0, 0, 20 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
@@ -65,7 +66,7 @@ describe('item commands', () => {
     const base = project({ assets: [...project().assets, asset('dup', 'video', 10 * US, FINGERPRINT)] })
     const result = run(base, { type: 'clip-add', clip: video('again', 'V1', 20 * US, 0, 5 * US, 'fresh'), asset: asset('fresh', 'video', 10 * US, FINGERPRINT) })
     expect(result.project.assets).toHaveLength(base.assets.length)
-    expect(result.project.clips.find((clip) => clip.id === 'again')?.assetId).toBe('dup')
+    expect(result.project.clips.find((clip) => clip.id === 'again')).toMatchObject({ assetId: 'dup' })
   })
 
   it('appends a second video to V1 rather than replacing the first', () => {
@@ -103,6 +104,21 @@ describe('item commands', () => {
     ])
     const locked = { ...base, tracks: [track('V1', 'video', { locked: true }), track('V2', 'video'), track('A1', 'audio')] }
     expect(refuse(locked, { type: 'clip-delete', clipId: 'a', mode: 'overwrite' })).toMatch(/locked/)
+  })
+
+  it('trims clip edges to the playhead as one undo step, skipping locked tracks and clips not under it', () => {
+    const base = project({ clips: [video('a', 'V1', 0, 0, 10 * US), image('i', 'V2', 2 * US, 6 * US), video('b', 'V1', 10 * US, 0, 5 * US)] })
+    const rows = (value: typeof base) => layout(value).sort((x, y) => String(x[0]).localeCompare(String(y[0])))
+    const start = run(base, { type: 'clip-trim-to', atUs: 4 * US, edge: 'start', mode: 'overwrite' })
+    expect(rows(start.project)).toEqual([['a', 'V1', 4 * US, 4 * US, 10 * US], ['b', 'V1', 10 * US, 0, 5 * US], ['i', 'V2', 4 * US, 0, 4 * US]])
+    const end = run(base, { type: 'clip-trim-to', atUs: 4 * US, edge: 'end', mode: 'ripple' })
+    expect(rows(end.project)).toEqual([['a', 'V1', 0, 0, 4 * US], ['b', 'V1', 4 * US, 0, 5 * US], ['i', 'V2', 2 * US, 0, 2 * US]])
+    expect(undoHistory(commitHistory(createHistory(base), end.project)).present).toEqual(base)
+    expect(run(base, { type: 'clip-trim-to', atUs: 12 * US, edge: 'end', mode: 'overwrite', clipIds: ['a'] }).project).toEqual(base)
+    expect(rows(run(base, { type: 'clip-trim-to', atUs: 4 * US, edge: 'end', mode: 'overwrite', clipIds: ['a'] }).project)[0]).toEqual(['a', 'V1', 0, 0, 4 * US])
+    const locked = { ...base, tracks: [track('V1', 'video', { locked: true }), track('V2', 'video'), track('A1', 'audio')] }
+    expect(rows(run(locked, { type: 'clip-trim-to', atUs: 4 * US, edge: 'end', mode: 'overwrite' }).project)).toEqual([['a', 'V1', 0, 0, 10 * US], ['b', 'V1', 10 * US, 0, 5 * US], ['i', 'V2', 2 * US, 0, 2 * US]])
+    expect(refuse(locked, { type: 'clip-trim-to', atUs: 4 * US, edge: 'end', mode: 'overwrite', clipIds: ['a'] })).toMatch(/locked/)
   })
 
   it('edits a clip’s picture or sound in the inspector, refusing what its kind does not have', () => {
@@ -257,6 +273,39 @@ describe('item commands', () => {
     expect(restyled.selection).toEqual({ kind: 'effect', id: 'e1' })
 
     expect(run(restyled.project, { type: 'effect-delete', effectId: 'e1' }).project.effects).toEqual([])
+  })
+
+  it('sets, replaces and clears a layer mask as single undoable commands', () => {
+    const mask = { enabled: true, invert: false, feather: 6, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 100, y: 100, width: 400, height: 300 } } }
+    const withText = run(project(), { type: 'text-add', overlay: { id: 't1', text: 'Hi', startUs: 0, endUs: US, style: DEFAULT_CAPTION_STYLE, enter: { kind: 'none', durationUs: 0 }, exit: { kind: 'none', durationUs: 0 }, layerOrder: 1 } }).project
+    const set = run(withText, { type: 'mask-set', target: { kind: 'text', id: 't1' }, mask })
+    expect(set.project.textOverlays[0].mask).toEqual(mask)
+    expect(set.selection).toEqual({ kind: 'text', id: 't1' })
+    const clipMasked = run(set.project, { type: 'mask-set', target: { kind: 'clip', id: 'c1' }, mask: { ...mask, invert: true } })
+    expect(clipMasked.project.clips[0]).toMatchObject({ mask: { invert: true } })
+    const cleared = run(clipMasked.project, { type: 'mask-set', target: { kind: 'clip', id: 'c1' }, mask: null })
+    expect('mask' in cleared.project.clips[0]).toBe(false)
+    const track = run(project(), { type: 'caption-track-add', track: { id: 'ct', name: '', locked: false } }).project
+    expect(run(track, { type: 'mask-set', target: { kind: 'captionTrack', id: 'ct' }, mask }).project.captionTracks[0].mask).toEqual(mask)
+  })
+
+  it('carries a clip\'s mask along when it is moved, but not when it is resized', () => {
+    const mask = { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 100, y: 100, width: 200, height: 100 } } }
+    const pip = run(project({ clips: [video('c1', 'V1', 0, 0, 20 * US)] }), { type: 'clip-update', clipId: 'c1', changes: { rect: { x: 0, y: 0, width: 400, height: 225 } } }).project
+    const masked = run(pip, { type: 'mask-set', target: { kind: 'clip', id: 'c1' }, mask }).project
+    const moved = run(masked, { type: 'clip-update', clipId: 'c1', changes: { rect: { x: 50, y: 30, width: 400, height: 225 } } }).project.clips[0]
+    expect(moved.kind !== 'audio' && moved.kind !== 'adjustment' && moved.mask?.shape).toEqual({ kind: 'ellipse', rect: { x: 150, y: 130, width: 200, height: 100 } })
+    const resized = run(masked, { type: 'clip-update', clipId: 'c1', changes: { rect: { x: 0, y: 0, width: 500, height: 281 } } }).project.clips[0]
+    expect(resized.kind !== 'audio' && resized.kind !== 'adjustment' && resized.mask).toEqual(mask)
+  })
+
+  it('refuses masks on missing layers, audio clips and glow', () => {
+    const mask = { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'rect' as const, rect: { x: 0, y: 0, width: 10, height: 10 }, cornerRadius: 0 } }
+    expect(refuse(project(), { type: 'mask-set', target: { kind: 'text', id: 'nope' }, mask })).toContain('no longer exists')
+    const withAudio = run(project(), { type: 'clip-add', clip: { kind: 'audio', id: 'a', trackId: 'A1', assetId: 'snd', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: US, gain: 1 } }).project
+    expect(refuse(withAudio, { type: 'mask-set', target: { kind: 'clip', id: 'a' }, mask })).toContain('audio')
+    const withGlow = run(project(), { type: 'effect-add', effect: { id: 'g', kind: 'glow', startUs: 0, endUs: US, enabled: true, amount: .5, radius: 10, threshold: .5 } }).project
+    expect(refuse(withGlow, { type: 'mask-set', target: { kind: 'effect', id: 'g' }, mask })).toContain('Glow')
   })
 
   it('clamps a second effect of the same kind into the gap beside the first rather than overlapping it', () => {

@@ -4,7 +4,7 @@ import type { EffectDragMode } from '../core/effectCommands'
 import { timeToPixel } from '../core/timeline'
 import { formatClock } from '../core/time'
 
-const EFFECT_LANE_LABEL: Record<EffectRegionKind, string> = { vignette: 'Vignette', letterbox: 'Letterbox', fade: 'Fade' }
+const EFFECT_LANE_LABEL: Record<EffectRegionKind, string> = { vignette: 'Vignette', letterbox: 'Letterbox', fade: 'Fade', grain: 'Film grain', vhs: 'VHS', particles: 'Light particles', glow: 'Dreamy glow' }
 
 /**
  * One frame-paint effect's lane (docs/EDITING.md "Frame-paint effects"): the same fixed-row,
@@ -27,7 +27,7 @@ export function EffectLane({ effectKind, regions, durationUs, selectedId, draggi
   const place = (region: EffectRegion) => ({ left: `${timeToPixel(region.startUs, durationUs, 100)}%`, width: `${Math.max(.02, timeToPixel(region.endUs - region.startUs, durationUs, 100))}%` })
   return <div className={`track effect-lane ${effectKind}-lane`} onPointerDown={onSeekTrack} role="group"
     aria-label={`${label} regions. Tab to a region, then press Enter to select and seek to it.`}>
-    {regions.map((region) => <div key={region.id} role="button" tabIndex={0}
+    {regions.map((region) => <div key={region.id} data-item-kind="effect" data-item-id={region.id} role="button" tabIndex={0}
       aria-label={`${label} region, ${formatClock(region.startUs)} to ${formatClock(region.endUs)}${region.enabled ? '' : ', bypassed'}`}
       aria-pressed={region.id === selectedId}
       className={`zoom-block effect-block ${effectKind}-block ${region.id === selectedId ? 'active' : ''} ${draggingId === region.id ? 'dragging' : ''} ${region.enabled ? '' : 'disabled'}`}

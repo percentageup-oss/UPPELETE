@@ -1,9 +1,10 @@
 import { expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AgentSettings, GeminiKeySettings, SettingsDialog } from './SettingsDialog'
+import { AgentSettings, GeminiKeySettings, PlaybackProxySettings, SettingsDialog } from './SettingsDialog'
 
 it('renders only the selected settings tab', () => {
-  const html = renderToStaticMarkup(<SettingsDialog tab="shortcuts" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}} onMessage={() => {}} />)
+  const html = renderToStaticMarkup(<SettingsDialog tab="shortcuts" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+    playbackProxyMode="auto" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
   expect(html).toMatch(/id="settings-tab-shortcuts"[^>]*aria-selected="true"/)
   expect(html).toMatch(/id="settings-tab-models"[^>]*aria-selected="false"/)
   expect(html).toContain('⌘/Ctrl+S')
@@ -11,10 +12,29 @@ it('renders only the selected settings tab', () => {
 })
 
 it('lists the AI agents tab alongside the others', () => {
-  const html = renderToStaticMarkup(<SettingsDialog tab="agent" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}} onMessage={() => {}} />)
+  const html = renderToStaticMarkup(<SettingsDialog tab="agent" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+    playbackProxyMode="auto" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
   expect(html).toMatch(/id="settings-tab-agent"[^>]*aria-selected="true"/)
   expect(html).toContain('AI agents')
   expect(html).toContain('Allow agent access')
+})
+
+it('lists the Playback tab and marks the current mode selected', () => {
+  const html = renderToStaticMarkup(<SettingsDialog tab="playback" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+    playbackProxyMode="always" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
+  expect(html).toMatch(/id="settings-tab-playback"[^>]*aria-selected="true"/)
+  expect(html).toContain('Playback proxies')
+})
+
+it('PlaybackProxySettings checks only the radio matching the current mode (Off, Auto, Always in order)', () => {
+  const html = renderToStaticMarkup(<PlaybackProxySettings mode="always" onMode={() => {}} />)
+  const checkedCount = (html.match(/checked=""/g) ?? []).length
+  expect(checkedCount).toBe(1)
+  const labels = html.split('<label').slice(1)
+  expect(labels.map((label) => label.includes('checked=""'))).toEqual([false, false, true])
+  expect(html).toContain('Off')
+  expect(html).toContain('Auto (recommended)')
+  expect(html).toContain('Always')
 })
 
 it('AgentSettings shows the disabled state with no window.captionStudio bridge (SSR/no-Electron)', () => {

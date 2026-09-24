@@ -127,4 +127,14 @@ describe('frame signatures', () => {
     const bypassed = createLayerPlan({ cues: [], frameRate: { numerator: 10, denominator: 1 }, effects: [{ ...effects[0], enabled: false }], output })
     expect(bypassed.frameAt(14).signature).toBe(bypassed.frameAt(15).signature)
   })
+
+  it('changes signature while authored text animates, and only then', () => {
+    const text = [{ id: 't1', text: 'Hi', startUs: 0, endUs: 2_000_000, style: DEFAULT_CAPTION_STYLE, layerOrder: 1,
+      enter: { kind: 'slide' as const, direction: 'left' as const, durationUs: 500_000 }, exit: { kind: 'none' as const, durationUs: 0 } }]
+    const plan = createLayerPlan({ cues: [], frameRate: { numerator: 100, denominator: 1 }, textOverlays: text, output })
+    const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+    expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
+    expect(signatureAt(900_000)).toBe(signatureAt(1_000_000))
+    expect(signatureAt(900_000)).not.toBe(signatureAt(2_500_000))
+  })
 })

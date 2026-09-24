@@ -1,4 +1,5 @@
 import type { Clip, ProjectAsset, Track, VideoClip } from './edit'
+import { assetIdOf } from './edit'
 import type { CaptionProject } from './model'
 import { clipLengthUs } from './timelineModel'
 
@@ -74,7 +75,7 @@ export function bindUnboundItems(project: CaptionProject, assetId: string | null
 /** Everything that would be orphaned by removing an asset: the clips that play it and the captions bound to it. */
 export function assetUsers(project: Pick<CaptionProject, 'clips' | 'cues'>, assetId: string): string[] {
   return [
-    ...project.clips.filter((clip) => clip.assetId === assetId).map((clip) => clip.id),
+    ...project.clips.filter((clip) => assetIdOf(clip) === assetId).map((clip) => clip.id),
     ...project.cues.filter((cue) => cue.mediaAssetId === assetId).map((cue) => cue.id),
   ]
 }
@@ -96,12 +97,12 @@ export const audioTracks = (project: Pick<CaptionProject, 'tracks'>): Track[] =>
 /** Clip counts per asset, for the media bin's "used N times" badges. */
 export function clipCountByAsset(clips: readonly Clip[]): Map<string, number> {
   const counts = new Map<string, number>()
-  for (const clip of clips) counts.set(clip.assetId, (counts.get(clip.assetId) ?? 0) + 1)
+  for (const clip of clips) { const id = assetIdOf(clip); if (id) counts.set(id, (counts.get(id) ?? 0) + 1) }
   return counts
 }
 
 /** Total sequence time that clips of one asset play. */
 export function playedUsOfAsset(clips: readonly Clip[], assetId: string): number {
-  return clips.filter((clip) => clip.assetId === assetId).reduce((total, clip) => total + clipLengthUs(clip), 0)
+  return clips.filter((clip) => assetIdOf(clip) === assetId).reduce((total, clip) => total + clipLengthUs(clip), 0)
 }
 

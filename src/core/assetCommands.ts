@@ -1,9 +1,10 @@
 import type { Clip, ProjectAsset, Track } from './edit'
+import { assetIdOf } from './edit'
 import type { CaptionProject } from './model'
 import type { CommandContext } from './captionCommands'
 import { formatFromMedia } from './format'
 import { assetUsers, primaryVideoAsset } from './projectClips'
-import { clipEndUs, normalizeClips } from './timelineModel'
+import { clipEndUs, normalizeClips, sourceUsAt } from './timelineModel'
 import { failItem, replaceById, type ItemFailure, type ItemStep } from './itemStep'
 
 export type AssetCommand =
@@ -21,12 +22,12 @@ export type AssetCommand =
  */
 export function refitClipsToDuration(tracks: readonly Track[], clips: readonly Clip[], assetId: string, oldDurationUs: number | null, newDurationUs: number): Clip[] {
   const refit = clips.flatMap((clip): Clip[] => {
-    if (clip.assetId !== assetId || clip.kind === 'image') return [clip]
+    if (assetIdOf(clip) !== assetId || clip.kind === 'image' || clip.kind === 'color') return [clip]
     const wasWhole = clip.sourceStartUs === 0 && oldDurationUs !== null && clip.sourceEndUs === oldDurationUs
     let sourceEndUs = wasWhole ? newDurationUs : Math.min(clip.sourceEndUs, newDurationUs)
     if (sourceEndUs > clip.sourceEndUs) {
       const nextStartUs = Math.min(Infinity, ...clips.filter((other) => other.trackId === clip.trackId && other.timelineStartUs >= clipEndUs(clip)).map((other) => other.timelineStartUs))
-      sourceEndUs = Math.min(sourceEndUs, clip.sourceStartUs + (nextStartUs - clip.timelineStartUs))
+      sourceEndUs = Math.min(sourceEndUs, sourceUsAt(clip, nextStartUs))
     }
     return sourceEndUs > clip.sourceStartUs ? [{ ...clip, sourceEndUs }] : []
   })

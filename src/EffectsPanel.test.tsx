@@ -4,22 +4,26 @@ import { EffectsPanel } from './EffectsPanel'
 
 describe('EffectsPanel', () => {
   it('groups the zoom presets under a Zoom section heading', () => {
-    const html = renderToStaticMarkup(<EffectsPanel onAddAtPlayhead={() => {}} />)
+    const html = renderToStaticMarkup(<EffectsPanel onAddBackground={() => undefined} onAddAtPlayhead={() => {}} />)
     expect(html).toContain('Zoom')
     expect(html).toContain('Zoom in')
     expect(html).toContain('Zoom out')
   })
 
   it('groups the blur presets under a Blur section heading', () => {
-    const html = renderToStaticMarkup(<EffectsPanel onAddAtPlayhead={() => {}} />)
+    const html = renderToStaticMarkup(<EffectsPanel onAddBackground={() => undefined} onAddAtPlayhead={() => {}} />)
     expect(html).toContain('Blur')
     expect(html).toContain('Blur area')
     expect(html).toContain('Blur frame')
   })
 
   it('offers click-and-drag for every preset tile', () => {
-    const html = renderToStaticMarkup(<EffectsPanel onAddAtPlayhead={() => {}} />)
-    expect([...html.matchAll(/draggable="true"/g)]).toHaveLength(13)
+    const html = renderToStaticMarkup(<EffectsPanel onAddBackground={() => undefined} onAddAtPlayhead={() => {}} />)
+    // 16 effect presets, 15 background presets and the custom background's own add button.
+    expect([...html.matchAll(/draggable="true"/g)]).toHaveLength(32)
+    expect(html).toContain('Backgrounds')
+    expect(html).toContain('Add ocean background at the playhead')
+    expect(html).toContain('Add color shift background at the playhead')
     expect(html).toContain('Add zoom in at the playhead')
     expect(html).toContain('Add zoom out at the playhead')
     expect(html).toContain('Add pan at the playhead')
@@ -29,10 +33,13 @@ describe('EffectsPanel', () => {
     expect(html).toContain('Add vignette at the playhead')
     expect(html).toContain('Add letterbox 2.39 at the playhead')
     expect(html).toContain('Add flash at the playhead')
+    expect(html).toContain('Add film grain at the playhead')
+    expect(html).toContain('Add vhs at the playhead')
+    expect(html).toContain('Add dreamy glow at the playhead')
   })
 
   it('groups the frame-paint presets under Look and Transitions section headings', () => {
-    const html = renderToStaticMarkup(<EffectsPanel onAddAtPlayhead={() => {}} />)
+    const html = renderToStaticMarkup(<EffectsPanel onAddBackground={() => undefined} onAddAtPlayhead={() => {}} />)
     expect(html).toContain('Look')
     expect(html).toContain('Vignette')
     expect(html).toContain('Letterbox 2.39')
@@ -42,5 +49,14 @@ describe('EffectsPanel', () => {
     expect(html).toContain('Fade out')
     expect(html).toContain('Dip to black')
     expect(html).toContain('Flash')
+  })
+})
+
+describe('EffectsPanel accordion', () => {
+  it('opens Backgrounds by default and collapses the other sections', () => {
+    const html = renderToStaticMarkup(<EffectsPanel onAddBackground={() => undefined} onAddAtPlayhead={() => {}} />)
+    expect([...html.matchAll(/aria-expanded="true"/g)]).toHaveLength(1)
+    expect([...html.matchAll(/aria-expanded="false"/g)]).toHaveLength(4)
+    expect(html).toContain('Add custom background')
   })
 })

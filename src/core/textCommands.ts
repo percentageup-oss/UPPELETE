@@ -2,9 +2,9 @@ import type { TextOverlay } from './edit'
 import type { CaptionProject } from './model'
 import { sequenceDurationUs } from './timelineModel'
 import { failItem, replaceById, type ItemFailure, type ItemStep } from './itemStep'
-import { DEFAULT_CAPTION_STYLE } from '../captions/style'
+import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '../captions/style'
 
-export type TextOverlayChanges = Partial<Pick<TextOverlay, 'text' | 'style' | 'enter' | 'exit' | 'layerOrder'>>
+export type TextOverlayChanges = Partial<Pick<TextOverlay, 'text' | 'style' | 'enter' | 'exit' | 'titleMotion' | 'layerOrder'>>
 export type TextCommand =
   | { type: 'text-add'; overlay: TextOverlay }
   | { type: 'text-update'; textId: string; changes: TextOverlayChanges }
@@ -14,8 +14,13 @@ export type TextCommand =
   | { type: 'text-delete'; textId: string }
   | { type: 'text-reorder'; textId: string; direction: 'forward' | 'backward' | 'above-captions' | 'below-captions' }
 
-export function defaultTextOverlay(id: string, startUs: number, endUs: number, text = 'Your text'): TextOverlay {
-  return { id, text, startUs, endUs, style: DEFAULT_CAPTION_STYLE,
+/** A first-ever text carries no effects; later texts reuse `style` (the previously used text style). */
+const PLAIN_TEXT_STYLE: CaptionStyle = {
+  ...DEFAULT_CAPTION_STYLE, appearance: { ...DEFAULT_CAPTION_STYLE.appearance, shadowEnabled: false, strokeEnabled: false, glowEnabled: false },
+}
+
+export function defaultTextOverlay(id: string, startUs: number, endUs: number, text = 'Your text', style: CaptionStyle = PLAIN_TEXT_STYLE): TextOverlay {
+  return { id, text, startUs, endUs, style,
     enter: { kind: 'fade', durationUs: 250_000 }, exit: { kind: 'fade', durationUs: 250_000 }, layerOrder: 1 }
 }
 

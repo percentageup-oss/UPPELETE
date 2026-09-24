@@ -419,6 +419,8 @@ Tests: exportArguments (N regions chain with unique labels; enable windows in se
 
 ## V5 — Trim in/out
 
+**2026-09-24 note:** V5 was redefined for the multi-track timeline as (a) trim-to-playhead (`Q`/`W`, `clip-trim-to`) and (b) an In/Out export range (`I`/`O`, `projectInRange`, dimming, stop at Out, range MP4 and SRT). Both are implemented and unit-tested (`docs/STATUS.md` 2026-09-24). Still open before it can be checked off: a real range export measured against Out − In within one frame, a GUI pass, and the below text's single-segment trim commands are obsolete. Stays unchecked.
+
 **Dependencies:** V1  
 **Suggested model:** GPT-5.6 Sol, high. First use of sequence time in export and SRT.
 

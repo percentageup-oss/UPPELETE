@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createProject, loadProject, migrateV3, projectSchema, projectSchemaV3, projectSchemaV4, projectSchemaV6, projectSchemaV7, projectSchemaV8, projectSchemaV9, projectSchemaV10 } from './model'
+import { createProject, loadProject, migrateV3, projectSchema, projectSchemaV3, projectSchemaV4, projectSchemaV6, projectSchemaV7, projectSchemaV8, projectSchemaV9, projectSchemaV10, projectSchemaV11 } from './model'
 
 const dates = { createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
 /** Schema 4's edit lists as a migration or a `.default([])` parse produces them: empty. */
@@ -26,7 +26,7 @@ describe('project schema migration', () => {
   it('migrates schema 1 media paths without fabricating metadata or fingerprints', () => {
     const loaded = loadProject({ schemaVersion: 1, id: 'legacy', title: 'Legacy', media: { name: 'വീഡിയോ clip.mp4', path: '/Media folder/വീഡിയോ clip.mp4' }, cues: [], ...dates }, ids())
     expect(loaded.migratedFrom).toBe(1)
-    expect(loaded.project.schemaVersion).toBe(11)
+    expect(loaded.project.schemaVersion).toBe(16)
     // The old media becomes a video asset carrying exactly what was stored: no invented probe data.
     expect(loaded.project.assets).toEqual([{
       id: 'minted-1', kind: 'video', name: 'വീഡിയോ clip.mp4',
@@ -45,7 +45,7 @@ describe('project schema migration', () => {
     expect(loaded.migratedFrom).toBe(2)
     const { media: _media, ...rest } = v2
     expect(loaded.project).toEqual({
-      ...rest, schemaVersion: 11, assets: [], clips: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
+      ...rest, schemaVersion: 16, assets: [], clips: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
       tracks: [trackOf('minted-1', 'video'), trackOf('minted-2', 'audio')],
       captionTracks: [{ id: 'minted-3', name: '', locked: false }],
       cues: cues.map((cue) => ({ ...cue, captionTrackId: 'minted-3' })),
@@ -63,7 +63,7 @@ describe('project schema migration', () => {
     const loaded = loadProject(v3, ids())
     expect(loaded.migratedFrom).toBe(3)
     const { project } = loaded
-    expect(project.schemaVersion).toBe(11)
+    expect(project.schemaVersion).toBe(16)
     expect(project).not.toHaveProperty('media')
     expect(project).not.toHaveProperty('overlays')
     expect(project.assets.map((entry) => [entry.id, entry.kind])).toEqual([['minted-1', 'video'], ['img-1', 'image'], ['snd-1', 'audio']])
@@ -128,7 +128,7 @@ describe('project schema migration', () => {
       chunkCount: 2, silenceCount: 1, segmentCount: 1, adjustedSegmentCount: 0, droppedSegments: { empty: 0, outsideChunk: 0, zeroDuration: 0 },
     }
     const project = {
-      schemaVersion: 11, id: 'transcribed', title: 'Transcribed', ...dates, assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], transcriptionRuns: [run],
+      schemaVersion: 16, id: 'transcribed', title: 'Transcribed', ...dates, assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], transcriptionRuns: [run],
       cues: [{ id: 'c1', startUs: 1_200_000, endUs: 3_000_000, text: 'ആദ്യ വാചകം', timingSource: 'model', needsReview: false, textSource: 'model', words: [], transcriptionRunId: 'run-1' }],
     }
     expect(projectSchema.parse(project)).toEqual(project)
@@ -136,7 +136,7 @@ describe('project schema migration', () => {
   })
 
   it('does not rewrite a current schema project', () => {
-    const current = { schemaVersion: 11, id: 'current', title: 'Current', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], ...dates }
+    const current = { schemaVersion: 16, id: 'current', title: 'Current', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], ...dates }
     expect(loadProject(current)).toEqual({ project: current, migratedFrom: null, migrationNotes: [] })
   })
 
@@ -144,7 +144,7 @@ describe('project schema migration', () => {
     const v6 = { schemaVersion: 6, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], markers: [], ...dates }
     const loaded = loadProject(v6)
     expect(loaded.migratedFrom).toBe(6)
-    expect(loaded.project).toEqual({ ...v6, schemaVersion: 11, zoomRegions: [], effects: [], textOverlays: [] })
+    expect(loaded.project).toEqual({ ...v6, schemaVersion: 16, zoomRegions: [], effects: [], textOverlays: [] })
     expect(loaded.migrationNotes).toEqual([])
     expect(projectSchemaV6.safeParse(v6).success).toBe(true)
   })
@@ -155,7 +155,7 @@ describe('project schema migration', () => {
     const v7 = { schemaVersion: 7, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [blur], zoomRegions: [zoom], markers: [], ...dates }
     const loaded = loadProject(v7)
     expect(loaded.migratedFrom).toBe(7)
-    expect(loaded.project).toEqual({ ...v7, schemaVersion: 11, blurRegions: [{ ...blur, enabled: true }], zoomRegions: [{ ...zoom, enabled: true }], effects: [], textOverlays: [] })
+    expect(loaded.project).toEqual({ ...v7, schemaVersion: 16, blurRegions: [{ ...blur, enabled: true }], zoomRegions: [{ ...zoom, enabled: true }], effects: [], textOverlays: [] })
     expect(loaded.migrationNotes).toEqual([])
     expect(projectSchemaV7.safeParse(v7).success).toBe(true)
   })
@@ -164,7 +164,7 @@ describe('project schema migration', () => {
     const v8 = { schemaVersion: 8, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], markers: [], ...dates }
     const loaded = loadProject(v8)
     expect(loaded.migratedFrom).toBe(8)
-    expect(loaded.project).toEqual({ ...v8, schemaVersion: 11, effects: [], textOverlays: [] })
+    expect(loaded.project).toEqual({ ...v8, schemaVersion: 16, effects: [], textOverlays: [] })
     expect(loaded.migrationNotes).toEqual([])
     expect(projectSchemaV8.safeParse(v8).success).toBe(true)
   })
@@ -175,17 +175,26 @@ describe('project schema migration', () => {
 
   it('migrates schema 9 to 10 with an empty, lossless authored text list', () => {
     const v9 = projectSchemaV9.parse({ schemaVersion: 9, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], markers: [], ...dates })
-    expect(loadProject(v9)).toEqual({ project: { ...v9, schemaVersion: 11, textOverlays: [] }, migratedFrom: 9, migrationNotes: [] })
+    expect(loadProject(v9)).toEqual({ project: { ...v9, schemaVersion: 16, textOverlays: [] }, migratedFrom: 9, migrationNotes: [] })
   })
 
   it('migrates schema 10 to 11 changing only the version, and accepts an optional pan start framing', () => {
     const rect = { x: 0, y: 0, width: 540, height: 303.75 }
     const zoom = { id: 'z', startUs: 0, endUs: 2_000_000, rect, easeInUs: 0, easeOutUs: 0, enabled: true }
     const v10 = projectSchemaV10.parse({ schemaVersion: 10, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [zoom], effects: [], textOverlays: [], markers: [], ...dates })
-    expect(loadProject(v10)).toEqual({ project: { ...v10, schemaVersion: 11 }, migratedFrom: 10, migrationNotes: [] })
+    expect(loadProject(v10)).toEqual({ project: { ...v10, schemaVersion: 16 }, migratedFrom: 10, migrationNotes: [] })
     const panned = { ...loadProject(v10).project, zoomRegions: [{ ...zoom, fromRect: { ...rect, x: 540 } }] }
     expect(projectSchema.parse(panned).zoomRegions[0].fromRect).toEqual({ ...rect, x: 540 })
     expect(loadProject(JSON.parse(JSON.stringify(panned))).migratedFrom).toBeNull()
+  })
+
+  it('migrates schema 11 to 12 unchanged, and round-trips a layer mask', () => {
+    const v11 = projectSchemaV11.parse({ schemaVersion: 11, id: 'p', title: 'P', cues: [], assets: [], tracks: [], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], ...dates })
+    expect(loadProject(v11)).toEqual({ project: { ...v11, schemaVersion: 16 }, migratedFrom: 11, migrationNotes: [] })
+    const mask = { enabled: true, invert: false, feather: 4, density: 1, shape: { kind: 'path', points: [{ x: 0, y: 0 }, { x: 100, y: 0, out: { x: 120, y: 20 } }, { x: 50, y: 90 }] } }
+    const masked = { ...loadProject(v11).project, captionTracks: [{ id: 'ct', name: '', locked: false, mask }] }
+    expect(loadProject(JSON.parse(JSON.stringify(masked)))).toEqual({ project: projectSchema.parse(masked), migratedFrom: null, migrationNotes: [] })
+    expect(projectSchema.safeParse({ ...masked, captionTracks: [{ id: 'ct', name: '', locked: false, mask: { ...mask, shape: { kind: 'path', points: [{ x: 0, y: 0 }] } } }] }).success).toBe(false)
   })
 
   it('reports a broken schema 8 file as itself rather than as an unreadable schema 1 file', () => {
@@ -211,7 +220,7 @@ describe('project schema migration', () => {
 
 describe('schema 10 tracks and clips', () => {
   const V1 = trackOf('V1', 'video'), V2 = trackOf('V2', 'video'), A1 = trackOf('A1', 'audio')
-  const base = { schemaVersion: 11 as const, id: 'p', title: 'P', cues: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], ...dates, tracks: [V1, V2, A1],
+  const base = { schemaVersion: 16 as const, id: 'p', title: 'P', cues: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], ...dates, tracks: [V1, V2, A1],
     assets: [video('x'), video('y', 6_000_000), asset('img', 'image'), asset('snd', 'audio', 4_000_000)] }
   const clip = (kind: 'video' | 'image' | 'audio', id: string, trackId: string, assetId: string, timelineStartUs: number, sourceStartUs: number, sourceEndUs: number) =>
     ({ kind, id, trackId, assetId, timelineStartUs, sourceStartUs, sourceEndUs })

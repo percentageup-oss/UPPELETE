@@ -41,7 +41,7 @@ export function TextLane({ items, durationUs, selectedId, onSelect, onSeekTrack,
   const place = (item: TextOverlay) => ({ left: `${timeToPixel(item.startUs, durationUs, 100)}%`, width: `${Math.max(.04, timeToPixel(item.endUs - item.startUs, durationUs, 100))}%` })
   return <div className="track text-lane" onPointerDown={onSeekTrack} role="group" aria-label="Text layers timeline">
     {rows.map((row, rowIndex) => row.map((source) => { const item = shown(source)
-      return <div key={item.id} role="button" tabIndex={0} aria-pressed={item.id === selectedId}
+      return <div key={item.id} data-item-kind="text" data-item-id={item.id} role="button" tabIndex={0} aria-pressed={item.id === selectedId}
         aria-label={`Text ${item.text}, ${formatClock(source.startUs)} to ${formatClock(source.endUs)}`}
         className={`text-block ${item.id === selectedId ? 'active' : ''} ${gesture?.id === item.id ? 'dragging' : ''}`}
         style={{ ...place(item), top: 2 + rowIndex * 18, zIndex: item.layerOrder + 10001 }}

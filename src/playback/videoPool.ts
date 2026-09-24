@@ -28,7 +28,8 @@ export type VideoLike = {
 
 export type PooledVideo<V extends VideoLike = VideoLike> = { key: string; trackId: string; assetId: string; url: string; element: V; lastUsed: number }
 
-export const VIDEO_POOL_CAPACITY = 6
+/** Room for a few stacked videos and each one's linked audio element. */
+export const VIDEO_POOL_CAPACITY = 10
 
 export type VideoPool<V extends VideoLike = VideoLike> = {
   get(key: string): PooledVideo<V> | undefined

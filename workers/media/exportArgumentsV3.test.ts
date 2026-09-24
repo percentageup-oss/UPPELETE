@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { exportArgumentsV3, exportFilterGraphV3, v3Route } from './exportArguments'
+import { exportArgumentsV3, exportFilterGraphV3, maskTargets, v3Route } from './exportArguments'
 import { exportManifestV3Schema, type ExportManifestV3, type ManifestClip } from '../../src/export/plan'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 
@@ -110,6 +110,19 @@ describe('manifest v3 routes', () => {
     expect(plain).toContain('fps=fps=25/1:start_time=0[v]')
   })
 
+  it('chains lutrgb/gblur/screen-blend per glow region after zoom, and leaves glow-free graphs unchanged', () => {
+    const glow = { id: 'g', kind: 'glow' as const, sequence: { startUs: US, endUs: 3 * US }, sigmaPx: 24, amount: 0.5, threshold: 0.6 }
+    const plain = exportFilterGraphV3(backToBack, [true, true]).filterComplex
+    expect(exportFilterGraphV3({ ...backToBack, pictureEffects: [] }, [true, true]).filterComplex).toBe(plain)
+    const graph = exportFilterGraphV3({ ...backToBack, pictureEffects: [glow] }, [true, true]).filterComplex
+    const lut = 'clip((val-153)*255/102,0,255)'
+    expect(graph).toContain(`[gl0copy]lutrgb=r='${lut}':g='${lut}':b='${lut}',gblur=sigma=24.000000:steps=2[gl0bloom]`)
+    expect(graph).toContain("[gl0src][gl0bloom]blend=all_mode=screen:all_opacity=0.500000:enable='between(t,1.000000,3.000000)'[glout0]")
+    expect(graph.indexOf('[glout0]')).toBeLessThan(graph.indexOf('overlay=0:0:alpha=straight'))
+    const two = exportFilterGraphV3({ ...backToBack, pictureEffects: [glow, { ...glow, id: 'h', sequence: { startUs: 4 * US, endUs: 5 * US } }] }, [true, true]).filterComplex
+    expect(two).toContain('[glout0]format=rgba,split=2[gl1src][gl1copy]')
+  })
+
   it('emits a whole-region lerp for a pan (no ease branches), and leaves a plain zoom graph unchanged', () => {
     const rect = { x: 320, y: 90, width: 640, height: 360 }
     const plainZoom = { id: 'z', sequence: { startUs: US, endUs: 3 * US }, rect, easeInUs: 0, easeOutUs: 0 }
@@ -131,5 +144,100 @@ describe('manifest v3 routes', () => {
     // The stacked canvas and every clip on it are already rgba, so blur adds no format=rgba of its own.
     const countRgba = (text: string) => text.split(';').filter((chain) => chain.includes('format=rgba')).length
     expect(countRgba(graph)).toBe(countRgba(plain))
+  })
+})
+
+describe('layer masks in the FFmpeg graph', () => {
+  const mask = { enabled: true, invert: false, feather: 4, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 100, y: 50, width: 300, height: 200 } } }
+  const masked = exportManifestV3Schema.parse({
+    ...stacked, blurRegions: [{ id: 'blur', sequence: { startUs: 0, endUs: 2 * US }, rect: { x: 10, y: 20, width: 300, height: 200 }, sigmaPx: 8, mask }],
+    clips: stacked.clips.map((entry) => entry.id === 'pip' ? { ...entry, mask } : entry),
+  })
+
+  it('leaves a mask-free graph and its arguments untouched', () => {
+    expect(maskTargets(stacked)).toEqual([])
+    expect(exportFilterGraphV3(stacked, [true, true, true, false, true]).filterComplex).not.toContain('alphamerge')
+  })
+
+  it('multiplies the fitted clip and the blurred crop by the rasterized mask, after the caption pipe', () => {
+    const targets = maskTargets(masked)
+    expect(targets.map((target) => [target.kind, target.id, target.lengthUs])).toEqual([['clip', 'pip', 2 * US], ['blur', 'blur', 10 * US]])
+    const graph = exportFilterGraphV3(masked, [true, true, true, false, true]).filterComplex
+    // Inputs 0-4 are clips, 5 is the pipe, 6 and 7 are the mask images.
+    expect(graph).toContain('[6:v:0]format=rgba,alphaextract,crop=w=400:h=225:x=800:y=40:exact=1[cm3k]')
+    expect(graph).toContain('[cm3a][cm3k]blend=all_mode=multiply:shortest=1[cm3m]')
+    expect(graph).toContain('[cm30][cm3m]alphamerge[cx3]')
+    expect(graph).toContain('[7:v:0]format=rgba,alphaextract,crop=w=300:h=200:x=10:y=20:exact=1[bl0mk]')
+    expect(graph).toMatch(/\[bl0blur\]overlay=x=10:y=20/)
+    const args = exportArgumentsV3(masked, '/out/x.mp4.tmp', [true, true, true, false, true], undefined, undefined, ['/tmp/m0.png', '/tmp/m1.png'])
+    expect(args.slice(args.indexOf('pipe:0') + 1, args.indexOf('pipe:0') + 17)).toEqual([
+      '-loop', '1', '-framerate', '25/1', '-t', '2.000000', '-i', '/tmp/m0.png',
+      '-loop', '1', '-framerate', '25/1', '-t', '10.000000', '-i', '/tmp/m1.png',
+    ])
+    expect(() => exportArgumentsV3(masked, '/out/x.mp4.tmp', [true, true, true, false, true])).toThrow('rasterized mask')
+  })
+
+  it('never takes the concat route for a masked clip', () => {
+    expect(v3Route(exportManifestV3Schema.parse({ ...backToBack, clips: backToBack.clips.map((entry) => ({ ...entry, mask })) }))).toBe('stacked')
+  })
+})
+
+
+describe('background (color) clips', () => {
+  const color = (id: string, extra: Partial<ManifestClip> = {}): ManifestClip => ({
+    id, kind: 'color', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 4 * US, opacity: 1, fit: 'contain', gain: 0,
+    fill: { type: 'solid', color: '#ff8000' }, ...extra,
+  })
+  const graphOf = (clips: ManifestClip[], inputs: ExportManifestV3['inputs'] = []) => exportFilterGraphV3(manifest(clips, inputs, 4 * US), inputs.map(() => false)).filterComplex
+
+  it('always takes the stacked route, and opens no input for a background', () => {
+    const only = manifest([color('bg')], [], 4 * US)
+    expect(v3Route(only)).toBe('stacked')
+    const args = exportArgumentsV3(only, '/out/x.mp4.tmp', [])
+    expect(args.filter((arg) => arg === '-i')).toEqual(['-i'])
+    expect(args[args.indexOf('-i') + 1]).toBe('pipe:0')
+  })
+
+  it('synthesises a solid with FFmpeg’s color source at exactly the frame size', () => {
+    expect(graphOf([color('bg')])).toContain('color=c=0xff8000:s=1280x720:r=25/1:d=4.000000,format=rgba[k0]')
+  })
+
+  it('draws a gradient once with geq along the CSS gradient line, then loops the frame', () => {
+    const graph = graphOf([color('bg', { fill: { type: 'gradient', from: '#ff0000', to: '#0000ff', angle: 90 } })])
+    expect(graph).toContain('trim=end_frame=1,format=gbrp,geq=r=')
+    expect(graph).toContain('loop=loop=-1:size=1:start=0,setpts=N/(25/1)/TB,trim=duration=4.000000[k0]')
+    // 90° across a 1280-wide frame: t advances 1/1280 per pixel.
+    expect(graph).toContain('(0.0007812500)*(X+0.5)')
+    expect(graph).not.toContain('gradients=')
+  })
+
+  it('places a picture-in-picture background at its rect and sizes the source to it', () => {
+    const graph = graphOf([color('bg', { rect: { x: 100, y: 50, width: 640, height: 360 } })])
+    expect(graph).toContain('s=640x360')
+    expect(graph).toContain('overlay=100:50:')
+  })
+
+  it('shift and pulse blend two stills by the shared eased phase', () => {
+    const shift = graphOf([color('bg', { motion: { type: 'shift', to: { type: 'solid', color: '#0000ff' }, periodUs: 4 * US }, sourceStartUs: 1 * US, sourceEndUs: 5 * US })])
+    expect(shift).toContain('[k0a][k0b]blend=all_expr=')
+    expect(shift).toContain('cos(2*PI*(T+1.000000)/4.000000)')
+    expect(shift).toContain('color=c=0x0000ff')
+    const pulse = graphOf([color('bg', { motion: { type: 'pulse', toward: 'white', depth: 0.5, periodUs: 4 * US } })])
+    expect(pulse).toContain('color=c=0xffffff')
+    expect(pulse).toContain('0.500000*(0.5-0.5*cos(')
+  })
+
+  it('drift pans an oversized gradient with crop, and does nothing to a solid', () => {
+    const drift = graphOf([color('bg', { fill: { type: 'gradient', from: '#000000', to: '#ffffff', angle: 0 }, motion: { type: 'drift', direction: 90, periodUs: 4 * US } })])
+    expect(drift).toContain('s=1920x1080')
+    expect(drift).toContain('[k0o]crop=1280:720:x=')
+    const solidDrift = graphOf([color('bg', { motion: { type: 'drift', direction: 90, periodUs: 4 * US } })])
+    expect(solidDrift).not.toContain('crop=')
+  })
+
+  it('stacks under video by track order and keeps the video’s input index', () => {
+    const graph = graphOf([color('bg'), clip('v', 0, { trackIndex: 1, sourceEndUs: 4 * US })], [{ path: '/m/a.mp4', kind: 'video' }])
+    expect(graph.indexOf('[k0]')).toBeLessThan(graph.indexOf('[0:v:0]trim'))
+    expect(graph).toContain('[b0][c1]overlay')
   })
 })

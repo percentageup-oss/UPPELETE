@@ -22,7 +22,7 @@ export function BlurLane({ regions, durationUs, selectedBlurId, draggingId, onBe
   const place = (region: BlurRegion) => ({ left: `${timeToPixel(region.startUs, durationUs, 100)}%`, width: `${Math.max(.02, timeToPixel(region.endUs - region.startUs, durationUs, 100))}%` })
   return <div className="track blur-lane" onPointerDown={onSeekTrack} role="group"
     aria-label="Blur regions. Tab to a region, then press Enter to select and seek to it.">
-    {regions.map((region) => <div key={region.id} role="button" tabIndex={0}
+    {regions.map((region) => <div key={region.id} data-item-kind="blur" data-item-id={region.id} role="button" tabIndex={0}
       aria-label={`Blur region, ${formatClock(region.startUs)} to ${formatClock(region.endUs)}${region.enabled ? '' : ', bypassed'}`}
       aria-pressed={region.id === selectedBlurId}
       className={`zoom-block blur-block ${region.id === selectedBlurId ? 'active' : ''} ${draggingId === region.id ? 'dragging' : ''} ${region.enabled ? '' : 'disabled'}`}

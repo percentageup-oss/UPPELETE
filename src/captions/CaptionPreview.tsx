@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import type { LayerMask } from '../core/edit'
+import { activeMask } from '../core/layerMask'
+import { maskStyle } from './maskStyle'
 import { captionFrame, defaultCaptionInputs, fittedEmphasisFont, layoutCaption, layoutCaptionWords, projectCaptionViewport, SPOTLIGHT_DIM, type CaptionFill, type CaptionFont, type CaptionFrame, type LayoutInputs, type MeasureText, type MeasureRange, type MotionCue, type Size, type WordRegion } from './renderer'
 import { emphasisRuns, sliceEmphasis } from '../core/emphasis'
 import { locateWordSpans } from '../core/captionText'
 import type { CaptionMotion } from './style'
+import type { TitleMotion } from '../core/edit'
+import { decorativeTextCue, titleMotionAt, titleVisualAt } from './textMotion'
 
 /** A gradient fill is painted as a second complete text copy (background-clip:text, transparent
  * fill) stacked exactly over a solid copy that carries shadow/glow/depth/stroke — Chromium paints
@@ -21,7 +26,9 @@ function LineText({ text, fill }: { text: string; fill?: CaptionFill }) {
 }
 
 /** Shared full-line DOM painter: export must reuse this, not FFmpeg drawtext or per-letter spans. */
-export function CaptionView({ frame }: { frame: CaptionFrame }) {
+type TitlePaintState = { kind: TitleMotion['kind']; progress: number }
+
+export function CaptionView({ frame, titleMotion }: { frame: CaptionFrame; titleMotion?: TitlePaintState | null }) {
   const { layout } = frame
   if (!frame.visible) return null
   const { appearance } = layout.inputs
@@ -47,7 +54,14 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
       WebkitTextStroke: `${appearance.outlineWidth}px ${appearance.outlineColor}`, paintOrder: 'stroke fill',
       ...captionTypography(layout.font) }}>
     {layout.lines.map((line, index) => {
-      if (layout.inputs.emphasized?.length) return <SelectedEmphasisLine key={index} frame={frame} lineIndex={index} />
+      if (titleMotion && (titleMotion.kind === 'cascade' || titleMotion.kind === 'accent'))
+        return <TitleMotionLine key={index} frame={frame} lineIndex={index} motion={titleMotion} />
+      if (layout.inputs.emphasized?.length) return titleMotion?.kind === 'wipe'
+        ? <div key={index} style={{ position: 'absolute', left: line.x, top: line.y, width: line.width, height: line.height,
+          clipPath: `inset(-20px ${(1 - titleMotion.progress) * 100}% -20px -20px)` }}>
+          <SelectedEmphasisLine frame={frame} lineIndex={index} relative />
+        </div>
+        : <SelectedEmphasisLine key={index} frame={frame} lineIndex={index} />
       const regions = layout.wordRegions?.filter((region) => region.lineIndex === index) ?? []
       const active = regions.filter((region) => frame.words?.[region.wordIndex]?.active)
       const pop = frame.motion === 'word-pop'
@@ -56,7 +70,8 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
       const revealed = regions.filter((region) => frame.words?.[region.wordIndex]?.revealed)
       const revealRight = Math.max(line.x, ...revealed.map((region) => region.revealRight))
       const lineStyle: CSSProperties = { position: 'absolute', left: line.x, top: line.y, width: line.width,
-        height: line.height, lineHeight: `${line.height}px`, whiteSpace: 'pre' }
+        height: line.height, lineHeight: `${line.height}px`, whiteSpace: 'pre',
+        clipPath: titleMotion?.kind === 'wipe' ? `inset(-20px ${(1 - titleMotion.progress) * 100}% -20px -20px)` : undefined }
       // Mask complete shaping runs; never replace them with raw characters or token spans. A distinct
       // emphasis face also needs the punch-out (not only word-pop), since its glyphs may not align
       // with the regular-face glyphs sitting underneath. Only punch out words the effect layer below
@@ -72,7 +87,7 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
       const spotlightDim = appearance.spotlight && (pop || highlight)
       return <div key={index} aria-hidden="true">
         <div data-caption-line={index} style={{ ...lineStyle, maskImage: mask, WebkitMaskImage: mask,
-          clipPath: reveal ? `inset(-30px ${Math.max(0, line.width - (revealRight - line.x))}px -30px -30px)` : undefined,
+          clipPath: reveal ? `inset(-30px ${Math.max(0, line.width - (revealRight - line.x))}px -30px -30px)` : lineStyle.clipPath,
           textDecoration: appearance.underline ? 'underline' : undefined,
           opacity: reveal && !revealed.length ? 0 : (spotlightDim ? SPOTLIGHT_DIM : 1) }}>
           <LineText text={line.text} fill={appearance.fill} />
@@ -106,14 +121,59 @@ export function CaptionView({ frame }: { frame: CaptionFrame }) {
   </div>
 }
 
+/** Each moving word is a crop of the complete shaped line. No Unicode substring becomes its own
+ * text run, so Malayalam marks, conjuncts and mixed-script shaping retain the measured geometry. */
+function TitleMotionLine({ frame, lineIndex, motion }: { frame: CaptionFrame; lineIndex: number; motion: TitlePaintState }) {
+  const { layout } = frame, line = layout.lines[lineIndex]
+  const regions = layout.wordRegions?.filter((region) => region.lineIndex === lineIndex) ?? []
+  const lineStyle: CSSProperties = { position: 'absolute', left: line.x, top: line.y, width: line.width,
+    height: line.height, lineHeight: `${line.height}px`, whiteSpace: 'pre' }
+  const paint = (color?: string) => layout.inputs.emphasized?.length
+    ? <SelectedEmphasisLine frame={frame} lineIndex={lineIndex} relative staticPaint forceColor={color} />
+    : <LineText text={line.text} fill={color ? undefined : layout.inputs.appearance.fill} />
+  const fullLine = (color?: string) => <div style={{ ...lineStyle, left: 0, top: 0, color }}>{paint(color)}</div>
+  if (!regions.length) return <div data-caption-line={lineIndex} aria-hidden="true" style={lineStyle}>{paint()}</div>
+  if (motion.kind === 'accent') {
+    const finalIndex = Math.max(...(layout.wordRegions ?? []).map((region) => region.wordIndex))
+    const last = regions.find((region) => region.wordIndex === finalIndex)
+    if (!last) return <div data-caption-line={lineIndex} aria-hidden="true" style={lineStyle}>{paint()}</div>
+    const reveal = Math.max(0, Math.min(1, (motion.progress - .32) / .68))
+    return <div data-caption-line={lineIndex} aria-hidden="true" style={lineStyle}>
+      {fullLine()}
+      <div data-title-accent style={{ position: 'absolute', left: last.x - line.x, top: 0,
+        width: last.width * reveal, height: line.height, overflow: 'hidden' }}>
+        <div style={{ position: 'absolute', left: -(last.x - line.x), top: 0, width: line.width, height: line.height,
+          color: layout.inputs.appearance.secondaryColor }}>{paint(layout.inputs.appearance.secondaryColor)}</div>
+      </div>
+    </div>
+  }
+  const count = layout.wordRegions?.length ?? regions.length
+  return <div data-caption-line={lineIndex} aria-hidden="true" style={lineStyle}>
+    {motion.progress >= 1 && fullLine()}
+    {motion.progress < 1 && regions.map((region) => {
+      const local = Math.max(0, Math.min(1, (motion.progress - region.wordIndex * .48 / Math.max(1, count - 1)) / .52))
+      if (local <= 0) return null
+      return <div key={`${region.wordIndex}:${region.x}`} data-title-word={region.wordIndex} style={{ position: 'absolute',
+        left: region.x - line.x - 2, top: 0, width: region.width + 4, height: line.height + 3, overflow: 'hidden',
+        opacity: local, filter: `blur(${(1 - local) * 5}px)`, transform: `translateY(${(1 - local) * 12}px)` }}>
+        <div style={{ position: 'absolute', left: -(region.x - line.x) + 2, top: 0, width: line.width, height: line.height }}>
+          {paint()}
+        </div>
+      </div>
+    })}
+  </div>
+}
+
 /** Selected words use complete lexical runs, with precisely the same spans and fonts as measurement.
  * Stable reserved widths mean revealing or popping a word never reflows the caption. */
-function SelectedEmphasisLine({ frame, lineIndex }: { frame: CaptionFrame; lineIndex: number }) {
+function SelectedEmphasisLine({ frame, lineIndex, relative = false, staticPaint = false, forceColor }: {
+  frame: CaptionFrame; lineIndex: number; relative?: boolean; staticPaint?: boolean; forceColor?: string
+}) {
   const { layout } = frame, line = layout.lines[lineIndex], { appearance } = layout.inputs
   const emphasisFont = fittedEmphasisFont(layout.inputs, layout.font)
   const spans = sliceEmphasis(layout.inputs.emphasized, line.textStart, line.textEnd)
-  const reveal = frame.motion === 'progressive-word-reveal'
-  return <div data-caption-line={lineIndex} aria-hidden="true" style={{ position: 'absolute', left: line.x, top: line.y,
+  const reveal = !staticPaint && frame.motion === 'progressive-word-reveal'
+  return <div data-caption-line={lineIndex} aria-hidden="true" style={{ position: 'absolute', left: relative ? 0 : line.x, top: relative ? 0 : line.y,
     width: line.width, height: line.height, lineHeight: `${line.height}px`, whiteSpace: 'pre' }}>
     {emphasisRuns(line.text, spans).map((run) => {
       const start = run.textStart + line.textStart, end = run.textEnd + line.textStart
@@ -123,17 +183,17 @@ function SelectedEmphasisLine({ frame, lineIndex }: { frame: CaptionFrame; lineI
       const state = frame.words?.[index >= 0 ? index : previousIndex]
       const hidden = reveal && !state?.revealed
       const dimmed = appearance.spotlight && !run.emphasized
-      const requestedScale = run.word && state?.active && (frame.motion === 'word-pop' || (run.emphasized && layout.inputs.emphasisMotion === 'pop')) ? state.scale : 1
+      const requestedScale = !staticPaint && run.word && state?.active && (frame.motion === 'word-pop' || (run.emphasized && layout.inputs.emphasisMotion === 'pop')) ? state.scale : 1
       const fit = layout.fitScale, safe = layout.safeRect
       const cx = layout.bounds.x + (line.x + line.width / 2) * fit, cy = layout.bounds.y + (line.y + line.height / 2) * fit
       const scale = Math.max(1, Math.min(requestedScale, 2 * (cx - safe.x) / (line.width * fit),
         2 * (safe.x + safe.width - cx) / (line.width * fit), 2 * (cy - safe.y) / (line.height * fit),
         2 * (safe.y + safe.height - cy) / (line.height * fit)))
       const font = run.emphasized ? emphasisFont : layout.font
-      const fill = run.emphasized ? appearance.secondaryFill : appearance.fill
+      const fill = forceColor ? undefined : run.emphasized ? appearance.secondaryFill : appearance.fill
       return <span key={run.textStart} data-caption-emphasis={run.emphasized || undefined}
         style={{ ...(run.emphasized ? captionTypography(font) : {}), position: 'relative', display: run.word ? 'inline-block' : undefined,
-          lineHeight: 'inherit', verticalAlign: 'baseline', color: run.emphasized ? appearance.secondaryColor : appearance.color,
+          lineHeight: 'inherit', verticalAlign: 'baseline', color: forceColor ?? (run.emphasized ? appearance.secondaryColor : appearance.color),
           textDecoration: (run.emphasized ? appearance.emphasisUnderline : appearance.underline) ? 'underline' : undefined,
           textShadow: run.emphasized ? appearance.emphasisShadow : undefined,
           opacity: hidden ? 0 : dimmed ? SPOTLIGHT_DIM : 1, transform: scale !== 1 ? `scale(${scale})` : undefined }}>
@@ -185,11 +245,23 @@ export function createDomMeasurer(doc: Document): { measure: MeasureText; measur
     if (cache.size >= 4096) cache.clear()
     cache.set(key, size)
     return size
-  }, measureRange(text, start, end, font) {
-    Object.assign(span.style, captionTypography(font), { fontSize: `${font.size}px` })
-    span.textContent = text
+  }, measureRange(text, start, end, font, emphasis) {
+    setText(text, font, emphasis)
     const range = doc.createRange()
-    range.setStart(span.firstChild!, start); range.setEnd(span.firstChild!, end)
+    const nodes: Text[] = []
+    const walker = doc.createTreeWalker(span, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node as Text)
+    const point = (offset: number): { node: Text; offset: number } => {
+      let remaining = offset
+      for (const node of nodes) {
+        if (remaining <= node.length) return { node, offset: remaining }
+        remaining -= node.length
+      }
+      const last = nodes.at(-1)!
+      return { node: last, offset: last.length }
+    }
+    const from = point(start), to = point(end)
+    range.setStart(from.node, from.offset); range.setEnd(to.node, to.offset)
     const origin = span.getBoundingClientRect()
     return [...range.getClientRects()].map((rect) => ({ x: rect.x - origin.x, y: rect.y - origin.y, width: rect.width, height: rect.height }))
   }, dispose: () => span.remove() }
@@ -213,7 +285,7 @@ export function useCompositionProjection(ref: RefObject<HTMLElement | null>, com
   return preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
 }
 
-export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers, overCaption }: {
+export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers, overCaption, captionMask, titleMotion }: {
   cue: MotionCue | null
   timestampUs: number; composition: Size; inputs?: LayoutInputs; motion?: CaptionMotion; motionSpeed?: number
   /** Observe the actual preview evaluation; export excludes editor notices from caption pixels. */
@@ -228,6 +300,9 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
   /** Fade/flash: the one frame-paint effect that must cover the captions too (docs/EDITING.md
    * "Frame-paint effects"), painted inside the same scaled wrapper but after `CaptionView`. */
   overCaption?: ReactNode
+  /** Schema 12: the active caption track's layer mask, applied to the caption plane only. */
+  captionMask?: LayerMask | null
+  titleMotion?: TitlePaintState | null
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const projection = useCompositionProjection(ref, composition)
@@ -238,6 +313,9 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
     return { ...value, emphasized: cue?.emphasized, emphasisFont: value.emphasisFont && !cue?.emphasized?.length
       ? { ...value.emphasisFont, stack: value.font.stack } : value.emphasisFont }
   }, [supplied, composition.width, composition.height, cue?.emphasized])
+  const resolvedTitleMotion = titleMotion !== undefined ? titleMotion : cue && inputs.titleMotion
+    ? titleMotionAt({ startUs: cue.startUs, endUs: cue.endUs, titleMotion: inputs.titleMotion }, timestampUs) : null
+  const titleVisual = titleVisualAt(resolvedTitleMotion)
   const fontKey = JSON.stringify([inputs.font, inputs.emphasisFont ?? null, fontSample ?? cue?.text ?? ''])
   useEffect(() => {
     const owner = ref.current!.ownerDocument
@@ -267,9 +345,19 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
     readiness: fontState.key === fontKey ? fontState.status : 'loading' as const,
     revision: `${inputs.font.revision}:${fontState.revision}` } }), [inputs, fontState, fontKey])
   const layout = useMemo(() => cue && measurer ? layoutCaption(cue.text, readyInputs, measurer.measure) : null, [cue?.text, readyInputs, measurer])
-  const wordLayout = useMemo(() => layout && cue && measurer && motion !== 'static-clean' && motion !== 'phrase-fade'
-    ? layoutCaptionWords(layout, cue, measurer.measureRange) : layout, [layout, cue, measurer, motion])
+  const needsWords = motion !== 'static-clean' && motion !== 'phrase-fade' || resolvedTitleMotion?.kind === 'cascade' || resolvedTitleMotion?.kind === 'accent'
+  const titleWordMotion = resolvedTitleMotion?.kind === 'cascade' || resolvedTitleMotion?.kind === 'accent'
+  const layoutCue = useMemo(() => cue && titleWordMotion
+    ? decorativeTextCue({ id: 'title-motion', text: cue.text, startUs: cue.startUs, endUs: cue.endUs }) : cue,
+  [cue, titleWordMotion])
+  const wordLayout = useMemo(() => layout && cue && measurer && needsWords
+    ? layoutCaptionWords(layout, layoutCue!, measurer.measureRange) : layout, [layout, cue, layoutCue, measurer, needsWords])
   const frame = useMemo(() => wordLayout && cue ? captionFrame(wordLayout, cue, timestampUs, motion, motionSpeed) : null, [wordLayout, cue, timestampUs, motion, motionSpeed])
+  const paintedCaption = frame && <CaptionView key={`${motion}:${timestampUs}`} frame={frame} titleMotion={resolvedTitleMotion} />
+  const animatedCaption = paintedCaption && resolvedTitleMotion ? <div style={{ position: 'absolute', inset: 0,
+    opacity: titleVisual.opacity, transform: `translateY(${titleVisual.y}px) scale(${titleVisual.scale})`,
+    transformOrigin: `${frame!.layout.bounds.x + frame!.layout.bounds.width / 2}px ${frame!.layout.bounds.y + frame!.layout.bounds.height / 2}px`,
+    filter: titleVisual.blur ? `blur(${titleVisual.blur}px)` : undefined }}>{paintedCaption}</div> : paintedCaption
   useEffect(() => { if (projection) onFrame?.(frame) }, [frame, projection?.scale, onFrame])
   return <div ref={ref} data-caption-preview="1" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 2 }}>
     {diagnostics && cue && readyInputs.font.readiness !== 'ready' && <span role="status" style={{ position: 'absolute', bottom: 8, left: 8, fontSize: 12 }}>
@@ -285,7 +373,9 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
     {projection && <div style={{ position: 'absolute', left: projection.x, top: projection.y, width: composition.width,
       height: composition.height, transform: `scale(${projection.scale})`, transformOrigin: 'top left' }}>
       {layers}
-      {frame && <CaptionView key={`${motion}:${timestampUs}`} frame={frame} />}
+      {animatedCaption && (activeMask(captionMask)
+        ? <div data-caption-mask style={{ position: 'absolute', inset: 0, ...maskStyle(captionMask, composition, null) }}>{animatedCaption}</div>
+        : animatedCaption)}
       {overCaption}
     </div>}
   </div>

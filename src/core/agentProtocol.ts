@@ -1,8 +1,9 @@
+import { assetIdOf } from './edit'
 import { z } from 'zod'
 import type { CaptionProject, Cue } from './model'
 import type { Selection } from './timelineItems'
 import type { ValidationIssue } from './captionCommands'
-import { sequenceDurationUs, videoUnderPlayhead } from './timelineModel'
+import { clipLengthUs, sequenceDurationUs, videoUnderPlayhead } from './timelineModel'
 import { captionAppearanceSchema, FONT_FAMILY_CHOICES, MOTIONS, TEXT_TRANSFORMS, ALIGNMENTS } from '../captions/style'
 import { CAPTION_TEMPLATES } from '../captions/templates'
 import { editCommandSchema } from './editCommandSchema'
@@ -91,8 +92,8 @@ export type ProjectSummary = {
   underPlayhead: { assetId: string; clipId: string } | null
   selection: Selection | null
   assets: { id: string; kind: string; name: string }[]
-  tracks: { id: string; kind: string; name: string; muted: boolean; hidden: boolean; locked: boolean }[]
-  clips: { id: string; kind: string; trackId: string; assetId: string; timelineStartUs: number; sourceStartUs: number; sourceEndUs: number }[]
+  tracks: { id: string; kind: string; name: string; muted: boolean; hidden: boolean; locked: boolean; solo?: boolean; volume?: number }[]
+  clips: { id: string; kind: string; trackId: string; assetId: string | null; fill?: unknown; motion?: unknown; /** Schema 16, `adjustment` clips only: the grade it applies to every picture clip on the tracks below it (`clip-update`'s `changes.grade`, docs/EDITING.md "Color: adjustment layers"). */ grade?: unknown; timelineStartUs: number; sourceStartUs: number; sourceEndUs: number; /** Length on the timeline; differs from the source span when `speed` is set. */ timelineLengthUs: number; speed?: unknown; /** Schema 15: clips sharing a linkId are edited together; a disabled clip plays and paints nothing. */ linkId?: string; enabled?: false; gain?: number; /** A video whose sound is a separate linked audio clip. */ detachedAudio?: true }[]
   blurRegions: { id: string; startUs: number; endUs: number }[]
   effects: { id: string; kind: string; startUs: number; endUs: number; enabled: boolean }[]
   textOverlays: { id: string; text: string; startUs: number; endUs: number; layerOrder: number }[]
@@ -108,10 +109,10 @@ export function summarizeProject(
   return {
     title: project.title, path: projectPath, schemaVersion: project.schemaVersion, format: project.format,
     durationUs: sequenceDurationUs(project.clips), playheadUs, selection,
-    underPlayhead: under ? { assetId: under.clip.assetId, clipId: under.clip.id } : null,
+    underPlayhead: under && under.clip.kind === 'video' ? { assetId: under.clip.assetId, clipId: under.clip.id } : null,
     assets: project.assets.map((asset) => ({ id: asset.id, kind: asset.kind, name: asset.name })),
-    tracks: project.tracks.map((track) => ({ id: track.id, kind: track.kind, name: track.name, muted: track.muted, hidden: track.hidden, locked: track.locked })),
-    clips: project.clips.map((clip) => ({ id: clip.id, kind: clip.kind, trackId: clip.trackId, assetId: clip.assetId, timelineStartUs: clip.timelineStartUs, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs })),
+    tracks: project.tracks.map((track) => ({ id: track.id, kind: track.kind, name: track.name, muted: track.muted, hidden: track.hidden, locked: track.locked, ...(track.solo ? { solo: true } : {}), ...(track.volume !== undefined ? { volume: track.volume } : {}) })),
+    clips: project.clips.map((clip) => ({ id: clip.id, kind: clip.kind, trackId: clip.trackId, assetId: assetIdOf(clip), ...(clip.kind === 'color' ? { fill: clip.fill, motion: clip.motion ?? null } : {}), ...(clip.kind === 'adjustment' ? { grade: clip.grade } : {}), timelineStartUs: clip.timelineStartUs, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs, timelineLengthUs: clipLengthUs(clip), ...((clip.kind === 'video' || clip.kind === 'audio') && clip.speed ? { speed: clip.speed } : {}), ...(clip.enabled === false ? { enabled: false as const } : {}), ...((clip.kind === 'video' || clip.kind === 'audio') ? { gain: clip.gain, ...(clip.linkId ? { linkId: clip.linkId } : {}) } : {}), ...(clip.kind === 'video' && clip.detachedAudio ? { detachedAudio: true as const } : {}) })),
     blurRegions: project.blurRegions.map((region) => ({ id: region.id, startUs: region.startUs, endUs: region.endUs })),
     effects: project.effects.map((effect) => ({ id: effect.id, kind: effect.kind, startUs: effect.startUs, endUs: effect.endUs, enabled: effect.enabled })),
     textOverlays: project.textOverlays.map(({ id, text, startUs, endUs, layerOrder }) => ({ id, text, startUs, endUs, layerOrder })),

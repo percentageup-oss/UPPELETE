@@ -1,6 +1,9 @@
-import type { DragEvent } from 'react'
+import { useState, type DragEvent } from 'react'
+import { AccordionSection } from './AccordionSection'
 import { clearDragPayload, PRESET_DRAG_TYPE, setDragPayload, type PresetDragPayload } from './core/dragPayload'
-import { BlurAreaIcon, BlurFrameIcon, FadeIcon, FlashIcon, KenBurnsIcon, LetterboxIcon, PanIcon, VignetteIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
+import { BackgroundsSection } from './BackgroundsSection'
+import type { BackgroundMotion, Fill } from './core/edit'
+import { BlurAreaIcon, BlurFrameIcon, FadeIcon, FlashIcon, GlowIcon, GrainIcon, KenBurnsIcon, LetterboxIcon, PanIcon, ParticlesIcon, VhsIcon, VignetteIcon, ZoomInIcon, ZoomOutIcon } from './TimelineIcons'
 
 type PresetTile = { preset: PresetDragPayload['preset']; label: string; detail: string; icon: typeof ZoomInIcon }
 type Section = { heading: string; tileClass: string; tiles: PresetTile[] }
@@ -20,6 +23,10 @@ const SECTIONS: Section[] = [
     { preset: 'vignette', label: 'Vignette', detail: 'Darkens the edges of the frame', icon: VignetteIcon },
     { preset: 'letterbox-239', label: 'Letterbox 2.39', detail: 'Cinematic bars that slide in', icon: LetterboxIcon },
     { preset: 'letterbox-185', label: 'Letterbox 1.85', detail: 'Cinematic bars that slide in', icon: LetterboxIcon },
+    { preset: 'film-grain', label: 'Film grain', detail: 'Animated 24 fps film noise over the picture', icon: GrainIcon },
+    { preset: 'dreamy-glow', label: 'Dreamy glow', detail: 'Soft bloom around the bright areas', icon: GlowIcon },
+    { preset: 'light-particles', label: 'Light particles', detail: 'Warm glowing specks drift through the frame', icon: ParticlesIcon },
+    { preset: 'vhs', label: 'VHS', detail: 'Scanlines, tracking noise and color bleed', icon: VhsIcon },
   ] },
   { heading: 'Transitions', tileClass: 'transition-tile', tiles: [
     { preset: 'fade-in', label: 'Fade in', detail: 'From a solid color into the picture', icon: FadeIcon },
@@ -33,11 +40,16 @@ const SECTIONS: Section[] = [
  * sections. Zoom and Blur paint the picture; Look and Transitions are frame-paint effects, painted
  * by the shared caption/overlay host layer rather than an FFmpeg filter (docs/EDITING.md
  * "Frame-paint effects"). */
-export function EffectsPanel({ onAddAtPlayhead }: { onAddAtPlayhead: (preset: PresetDragPayload['preset']) => void }) {
+export function EffectsPanel({ onAddAtPlayhead, onAddBackground }: {
+  onAddAtPlayhead: (preset: PresetDragPayload['preset']) => void
+  /** Adds a background clip at the playhead (a drag to the timeline is handled by the timeline itself). */
+  onAddBackground: (look: { fill: Fill; motion?: BackgroundMotion }) => void
+}) {
+  const [openId, setOpenId] = useState<string | null>(SECTIONS[0].heading)
+  const toggle = (id: string) => setOpenId((current) => (current === id ? null : id))
   return <div className="overlays-panel zoom-panel">
     <div className="effects-sections">
-      {SECTIONS.map(({ heading, tileClass, tiles }) => <section key={heading} aria-labelledby={`effects-section-${heading}`}>
-        <h3 id={`effects-section-${heading}`} className="effects-section-heading">{heading}</h3>
+      {SECTIONS.map(({ heading, tileClass, tiles }) => <AccordionSection key={heading} id={heading} title={heading} count={tiles.length} open={openId === heading} onToggle={toggle}>
         <div className="overlays-grid">
           {tiles.map(({ preset, label, detail, icon: Icon }) => {
             const payload: PresetDragPayload = { source: 'preset', preset }
@@ -53,7 +65,10 @@ export function EffectsPanel({ onAddAtPlayhead }: { onAddAtPlayhead: (preset: Pr
             </button>
           })}
         </div>
-      </section>)}
+      </AccordionSection>)}
+      <AccordionSection id="Backgrounds" title="Backgrounds" open={openId === 'Backgrounds'} onToggle={toggle}>
+        <BackgroundsSection onAdd={onAddBackground} />
+      </AccordionSection>
     </div>
     <div className="bin-footer"><p>Drag a preset to the timeline, or click to add it at the playhead. Select an effect on the timeline to adjust it.</p></div>
   </div>

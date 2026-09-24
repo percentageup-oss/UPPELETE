@@ -17,7 +17,7 @@ const asset = (id: string, kind: ProjectAsset['kind']): ProjectAsset =>
   ({ id, kind, name: `${id}.mp4`, reference: { relativePath: null, absolutePath: `/m/${id}` }, fingerprint: null, metadata: null })
 
 const actions = { addLine: () => {}, addWord: () => {}, merge: () => {}, previous: () => {}, next: () => {}, delete: () => {}, split: () => {}, trim: () => {} }
-const clipTools = { split: () => {}, canSplit: false, remove: () => {}, hasClip: false }
+const clipTools = { split: () => {}, canSplit: false, trimTo: () => {}, canTrimTo: false, markIn: () => {}, markOut: () => {}, clearRange: () => {}, hasRange: false, remove: () => {}, hasClip: false }
 const trackActions = { onUpdate: () => {}, onReorder: () => {}, onRemove: () => {}, onAdd: () => {} }
 const captionTrackActions = { onUpdate: () => {}, onReorder: () => {}, onRemove: () => {}, onAdd: () => {} }
 

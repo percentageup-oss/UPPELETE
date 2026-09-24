@@ -251,8 +251,9 @@ Object.assign(window, {
     await wait()
     results.maxLines = { before: before6, after: renderer().querySelectorAll('[data-caption-line]').length }
 
-    const family = byId<HTMLSelectElement>('style-font-family')
-    setNativeValue(family, 'Arial'); family.dispatchEvent(new Event('change', { bubbles: true }))
+    byId<HTMLButtonElement>('style-font-family').click()
+    await wait()
+    ;[...document.querySelectorAll<HTMLElement>('.ins-select-popover [role="option"]')].find((option) => option.textContent === 'Arial')!.click()
     await wait()
     results.fontFamily = { after: getComputedStyle(renderer()).fontFamily }
 
@@ -295,16 +296,6 @@ Object.assign(window, {
     setNativeValue(emphasisFace, '900:false'); emphasisFace.dispatchEvent(new Event('change', { bubbles: true }))
     await wait()
     results.emphasisFace = { before: beforeEmphasis, after: overlayFont() }
-
-    // Loading installed fonts requires a real (trusted) user gesture; a script-dispatched click
-    // carries no transient activation, so this always exercises the fallback path — by design.
-    const fontLoad = document.getElementById('style-font-load') as HTMLButtonElement | null
-    if (fontLoad) {
-      fontLoad.click()
-      await wait(); await wait()
-      results.fontCatalogFallback = { reason: document.querySelector('[data-font-catalog-reason]')?.getAttribute('data-font-catalog-reason') ?? null,
-        familyOptionsPresent: byId<HTMLSelectElement>('style-font-family').options.length > 0 }
-    }
 
     const name = byId<HTMLInputElement>('style-preset-name')
     name.focus(); setNativeValue(name, 'Smoke preset'); name.dispatchEvent(new Event('input', { bubbles: true }))

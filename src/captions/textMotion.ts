@@ -1,12 +1,12 @@
 import { captionTokens } from '../core/captionText'
-import type { TextAnimation, TextOverlay } from '../core/edit'
+import type { TextAnimation, TextOverlay, TitleMotion } from '../core/edit'
 import type { MotionCue } from './renderer'
 
 export type TextMotionFrame = { opacity: number; scale: number; x: number; y: number; visible: boolean }
 
 /** Runtime-only timing for template word motion. These boundaries follow complete lexical tokens
  * from captionTokens (which uses grapheme-aware segmentation); they are never stored as caption timing. */
-export function decorativeTextCue(item: TextOverlay): MotionCue {
+export function decorativeTextCue(item: Pick<TextOverlay, 'id' | 'text' | 'startUs' | 'endUs'>): MotionCue {
   const tokens = captionTokens(item.text), durationUs = item.endUs - item.startUs
   const words = tokens.map((token, index) => ({
     ...token, id: `${item.id}:decorative:${index}`,
@@ -17,9 +17,30 @@ export function decorativeTextCue(item: TextOverlay): MotionCue {
   return { text: item.text, startUs: item.startUs, endUs: item.endUs, words }
 }
 
-function ease(value: number): number {
+export function ease(value: number): number {
   const t = Math.max(0, Math.min(1, value))
   return t * t * (3 - 2 * t)
+}
+
+/** Pure entrance progress. Trimming a title never leaves its treatment unfinished. */
+export function titleMotionAt(item: Pick<TextOverlay, 'startUs' | 'endUs' | 'titleMotion'>, timestampUs: number): { kind: TitleMotion['kind']; progress: number } | null {
+  if (!item.titleMotion || timestampUs < item.startUs || timestampUs >= item.endUs) return null
+  const available = item.endUs - item.startUs
+  const duration = Math.min(item.titleMotion.durationUs, available)
+  return { kind: item.titleMotion.kind, progress: ease((timestampUs - item.startUs) / duration) }
+}
+
+export function titleVisualAt(state: ReturnType<typeof titleMotionAt>): { opacity: number; scale: number; y: number; blur: number } {
+  if (!state) return { opacity: 1, scale: 1, y: 0, blur: 0 }
+  const rest = 1 - state.progress
+  switch (state.kind) {
+    case 'focus': return { opacity: state.progress, scale: 1 + .025 * rest, y: 0, blur: 12 * rest }
+    case 'lift': return { opacity: state.progress, scale: 1, y: 22 * rest, blur: 5 * rest }
+    case 'cascade': return { opacity: 1, scale: 1, y: 0, blur: 0 }
+    case 'wipe': return { opacity: 1, scale: 1, y: 0, blur: 0 }
+    case 'accent': return { opacity: state.progress, scale: 1, y: 0, blur: 4 * rest }
+    case 'scale': return { opacity: state.progress, scale: 1 - .06 * rest, y: 0, blur: 0 }
+  }
 }
 function animationValue(animation: TextAnimation, progress: number, entering: boolean): TextMotionFrame {
   if (animation.kind === 'none' || animation.durationUs === 0) return { opacity: 1, scale: 1, x: 0, y: 0, visible: true }

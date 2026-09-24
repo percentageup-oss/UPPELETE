@@ -25,7 +25,7 @@ export const BLUR_LANE_HEIGHT_PX = 32
 export const EFFECT_LANE_HEIGHT_PX = 32
 export const TEXT_LANE_HEIGHT_PX = 44
 /** Display order for effect lanes when more than one kind is present at once. */
-export const EFFECT_KIND_ORDER: readonly EffectRegionKind[] = ['vignette', 'letterbox', 'fade']
+export const EFFECT_KIND_ORDER: readonly EffectRegionKind[] = ['vignette', 'vhs', 'grain', 'particles', 'glow', 'letterbox', 'fade']
 export const DIVIDER_HEIGHT_PX = 8
 export const MIN_TRACK_PX = 28
 

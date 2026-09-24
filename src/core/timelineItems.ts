@@ -30,7 +30,11 @@ export type TimelineItem = {
 }
 
 /** What is selected anywhere in the editor. One ID namespace (model.ts) makes `{kind, id}` exact. */
-export type Selection = { kind: TimelineItemKind; id: string }
+export type Selection = {
+  kind: TimelineItemKind; id: string
+  /** A clip selected on its own (Alt-click): edits skip its link partners instead of acting on the whole group. */
+  unlinked?: boolean
+}
 
 export function cueItem(cue: Cue): TimelineItem {
   return { kind: 'cue', id: cue.id, startUs: cue.startUs, endUs: cue.endUs, label: cue.text }

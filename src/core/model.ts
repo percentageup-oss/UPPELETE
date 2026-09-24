@@ -16,6 +16,11 @@ import { migrateV7 } from './migrateV7'
 import { migrateV8 } from './migrateV8'
 import { migrateV9 } from './migrateV9'
 import { migrateV10 } from './migrateV10'
+import { migrateV11 } from './migrateV11'
+import { migrateV12 } from './migrateV12'
+import { migrateV13 } from './migrateV13'
+import { migrateV14 } from './migrateV14'
+import { migrateV15 } from './migrateV15'
 
 export const wordSchema = z.object({
   id: z.string().min(1),
@@ -361,8 +366,10 @@ export const projectSchemaV5 = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -432,8 +439,10 @@ export const projectSchemaV6 = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -514,8 +523,10 @@ export const projectSchemaV7 = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -603,8 +614,10 @@ export const projectSchemaV8 = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -696,8 +709,10 @@ export const projectSchemaV9 = z.object({
     else if ((track.kind === 'audio') !== (clip.kind === 'audio')) {
       context.addIssue({ code: 'custom', path: [...path, 'trackId'], message: track.kind === 'audio' ? 'An audio track holds only audio clips.' : 'A video track holds only video and image clips.' })
     }
-    const asset = assets.get(clip.assetId)
-    if (asset?.kind !== clip.kind) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
+    // A color or adjustment clip is generated: no asset, and its synthetic source range has no media to bound it.
+    const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? undefined : assets.get(clip.assetId)
+    if (clip.kind === 'color' || clip.kind === 'adjustment') { /* nothing to reference */ }
+    else if (asset?.kind !== clip.kind && !(clip.kind === 'audio' && asset?.kind === 'video')) context.addIssue({ code: 'custom', path: [...path, 'assetId'], message: `A ${clip.kind} clip must reference a ${clip.kind} asset.` })
     else if (clip.kind !== 'image') {
       const durationUs = asset.metadata?.durationUs ?? null
       if (durationUs !== null && clip.sourceEndUs > durationUs) context.addIssue({ code: 'custom', path, message: 'A clip must stay within its media’s known duration.' })
@@ -779,7 +794,7 @@ export const projectSchemaV10 = z.object({
 
 /** Schema 11 adds the optional pan start rect (`zoomRegionSchema.fromRect`). No structural change
  * beyond that field, so validation delegates to the frozen schema-10 contract. */
-export const projectSchema = z.object({
+export const projectSchemaV11 = z.object({
   ...projectSchemaV10.shape,
   schemaVersion: z.literal(11),
 }).superRefine((project, context) => {
@@ -787,9 +802,84 @@ export const projectSchema = z.object({
   if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
 })
 
+/** Schema 12 adds the optional `mask` on clips, text, caption tracks, blur and frame-paint effects.
+ * Optional, so there is no structural change; validation delegates to the frozen schema-11 contract. */
+export const projectSchemaV12 = z.object({
+  ...projectSchemaV11.shape,
+  schemaVersion: z.literal(12),
+}).superRefine((project, context) => {
+  const old = projectSchemaV11.safeParse({ ...project, schemaVersion: 11 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 13 adds the `color` clip kind (solid/gradient backgrounds with optional preset motion). It
+ * needs no asset, so it is exempt from the asset checks the inherited contract applies, and may only
+ * sit on a video track (enforced by the shared track-kind rule). No data transform from 12. */
+export const projectSchemaV13 = z.object({
+  ...projectSchemaV12.shape,
+  schemaVersion: z.literal(13),
+}).superRefine((project, context) => {
+  const old = projectSchemaV12.safeParse({ ...project, schemaVersion: 12 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 14 adds the optional `speed` curve on video and audio clips (docs/EDITING.md "Clip speed").
+ * Optional, so there is no data transform from 13; the clip schema itself carries the new field. */
+export const projectSchemaV14 = z.object({
+  ...projectSchemaV13.shape,
+  schemaVersion: z.literal(14),
+}).superRefine((project, context) => {
+  const old = projectSchemaV13.safeParse({ ...project, schemaVersion: 13 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
+/** Schema 15 adds linked audio (docs/EDITING.md "Linked audio"): `linkId`/`detachedAudio` on clips,
+ * `enabled` on every clip, `solo`/`volume` on tracks, and audio clips may play a video asset's sound.
+ * All optional, so there is no data transform from 14. A link group holds at most one video clip. */
+export const projectSchemaV15 = z.object({
+  ...projectSchemaV14.shape,
+  schemaVersion: z.literal(15),
+}).superRefine((project, context) => {
+  const old = projectSchemaV14.safeParse({ ...project, schemaVersion: 14 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  const videosByLink = new Map<string, number>()
+  for (const [index, clip] of project.clips.entries()) {
+    if (clip.kind !== 'video' && clip.kind !== 'audio') continue
+    if (!clip.linkId) continue
+    if (clip.kind === 'video') {
+      if (videosByLink.has(clip.linkId)) context.addIssue({ code: 'custom', path: ['clips', index, 'linkId'], message: 'A link group holds at most one video clip.' })
+      videosByLink.set(clip.linkId, index)
+    }
+  }
+})
+
+/** Schema 16 adds the `adjustment` clip kind and the `lut` asset kind (docs/EDITING.md "Color:
+ * adjustment layers"). Both are additive to the shapes schema 15 already declares — `clipSchema` and
+ * `projectAssetSchema` (`src/core/edit.ts`) already carry the new variants — so there is no data
+ * transform from 15; only an adjustment clip whose grade names a `lut` asset needs a fresh check, since
+ * that reference can't be expressed in the zod shape alone. */
+export const projectSchema = z.object({
+  ...projectSchemaV15.shape,
+  schemaVersion: z.literal(16),
+}).superRefine((project, context) => {
+  const old = projectSchemaV15.safeParse({ ...project, schemaVersion: 15 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
+  for (const [index, clip] of project.clips.entries()) {
+    if (clip.kind !== 'adjustment' || clip.grade.input.type !== 'lut') continue
+    if (assets.get(clip.grade.input.assetId)?.kind !== 'lut') {
+      context.addIssue({ code: 'custom', path: ['clips', index, 'grade', 'input', 'assetId'], message: 'A LUT input must reference a lut asset.' })
+    }
+  }
+})
+
 export type Cue = z.infer<typeof cueSchema>
 export type CaptionWord = z.infer<typeof wordSchema>
 export type CaptionProject = z.infer<typeof projectSchema>
+export type CaptionProjectV15 = z.infer<typeof projectSchemaV15>
+export type CaptionProjectV12 = z.infer<typeof projectSchemaV12>
+export type CaptionProjectV13 = z.infer<typeof projectSchemaV13>
+export type CaptionProjectV14 = z.infer<typeof projectSchemaV14>
 export type CaptionProjectV2 = z.infer<typeof projectSchemaV2>
 export type CaptionProjectV3 = z.infer<typeof projectSchemaV3>
 export type CaptionProjectV4 = z.infer<typeof projectSchemaV4>
@@ -799,6 +889,7 @@ export type CaptionProjectV7 = z.infer<typeof projectSchemaV7>
 export type CaptionProjectV8 = z.infer<typeof projectSchemaV8>
 export type CaptionProjectV9 = z.infer<typeof projectSchemaV9>
 export type CaptionProjectV10 = z.infer<typeof projectSchemaV10>
+export type CaptionProjectV11 = z.infer<typeof projectSchemaV11>
 export type TranscriptionRun = z.infer<typeof transcriptionRunSchema>
 export type AlignmentRun = z.infer<typeof alignmentRunSchema>
 export type { MigrationNote }
@@ -815,7 +906,7 @@ const legacyProjectSchema = z.object({
 
 export type ProjectLoadResult = {
   project: CaptionProject
-  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | null
+  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | null
   /** What the 4 → 5 migration could not carry over exactly, surfaced as a notice (never silent loss). */
   migrationNotes: MigrationNote[]
 }
@@ -900,8 +991,34 @@ function toV10FromV9(project: CaptionProjectV9): CaptionProjectV10 {
 }
 
 /** Schema 10 → 11: `fromRect` is optional, so only the version number changes. */
-function toV11FromV10(project: CaptionProjectV10): CaptionProject {
-  return projectSchema.parse(migrateV10(project).project)
+function toV11FromV10(project: CaptionProjectV10): CaptionProjectV11 {
+  return projectSchemaV11.parse(migrateV10(project).project)
+}
+
+/** Schema 11 → 12: `mask` is optional, so only the version number changes. */
+function toV12FromV11(project: CaptionProjectV11): CaptionProjectV12 {
+  return projectSchemaV12.parse(migrateV11(project).project)
+}
+
+/** Schema 12 → 13: the `color` clip kind is additive, so only the version number changes. */
+function toV13FromV12(project: CaptionProjectV12): CaptionProjectV13 {
+  return projectSchemaV13.parse(migrateV12(project).project)
+}
+
+/** Schema 13 → 14: `speed` is optional, so only the version number changes. */
+function toV14FromV13(project: CaptionProjectV13): CaptionProjectV14 {
+  return projectSchemaV14.parse(migrateV13(project).project)
+}
+
+/** Schema 14 → 15: every new field is optional, so only the version number changes. */
+function toV15FromV14(project: CaptionProjectV14): CaptionProjectV15 {
+  return projectSchemaV15.parse(migrateV14(project).project)
+}
+const toV15FromV13 = (project: CaptionProjectV13): CaptionProjectV15 => toV15FromV14(toV14FromV13(project))
+
+/** Schema 15 → 16: the new clip/asset kinds are additive, so only the version number changes. */
+function toV16FromV15(project: CaptionProjectV15): CaptionProject {
+  return projectSchema.parse(migrateV15(project).project)
 }
 
 /** `newId` mints the ids a migration needs (assets, clips, tracks); injectable for tests. */
@@ -910,20 +1027,30 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (current.success) return { project: current.data, migratedFrom: null, migrationNotes: [] }
   const from = (migratedFrom: 1 | 2 | 3 | 4, v4: CaptionProjectV4): ProjectLoadResult => {
     const { project, notes } = toV9(v4, newId)
-    return { project: toV11FromV10(toV10FromV9(project)), migratedFrom, migrationNotes: notes }
+    return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project)))))), migratedFrom, migrationNotes: notes }
   }
+  const v15 = projectSchemaV15.safeParse(value)
+  if (v15.success) return { project: toV16FromV15(v15.data), migratedFrom: 15, migrationNotes: [] }
+  const v14 = projectSchemaV14.safeParse(value)
+  if (v14.success) return { project: toV16FromV15(toV15FromV14(v14.data)), migratedFrom: 14, migrationNotes: [] }
+  const v13 = projectSchemaV13.safeParse(value)
+  if (v13.success) return { project: toV16FromV15(toV15FromV13(v13.data)), migratedFrom: 13, migrationNotes: [] }
+  const v12 = projectSchemaV12.safeParse(value)
+  if (v12.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(v12.data))), migratedFrom: 12, migrationNotes: [] }
+  const v11 = projectSchemaV11.safeParse(value)
+  if (v11.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data)))), migratedFrom: 11, migrationNotes: [] }
   const v10 = projectSchemaV10.safeParse(value)
-  if (v10.success) return { project: toV11FromV10(v10.data), migratedFrom: 10, migrationNotes: [] }
+  if (v10.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data))))), migratedFrom: 10, migrationNotes: [] }
   const v9 = projectSchemaV9.safeParse(value)
-  if (v9.success) return { project: toV11FromV10(toV10FromV9(v9.data)), migratedFrom: 9, migrationNotes: [] }
+  if (v9.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data)))))), migratedFrom: 9, migrationNotes: [] }
   const v8 = projectSchemaV8.safeParse(value)
-  if (v8.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(v8.data))), migratedFrom: 8, migrationNotes: [] }
+  if (v8.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data))))))), migratedFrom: 8, migrationNotes: [] }
   const v7 = projectSchemaV7.safeParse(value)
-  if (v7.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data)))), migratedFrom: 7, migrationNotes: [] }
+  if (v7.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data)))))))), migratedFrom: 7, migrationNotes: [] }
   const v6 = projectSchemaV6.safeParse(value)
-  if (v6.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data))))), migratedFrom: 6, migrationNotes: [] }
+  if (v6.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data))))))))), migratedFrom: 6, migrationNotes: [] }
   const v5 = projectSchemaV5.safeParse(value)
-  if (v5.success) return { project: toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId)))))), migratedFrom: 5, migrationNotes: [] }
+  if (v5.success) return { project: toV16FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId)))))))))), migratedFrom: 5, migrationNotes: [] }
   const v4 = projectSchemaV4.safeParse(value)
   if (v4.success) return from(4, v4.data)
   const v3 = projectSchemaV3.safeParse(value)
@@ -932,7 +1059,12 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (v2.success) return from(2, migrateV3(migrateV2(v2.data), newId))
   // A file that claims the current (or a previous, still-named) schema but fails it reports
   // *that* failure, not schema 1's.
-  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 11) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 16) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 15) projectSchemaV15.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 14) projectSchemaV14.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 13) projectSchemaV13.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 12) projectSchemaV12.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 11) projectSchemaV11.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 10) projectSchemaV10.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 9) projectSchemaV9.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 8) projectSchemaV8.parse(value)
@@ -973,7 +1105,7 @@ export function defaultCaptionTracks(newId: () => string = () => crypto.randomUU
 export function createProject(): CaptionProject {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 11,
+    schemaVersion: 16,
     id: crypto.randomUUID(),
     title: 'Untitled project',
     cues: [],

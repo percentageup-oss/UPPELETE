@@ -1,0 +1,367 @@
+{
+  "machine": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "osRelease": "25.6.0",
+    "cpu": "Apple M4 Pro",
+    "logicalCores": 12,
+    "ramBytes": 25769803776
+  },
+  "versions": {
+    "node": "24.20.0",
+    "acorn": "8.18.0",
+    "ada": "4.0.0",
+    "amaro": "1.1.11",
+    "ares": "1.34.8",
+    "brotli": "1.2.0",
+    "cldr": "48.0",
+    "icu": "78.2",
+    "llhttp": "9.4.3",
+    "merve": "1.2.2",
+    "modules": "149",
+    "napi": "10",
+    "nbytes": "0.1.4",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.70.0",
+    "nghttp3": "",
+    "ngtcp2": "",
+    "openssl": "0.0.0",
+    "simdjson": "4.6.6",
+    "simdutf": "7.7.0",
+    "sqlite": "3.53.4",
+    "tz": "2025c",
+    "undici": "7.29.0",
+    "unicode": "17.0",
+    "uv": "1.52.1",
+    "uvwasi": "0.0.23",
+    "v8": "15.2.124.19-electron.0",
+    "zlib": "1.3.2.1-motley",
+    "zstd": "1.6.0",
+    "electron": "44.3.0",
+    "chrome": "152.0.7977.78"
+  },
+  "workDir": "/var/folders/td/y8lvt9jx0512cxnhmxqnz6t40000gn/T/caption-x3-BGLWaN",
+  "captionLayer": [],
+  "keynoteLayer": [
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-quiet-reveal",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-lift-in",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-staggered-words",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-focus-scale",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1080,
+        "height": 1920
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 100000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 1500000,
+      "differingBytes": 0
+    },
+    {
+      "template": "keynote-product-callout",
+      "composition": {
+        "width": 1920,
+        "height": 1080
+      },
+      "timestampUs": 2850000,
+      "differingBytes": 0
+    }
+  ],
+  "composited": [],
+  "sync": {},
+  "notes": [],
+  "sourceHashes": {
+    "src/core/layerMask.ts": "dfc1936f2344542274f0dc55987e778f75d46f0f3cbe4e8dab91f273825f6ee3",
+    "src/core/media.ts": "bb92ba58319211516d7bc424e0f08b28b19c0434ce6156caa881d7c95edefbe6",
+    "src/core/captionText.ts": "478678c694a70df407144cc690fc277481ca8883891b0f765a8f9621226780cb",
+    "src/core/emphasis.ts": "7d1a5a008be2dcf5dfb4ceb0f28dd027d3f584aa5304db546a209737f2f63735",
+    "src/captions/renderer.ts": "02b128101956ca67ad8b8462ba8f161e55cf206063f65c20add201f982180034",
+    "src/captions/style.ts": "eee30dbcddd9e995bc946c0e98a6dfb9cdce0f44ce045fc7c3df21749e08bb8a",
+    "src/core/edit.ts": "a84716d870423520e4f40d3ade4a27b5a7ca6d341740f85718fbb6ae81711381",
+    "src/core/composition.ts": "ba7c7aa9e5114ab7bba29fb04f0381b96741a3c191eed6f72c0f331a21c9dd8d",
+    "src/captions/maskStyle.ts": "031c4d769d1eb1b3d11e6a5d57199a42c933c2c13480699294f52a7dcf584a4b",
+    "src/captions/CaptionPreview.tsx": "5cae8462bfd2a97934f7237308b83e0352650b8651e25d4f72061ff22f9cb383",
+    "src/core/gridFill.ts": "188f207ff2918605554526bb5ccaa3257504a394e8d6b1b53de0f5f6947c90d5",
+    "src/core/fill.ts": "bd9594d0656113340002add22d077f971629824cd839505e389f65d534ebba45",
+    "src/captions/GridPicture.tsx": "ecf4c5ba4b980977f52ada8289dfa83b80774c0d3ca12ed40e1244b51777b2bc",
+    "src/captions/CompositionLayers.tsx": "0e2ab6f36fe1787b87a5e5be8ddc14067ff86c0d14891d393c1864433276c41f",
+    "src/core/jobs.ts": "49340d99918f492af4032ac4b226eeebb49f4a9cec8b76a8ca60ce2d31c119c5",
+    "src/core/scriptCheck.ts": "3f4c7174feb26b93395b63dc5325a8c713c46019c12d81a55d46248f70aba226",
+    "src/core/transcription.ts": "11dac37eb78e64bea37cd050c7124cb56db32cd3645cc17f0ca08d35304f671e",
+    "src/captions/wordDisplay.ts": "13691d86841ec1df31986fc0067fa3d70791e9b207cd17442bcc0a1ec206efbf",
+    "src/core/timelineModel.ts": "dfb112ed97099ebff44da9fee080abe3762bcc10ba80a21acf95611b92d536fd",
+    "src/core/format.ts": "be4f14ad53ef0239e298c9f8ec92c175266cbaa332765c4bb47b0f92d38fa28a",
+    "src/core/migrateV4.ts": "b06b3a97eded3bf2053f7055f0d26012b5b56a1fb8a4720fec8e39fcbf6105bb",
+    "src/core/migrateV5.ts": "92c05113df6ac4aee676b2e836a60bff379eb20e51cfb72e89563648b81e1d86",
+    "src/core/migrateV6.ts": "c2d29a53e4279970cd267b0733ebbe019dc094a25392d7e5b9f867fc43921faf",
+    "src/core/migrateV7.ts": "e19efd58287fbdfa46c8766e8298568b071cedf94bb8ab44c8f4db1a58e2c497",
+    "src/core/migrateV8.ts": "8ab04ce56ca939ec87acee4fb842413de43f5e3249237f361f1e441afae644a1",
+    "src/core/migrateV9.ts": "2f3f2f6331cabcce71b5f2ac53635c2a0500421a9b763dadf1f86c225dd9edeb",
+    "src/core/migrateV10.ts": "bd3f120afcf09afd795604779682d7fb10f691cf73cf482000161a493c016ac5",
+    "src/core/migrateV11.ts": "7e6d3ed2158e070ceec00df854315b7061c4d58350bf7feda22847dd392506b1",
+    "src/core/migrateV12.ts": "4c58f9c6180b084291dbb329302f2860cdaeb9ea74af12ca0ddcd1a799f83a8d",
+    "src/core/model.ts": "0a36d2fa3d82544698f63b6fc97f0f5157b985cbaf32e251a67b0d3953a8af85",
+    "src/export/frameRequest.ts": "e8a4f7da21d5092d7d7f679b21e656949487eeb82995da830fafa3c21708f9dd",
+    "src/export/parityFixture.ts": "88bb3878dd9f7cd7aceb3cbd58c3e49a8d6b1498b58472669275d2e149f6e3d9",
+    "src/captions/fixtures.ts": "ccfd4d52d070372c5e873701b46e0289f115f808ec25c283dabee8a4b34f5e2d",
+    "src/captions/textMotion.ts": "02fbb5e264ae6ea54513bf6363c2903cf483b78488ac00c7db073bff76f0f293",
+    "src/captions/TextOverlayActor.tsx": "8a626ad9d83f56fc3b3163989e86efe490b70068c18be90d2f260f091a98342e",
+    "src/export/frameHarness.tsx": "0b30fb405c3e93819fe38006086922a1924d95f1b05039ed50e276d358b027d1"
+  },
+  "summary": {
+    "captionLayerCases": 0,
+    "keynoteLayerCases": 30,
+    "captionLayerMismatches": 0,
+    "compositedCases": 0,
+    "worstBoxedMeanDelta": 0,
+    "worstGlobalMeanDelta": 0,
+    "notes": 0
+  }
+}

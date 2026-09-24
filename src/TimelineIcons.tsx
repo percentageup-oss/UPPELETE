@@ -14,6 +14,11 @@ export const PlayheadIcon = (props: IconProps) => <Icon {...props}><path d="M8 2
 export const TrashIcon = (props: IconProps) => <Icon {...props}><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 8.5h5.6l.7-8.5M6.8 7v4M9.2 7v4" /></Icon>
 export const ScissorsIcon = (props: IconProps) => <Icon {...props}><circle cx="4.5" cy="4" r="2" /><circle cx="4.5" cy="12" r="2" /><path d="m6.2 5.2 7.3 5.3M6.2 10.8l7.3-5.3" /></Icon>
 export const TrimIcon = (props: IconProps) => <Icon {...props}><path d="M5 3H3v10h2M11 3h2v10h-2M8 2v12" /></Icon>
+export const TrimStartIcon = (props: IconProps) => <Icon {...props}><path d="M3 2v12M6 4h7v8H6z" /><path d="M6 8H3" /></Icon>
+export const TrimEndIcon = (props: IconProps) => <Icon {...props}><path d="M13 2v12M10 4H3v8h7z" /><path d="M10 8h3" /></Icon>
+export const MarkInIcon = (props: IconProps) => <Icon {...props}><path d="M4 2v12M4 3h8M4 13h8" /></Icon>
+export const MarkOutIcon = (props: IconProps) => <Icon {...props}><path d="M12 2v12M12 3H4M12 13H4" /></Icon>
+export const ClearRangeIcon = (props: IconProps) => <Icon {...props}><path d="M3 3v10M13 3v10M6 6l4 4M10 6l-4 4" /></Icon>
 export const MagnetIcon = (props: IconProps) => <Icon {...props}><path d="M4 2v6a4 4 0 0 0 8 0V2M4 2h3v6a1 1 0 0 0 2 0V2h3" /><path d="M4 5h3M9 5h3" /></Icon>
 export const ZoomOutIcon = (props: IconProps) => <Icon {...props}><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3M5 7h4" /></Icon>
 export const ZoomInIcon = (props: IconProps) => <Icon {...props}><circle cx="7" cy="7" r="4.5" /><path d="m10.5 10.5 3 3M5 7h4M7 5v4" /></Icon>
@@ -40,3 +45,7 @@ export const VignetteIcon = (props: IconProps) => <Icon {...props}><rect x="2" y
 export const LetterboxIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" opacity=".4" /><rect x="2" y="5.5" width="12" height="5" fill="currentColor" stroke="none" /></Icon>
 export const FadeIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" /><path d="M2 8a6 6 0 0 1 12 0" fill="currentColor" stroke="none" opacity=".6" /></Icon>
 export const FlashIcon = (props: IconProps) => <Icon {...props}><path d="M9 2 4 9h3.2L7 14l5-7H8.8L9 2Z" /></Icon>
+export const GrainIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="2" width="12" height="12" rx="1.5" opacity=".4" /><g fill="currentColor" stroke="none"><circle cx="5" cy="5" r=".9" /><circle cx="9.5" cy="4.5" r=".9" /><circle cx="7" cy="8" r=".9" /><circle cx="11" cy="8.5" r=".9" /><circle cx="4.5" cy="11" r=".9" /><circle cx="9" cy="11.5" r=".9" /></g></Icon>
+export const GlowIcon = (props: IconProps) => <Icon {...props}><circle cx="8" cy="8" r="3" /><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" opacity=".6" /></Icon>
+export const VhsIcon = (props: IconProps) => <Icon {...props}><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M2 6h12M2 8.5h12M2 11h12" opacity=".55" /></Icon>
+export const ParticlesIcon = (props: IconProps) => <Icon {...props}><circle cx="4" cy="5" r="1" fill="currentColor" stroke="none" /><circle cx="10" cy="3" r=".65" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r="1.15" fill="currentColor" stroke="none" opacity=".75" /><circle cx="6" cy="11" r=".75" fill="currentColor" stroke="none" /><path d="M4 5 10 3M6 11l6-3" opacity=".35" /></Icon>

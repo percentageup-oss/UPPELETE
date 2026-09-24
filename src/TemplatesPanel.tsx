@@ -3,15 +3,17 @@ import { summarizeWordMotion, wordMotionAvailability, type MotionCue } from './c
 import { CaptionPreview } from './captions/CaptionPreview'
 import { CAPTION_TEMPLATES, TEMPLATE_DEMO, type CaptionTemplate } from './captions/templates'
 import { captionStyleInputs, MOTIONS, type CaptionMotion, type CaptionStyle, type SavedCaptionPreset } from './captions/style'
+import type { TextOverlay } from './core/edit'
+import { decorativeTextCue, textMotionAt, titleMotionAt } from './captions/textMotion'
 
 const WORD_MOTION_UNAVAILABLE = 'No cue in this project currently has usable word timing (transcribe, estimate, or align word timing first). Word-dependent presets are disabled; captions use static clean.'
 
-export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion, onApplyTemplate, onSavePreset, onApplyPreset, onDeletePreset, onEstimate, onAddText, target = 'captions' }: {
+export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion, onApplyTemplate, onSavePreset, onApplyPreset, onDeletePreset, onEstimate, onAddText, selectedText, target = 'captions' }: {
   style: CaptionStyle
   cues: readonly MotionCue[]
   activeCue: MotionCue | null
   presets: readonly SavedCaptionPreset[]
-  onApplyTemplate: (style: CaptionStyle) => void
+  onApplyTemplate: (style: CaptionStyle, template?: CaptionTemplate) => void
   onCommitMotion: (motion: CaptionMotion) => void
   onSavePreset: (name: string) => void
   onApplyPreset: (id: string) => void
@@ -19,6 +21,7 @@ export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion
   /** Estimates word timing for the active cue; omitted when there is none to estimate for. */
   onEstimate?: () => void
   onAddText?: () => void
+  selectedText?: TextOverlay | null
   target?: 'captions' | 'text'
 }) {
   const [query, setQuery] = useState('')
@@ -29,6 +32,10 @@ export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion
   const activeAvailability = activeCue ? wordMotionAvailability(activeCue) : null
   const motionNeedsWords = MOTIONS.find((motion) => motion.id === style.motion)?.words ?? false
   const showEstimateCta = target !== 'text' && motionNeedsWords && activeCue && activeAvailability && !activeAvailability.enabled
+  const galleryTemplates = CAPTION_TEMPLATES.filter((template) =>
+    `${template.name} ${template.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase()))
+  const captionTemplates = galleryTemplates.filter((template) => !template.title)
+  const titleTemplates = galleryTemplates.filter((template) => !!template.title)
   const motionDescription = target === 'text'
     ? 'Word animation is decorative and does not use or alter speech caption timing.'
     : `${wordMotionUsable
@@ -52,19 +59,24 @@ export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion
     <label className="template-search">Find a template
       <input type="search" value={query} placeholder="Search templates…" onChange={(event) => setQuery(event.target.value)} />
     </label>
-    {library === 'built-in' && <div className="template-gallery" aria-label="Built-in caption templates">
-      {CAPTION_TEMPLATES.filter((template) => `${template.name} ${template.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase())).map((template) =>
-        <TemplateCard key={template.id} template={template} selected={target === 'text'
-          ? JSON.stringify(style.appearance) === JSON.stringify(template.style.appearance)
+    {library === 'built-in' && <>
+      <p className="style-hint">Applying a template changes {target === 'text' ? 'the selected text layer' : 'the captions'}.</p>
+      {([{ heading: 'Caption templates', templates: captionTemplates }, { heading: 'Title treatments', templates: titleTemplates }] as const).map(({ heading, templates }) =>
+        <div key={heading} className="template-gallery" aria-label={heading}>
+          <h4>{heading}</h4>
+          {templates.map((template) =>
+        <TemplateCard key={template.id} template={template} target={target} selected={target === 'text'
+          ? !!selectedText && JSON.stringify(style.appearance) === JSON.stringify({ ...(template.title?.style ?? template.style).appearance,
+            horizontal: style.appearance.horizontal, vertical: style.appearance.vertical, rotation: style.appearance.rotation })
+            && (!template.title || JSON.stringify([selectedText.enter, selectedText.exit, selectedText.titleMotion, style.motion]) === JSON.stringify([template.title.enter, template.title.exit, template.title.titleMotion, template.title.style.motion]))
           : JSON.stringify(style) === JSON.stringify(template.style)}
           previewMotion={target === 'text' ? 'static-clean' : template.style.motion}
-          onApply={() => onApplyTemplate(template.style)} />)}
-      {!CAPTION_TEMPLATES.some((template) => `${template.name} ${template.tags.join(' ')}`.toLowerCase().includes(query.toLowerCase())) && <p className="style-hint">No matching templates.</p>}
-      <p className="style-hint">{target === 'text'
-        ? 'These styles change appearance only. Position, word animation, and layer transitions stay as set.'
-        : 'Hover or focus to preview sample motion. Applying a word-motion template fills only missing word timing with review-required estimates; existing model, aligned, or manual timing is preserved.'}</p>
-    </div>}
-    <fieldset className="style-motion" aria-describedby="motion-status">
+          onApply={() => onApplyTemplate(template.style, template)} />)}
+        </div>)}
+      {!galleryTemplates.length && <p className="style-hint">No matching templates.</p>}
+      <p className="style-hint">Hover or focus to preview. Speech word effects use caption timing; the six title treatments use each cue's own start time.</p>
+    </>}
+    {target === 'text' && selectedText?.titleMotion ? <p className="style-hint">This title treatment controls the entrance. Set Title motion to None in Edit to use decorative word animation.</p> : <fieldset className="style-motion" aria-describedby="motion-status">
         <legend>{target === 'text' ? 'Word animation' : 'Motion preset'}</legend>
       {MOTIONS.map((motion) => {
         const disabled = target !== 'text' && motion.words && !wordMotionUsable
@@ -75,7 +87,7 @@ export function TemplatesPanel({ style, cues, activeCue, presets, onCommitMotion
         </label>
       })}
       <p id="motion-status" className="style-hint">{motionDescription}</p>
-    </fieldset>
+    </fieldset>}
 
     <fieldset className="style-presets">
       <legend>Saved presets</legend>
@@ -112,11 +124,18 @@ export function templateDemoFor(template: CaptionTemplate): MotionCue {
   return template.demo ?? TEMPLATE_DEMO
 }
 
-function TemplateCard({ template, selected, previewMotion, onApply }: { template: CaptionTemplate; selected: boolean; previewMotion: CaptionMotion; onApply: () => void }) {
+function TemplateCard({ template, selected, target, previewMotion, onApply }: { template: CaptionTemplate; selected: boolean; target: 'captions' | 'text'; previewMotion: CaptionMotion; onApply: () => void }) {
   const [hovered, setHovered] = useState(false), [focused, setFocused] = useState(false)
   const [timestampUs, setTimestampUs] = useState(1_100_000)
   const demo = templateDemoFor(template)
-  const inputs = useMemo(() => captionStyleInputs({ ...template.style, motion: previewMotion, appearance: { ...template.style.appearance, vertical: .5 } }, DEMO_SIZE), [template, previewMotion])
+  const title = template.title
+  const sampleStyle = title?.style ?? template.style
+  const inputs = useMemo(() => captionStyleInputs({ ...sampleStyle, motion: title?.style.motion ?? previewMotion, appearance: { ...sampleStyle.appearance, vertical: .5 } }, DEMO_SIZE), [sampleStyle, title, previewMotion])
+  const previewItem: TextOverlay | null = title ? { id: 'template-preview', text: demo.text, startUs: 0, endUs: 3_000_000,
+    style: title.style, enter: title.enter, exit: title.exit, titleMotion: title.titleMotion, layerOrder: 1 } : null
+  const titleFrame = target === 'text' && previewItem ? textMotionAt(previewItem, timestampUs) : null
+  const titleMotion = previewItem ? titleMotionAt(previewItem, timestampUs) : null
+  const previewCue = previewItem ? decorativeTextCue(previewItem) : demo
   useEffect(() => {
     if (!(hovered || focused) || matchMedia('(prefers-reduced-motion: reduce)').matches) { setTimestampUs(1_100_000); return }
     let raf = 0
@@ -125,11 +144,14 @@ function TemplateCard({ template, selected, previewMotion, onApply }: { template
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
   }, [hovered, focused, previewMotion])
-  return <button type="button" className="template-card" aria-pressed={selected} aria-label={`Apply ${template.name} ${previewMotion === 'static-clean' ? 'style' : 'template'}`} title={template.description}
+  return <button type="button" className="template-card" aria-pressed={selected} aria-label={`Apply ${template.name} ${title || previewMotion !== 'static-clean' ? 'template' : 'style'}`} title={template.description}
     onPointerEnter={() => setHovered(true)} onPointerLeave={() => setHovered(false)} onFocus={() => setFocused(true)} onBlur={() => setFocused(false)} onClick={onApply}>
     <span className="template-card-heading">{template.name}<span>{selected ? 'Applied' : 'Preview'}</span></span>
-    <span className="template-card-preview"><CaptionPreview cue={demo} composition={DEMO_SIZE} timestampUs={timestampUs}
-      inputs={inputs} motion={previewMotion} diagnostics={false} /></span>
+    <span className="template-card-preview" data-title-motion={title?.titleMotion.kind} data-title-enter={title?.enter.kind} data-title-exit={title?.exit.kind}><span style={{ position: 'absolute', inset: 0, opacity: titleFrame?.opacity ?? 1,
+      transform: titleFrame ? `translate(${titleFrame.x * .25}px, ${titleFrame.y * .25}px) scale(${titleFrame.scale})` : undefined }}>
+      <CaptionPreview cue={previewCue} composition={DEMO_SIZE} timestampUs={timestampUs}
+        inputs={inputs} motion={title?.style.motion ?? previewMotion} titleMotion={titleMotion} diagnostics={false} />
+    </span></span>
     <span className="template-tags">{template.tags.map((tag) => <span key={tag}>{tag}</span>)}</span>
   </button>
 }

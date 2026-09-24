@@ -1,22 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type { CaptionWord, Cue } from './core/model'
 import type { BlurRegion, CaptionTrack, Clip, EffectRegion, Marker, ProjectAsset, TextOverlay, Track, ZoomRegion } from './core/edit'
 import { anchoredScrollLeft, dragCueBy, pixelToTime, snapDelta, timeToPixel, type CueDragMode } from './core/timeline'
-import { captionClips, clipEndUs, clipLengthUs, spansInSequence } from './core/timelineModel'
+import { colorClipLabel, isAnimated, swatchCss } from './core/fill'
+import { captionClips, clipEndUs, clipLengthUs, sequenceUsOf, sourceUsAt, spanSequenceUs, spansInSequence } from './core/timelineModel'
+import { speedRateAt, type Retime } from './core/clipTime'
+import { linkIdOf, linkPartners, trimPartners } from './core/clipLinks'
 import { gapsOnTrack, snapTargets, type ClipEdge, type EditMode } from './core/clipEdits'
 import { previewClipDrag, type ClipDragMode } from './core/clipDrag'
 import { DEFAULT_ZOOM_REGION_US, previewZoomDrag, type ZoomDragMode } from './core/zoomRegion'
 import { DEFAULT_BLUR_REGION_US, previewBlurDrag, type BlurDragMode } from './core/blurRegion'
 import { previewEffectDrag, type EffectDragMode } from './core/effectCommands'
-import { timelineRows, trackAtY, trackRows, videoStackHeightPx, RULER_HEIGHT_PX } from './core/timelineLayout'
+import { rowTops, timelineRows, trackAtY, trackRows, videoStackHeightPx, RULER_HEIGHT_PX } from './core/timelineLayout'
 import type { Selection } from './core/timelineItems'
 import { formatClock } from './core/time'
 import type { WaveformData } from './core/waveform'
 import { TimelineToolbar, type ClipTools, type TimelineActions } from './TimelineToolbar'
 import type { CaptionDisplay } from './captions/wordDisplay'
-import { dropContent, type AssetDragPayload, type PresetDragPayload } from './core/dragPayload'
-import { DEFAULT_IMAGE_CLIP_US, dropTimeAt } from './core/timelineDrop'
+import { dropContent, type AssetDragPayload, type BackgroundDragPayload, type ColorDragPayload, type PresetDragPayload } from './core/dragPayload'
+import { DEFAULT_ADJUSTMENT_CLIP_US, DEFAULT_BACKGROUND_CLIP_US, DEFAULT_IMAGE_CLIP_US, dropTimeAt } from './core/timelineDrop'
 import { CaptionsTrack, type CaptionSpan } from './timeline/CaptionsTrack'
 import { ZoomLane } from './timeline/ZoomLane'
 import { BlurLane } from './timeline/BlurLane'
@@ -34,8 +37,10 @@ type CueDrag = {
   kind: 'cue'
   cue: Cue
   mode: CueDragMode
-  /** Sequence minus source time for the clip the grabbed piece is seen through. */
-  offsetUs: number
+  /** The clip the grabbed piece is seen through (its source↔sequence mapping), or null for the untethered case. */
+  clip: Retime | null
+  /** Source µs per sequence µs at the grabbed edge: pointer deltas arrive in sequence time. */
+  rate: number
   /** The grabbed clip's source range: a caption drag stays inside the clip it was grabbed in. */
   sourceBounds: { startUs: number; endUs: number }
   originClientX: number
@@ -49,6 +54,8 @@ type ClipDrag = {
   mode: ClipDragMode
   /** Alt+drag on the body: the gesture places a copy and leaves the original where it is. */
   clone: boolean
+  /** Act on this clip alone (Alt held, or it was Alt-selected): its link partners stay put. */
+  unlinked: boolean
   originClientX: number
   pointerId: number
   contentWidthPx: number
@@ -103,8 +110,12 @@ type TimelineProps = {
   assets: ProjectAsset[]
   /** Sequence time. */
   currentUs: number
-  /** Sequence time: the length the timeline shows. */
+  /** Sequence time: the span the timeline draws (program plus headroom past the last clip). */
   durationUs: number
+  /** Sequence time: where the program actually ends (seek limit, snap target). Defaults to `durationUs`. */
+  programUs?: number
+  /** The In/Out export range (I / O): the timeline dims everything outside it. Optional so existing callers compile unchanged. */
+  range?: { startUs: number; endUs: number } | null
   selection: Selection | null
   /** Ruler notes (docs/MCP.md): user-authored, or proposed by an agent for the user to accept or
    * dismiss. Optional so every existing caller keeps compiling unchanged. */
@@ -122,10 +133,14 @@ type TimelineProps = {
   onDragCommit: (original: Cue, preview: Cue, mode: CueDragMode) => void
   editMode: EditMode
   onEditMode: (mode: EditMode) => void
-  onSelectClip: (clipId: string) => void
-  onClipMove: (clipId: string, trackId: string, startUs: number) => void
+  /** `unlinked` (Alt-click) selects the clip on its own, without its link partners. */
+  onSelectClip: (clipId: string, options?: { unlinked?: boolean }) => void
+  /** Right-click (or Shift+F10 / the Menu key): the item under the pointer is already selected; the
+   * host opens its menu at the screen point. `empty` is track background, with its sequence time. */
+  onContextMenu?: (target: TimelineMenuTarget, clientX: number, clientY: number) => void
+  onClipMove: (clipId: string, trackId: string, startUs: number, unlinked?: boolean, newTrack?: Track) => void
   onClipClone: (clip: Clip) => void
-  onClipTrim: (clipId: string, edge: ClipEdge, deltaUs: number) => void
+  onClipTrim: (clipId: string, edge: ClipEdge, deltaUs: number, unlinked?: boolean) => void
   onCloseGap: (trackId: string, atUs: number) => void
   onSelectZoom?: (zoomId: string) => void
   onZoomMove?: (zoomId: string, startUs: number) => void
@@ -161,8 +176,17 @@ type TimelineProps = {
   /** A panel preset dropped anywhere on the timeline (the Effects panel's zoom/blur tiles); it
    * creates its own item rather than an asset clip, so it carries no track. */
   onDropPreset?: (payload: PresetDragPayload, sequenceUs: number) => void
+  onDropBackground?: (payload: BackgroundDragPayload, sequenceUs: number, trackId: string | null) => void
+  /** A Color panel tile dropped on the timeline: the track under the pointer, if any, decides
+   * whether it grades a clip there or lands as its own layer (docs/EDITING.md "Color: adjustment
+   * layers") — the caller does that placement logic, this only reports where the drop landed. */
+  onDropColor?: (payload: ColorDragPayload, sequenceUs: number, trackId: string | null) => void
   thumbnailQueue?: ThumbnailQueue | null
 }
+
+export type TimelineMenuTarget =
+  | { kind: 'clip' | 'cue' | 'word' | 'text' | 'zoomRegion' | 'blur' | 'effect'; id: string; unlinked?: boolean }
+  | { kind: 'empty'; trackId: string | null; atUs: number }
 
 const ZOOM_MIN = 1
 const ZOOM_MAX = 32
@@ -170,7 +194,7 @@ const SNAP_THRESHOLD_PX = 8
 const FOLLOW_MARGIN = 0.1
 
 export function Timeline(props: TimelineProps) {
-  const { cues, tracks, captionTracks, clips, zoomRegions = [], blurRegions = [], effects = [], textOverlays = [], assets, currentUs, durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
+  const { cues, tracks, captionTracks, clips, zoomRegions = [], blurRegions = [], effects = [], textOverlays = [], assets, currentUs, durationUs, programUs = durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
   const [zoom, setZoom] = useState(1)
   const [snap, setSnap] = useState(true)
   const [expanded, setExpanded] = useState(false)
@@ -178,6 +202,8 @@ export function Timeline(props: TimelineProps) {
   const [drag, setDrag] = useState<CueDrag | ClipDrag | ZoomDrag | BlurDrag | EffectDrag | null>(null)
   const [draggedCue, setDraggedCue] = useState<Cue | null>(null)
   const [clipPreview, setClipPreview] = useState<Clip | null>(null)
+  /** Where the dragged clip's link partners would land, drawn moving with it. */
+  const [partnerPreview, setPartnerPreview] = useState<Clip[]>([])
   const [zoomPreview, setZoomPreview] = useState<ZoomRegion | null>(null)
   const [blurPreview, setBlurPreview] = useState<BlurRegion | null>(null)
   const [effectPreview, setEffectPreview] = useState<EffectRegion | null>(null)
@@ -193,6 +219,10 @@ export function Timeline(props: TimelineProps) {
   callbacks.current = props
   const selectedCueId = selection?.kind === 'cue' ? selection.id : null
   const selectedClipId = selection?.kind === 'clip' ? selection.id : null
+  const selectedPartnerIds = useMemo(() => {
+    const selected = selection?.kind === 'clip' && !selection.unlinked ? clips.find((clip) => clip.id === selection.id) : undefined
+    return new Set(selected ? linkPartners(clips, selected).map((clip) => clip.id) : [])
+  }, [selection, clips])
   const selectedZoomId = selection?.kind === 'zoomRegion' ? selection.id : null
   const selectedBlurId = selection?.kind === 'blur' ? selection.id : null
   const selectedEffectId = selection?.kind === 'effect' ? selection.id : null
@@ -241,7 +271,7 @@ export function Timeline(props: TimelineProps) {
   }
   const displayCues = draggedCue ? cues.map((cue) => cue.id === draggedCue.id ? draggedCue : cue) : cues
   const displayClips = clipPreview && drag?.kind === 'clip'
-    ? drag.clone ? [...clips, clipPreview] : clips.map((clip) => clip.id === clipPreview.id ? clipPreview : clip)
+    ? drag.clone ? [...clips, clipPreview] : clips.map((clip) => clip.id === clipPreview.id ? clipPreview : partnerPreview.find((partner) => partner.id === clip.id) ?? clip)
     : clips
   const displayZoomRegions = zoomPreview ? zoomRegions.map((region) => region.id === zoomPreview.id ? zoomPreview : region) : zoomRegions
   const displayBlurRegions = blurPreview ? blurRegions.map((region) => region.id === blurPreview.id ? blurPreview : region) : blurRegions
@@ -294,7 +324,7 @@ export function Timeline(props: TimelineProps) {
 
   /** Sequence-time snap targets shared by caption and clip drags. */
   const snapTargetsFor = (exceptClipIds: string[], exceptCueId: string | null, originPlayheadUs: number) => snapTargets(clips, exceptClipIds, [
-    0, originPlayheadUs, durationUs,
+    0, originPlayheadUs, programUs,
     ...cues.filter((cue) => cue.id !== exceptCueId).flatMap((cue) => spansOf(cue).flatMap((span) => [span.startUs, span.endUs])),
   ])
 
@@ -307,25 +337,30 @@ export function Timeline(props: TimelineProps) {
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
     const clip = span.clipId ? clips.find((candidate) => candidate.id === span.clipId) : undefined
-    const offsetUs = clip ? clip.timelineStartUs - clip.sourceStartUs : 0
+    const edgeSourceUs = mode === 'end' ? cue.endUs : cue.startUs
+    const rate = clip ? speedRateAt(clip.kind === 'video' || clip.kind === 'audio' ? clip.speed : undefined, edgeSourceUs) : 1
+    const retime = clip ?? null
+    const toSequence = (sourceUs: number) => retime ? sequenceUsOf(retime, sourceUs) : sourceUs
     const sourceBounds = clip ? { startUs: clip.sourceStartUs, endUs: clip.sourceEndUs } : { startUs: 0, endUs: Number.MAX_SAFE_INTEGER }
-    setDrag({ kind: 'cue', cue, mode, offsetUs, sourceBounds, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setDrag({ kind: 'cue', cue, mode, clip: retime, rate, sourceBounds, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
     setDraggedCue(cue)
     const edgeUs = mode === 'end' ? cue.endUs : cue.startUs
-    onSeek(edgeUs + offsetUs, cue.id)
-    props.onDragPreview(cue, edgeUs + offsetUs)
+    onSeek(toSequence(edgeUs), cue.id)
+    props.onDragPreview(cue, toSequence(edgeUs))
   }
 
   const beginClipDrag = (event: ReactPointerEvent<HTMLElement>, clip: Clip, mode: ClipDragMode) => {
     if (event.button !== 0) return
     event.preventDefault()
     event.stopPropagation()
-    props.onSelectClip(clip.id)
+    // Alt selects (and edits) this clip alone; so does dragging a clip that was already Alt-selected.
+    const unlinked = event.altKey || Boolean(selection?.kind === 'clip' && selection.id === clip.id && selection.unlinked)
+    props.onSelectClip(clip.id, { unlinked })
     if (trackById.get(clip.trackId)?.locked) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const clone = mode === 'move' && event.altKey
     const subject = clone ? { ...clip, id: crypto.randomUUID() } : clip
-    setDrag({ kind: 'clip', clip: subject, mode, clone, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
+    setDrag({ kind: 'clip', clip: subject, mode, clone, unlinked, originClientX: event.clientX, pointerId: event.pointerId, contentWidthPx: contentWidth(), originPlayheadUs: currentUs })
     setClipPreview(subject)
   }
 
@@ -361,16 +396,19 @@ export function Timeline(props: TimelineProps) {
 
   useEffect(() => {
     if (!drag) return
-    const thresholdUs = pixelToTime(SNAP_THRESHOLD_PX, durationUs, drag.contentWidthPx)
-    const sequenceDelta = (clientX: number) => pixelToTime(clientX - drag.originClientX, durationUs, drag.contentWidthPx)
+    const cueRate = drag.kind === 'cue' ? drag.rate : 1
+    const thresholdUs = pixelToTime(SNAP_THRESHOLD_PX, durationUs, drag.contentWidthPx) * cueRate
+    const sequenceDelta = (clientX: number) => pixelToTime(clientX - drag.originClientX, durationUs, drag.contentWidthPx) * cueRate
     let finish: (event: PointerEvent, commit: boolean) => void
     let move: (event: PointerEvent) => void
     if (drag.kind === 'cue') {
       // The caption is read live, so one deleted or undone mid-gesture abandons the drag cleanly.
       const dragged = cues.find((cue) => cue.id === drag.cue.id)
       if (!dragged) { setDrag(null); setDraggedCue(null); callbacks.current.onDragPreview(null); return }
-      const { cue: original, offsetUs, sourceBounds, mode } = drag
-      const targets = snap ? snapTargetsFor([], original.id, drag.originPlayheadUs).map((us) => us - offsetUs) : []
+      const { cue: original, clip: dragClip, sourceBounds, mode } = drag
+      const toSequence = (sourceUs: number) => dragClip ? sequenceUsOf(dragClip, sourceUs) : sourceUs
+      const toSource = (sequenceUs: number) => dragClip ? sourceUsAt(dragClip, sequenceUs) : sequenceUs
+      const targets = snap ? snapTargetsFor([], original.id, drag.originPlayheadUs).map(toSource) : []
       // Keep the grabbed edge inside the clip it was grabbed in (a pure translation within it).
       const clampDelta = (delta: number) => {
         if (mode === 'end') return Math.min(delta, sourceBounds.endUs - dragged.endUs)
@@ -392,8 +430,8 @@ export function Timeline(props: TimelineProps) {
         if (event.pointerId !== drag.pointerId) return
         const { preview, edgeUs, guideUs } = previewAt(event.clientX)
         setDraggedCue(preview)
-        setSnapGuideUs(guideUs === null ? null : guideUs + offsetUs)
-        callbacks.current.onDragPreview(preview, edgeUs + offsetUs)
+        setSnapGuideUs(guideUs === null ? null : toSequence(guideUs))
+        callbacks.current.onDragPreview(preview, toSequence(edgeUs))
       }
       finish = (event, commit) => {
         if (event.pointerId !== drag.pointerId) return
@@ -411,26 +449,52 @@ export function Timeline(props: TimelineProps) {
         if (!body) return null
         return trackAtY(rows, clientY - body.getBoundingClientRect().top + body.scrollTop)
       }
-      const previewAt = (event: PointerEvent) => previewClipDrag({
-        clip: live, mode: drag.mode, deltaUs: sequenceDelta(event.clientX), targetTrack: drag.mode === 'move' ? trackUnder(event.clientY) : null,
-        tracks, clips: drag.clone ? [...clips, live] : clips, assetDurationUs: props.assetDurationUs(live.assetId), editMode: props.editMode,
-        snap: targets.length ? { targetsUs: targets, thresholdUs } : null,
+      // Link partners follow the dragged clip by the same applied delta on their own tracks.
+      // A trim carries only the partners whose edge is in sync with the grabbed one (`trimPartners`).
+      const followers = drag.clone || drag.unlinked ? [] : drag.mode === 'move' ? linkPartners(clips, live) : trimPartners(clips, live, drag.mode, props.editMode)
+      const partnerPreviews = (deltaUs: number) => followers.map((partner) => previewClipDrag({
+        clip: partner, mode: drag.mode, deltaUs, targetTrack: null, tracks, clips, assetDurationUs: partner.kind === 'color' || partner.kind === 'adjustment' ? null : props.assetDurationUs(partner.assetId), editMode: props.editMode, snap: null,
+      }))
+      const partnersOf = (preview: ReturnType<typeof previewClipDrag>): Clip[] => partnerPreviews(preview.appliedDeltaUs).map((partner) => partner.clip)
+      // Dragging a picture above the topmost video track lands it on a new track on top.
+      const pendingTrack: Track = { id: crypto.randomUUID(), kind: 'video', name: '', muted: false, hidden: false, locked: false }
+      const targetAt = (clientY: number): Track | null => {
+        const under = trackUnder(clientY)
+        if (under || live.kind === 'audio') return under
+        const body = bodyRef.current
+        const top = rows.findIndex((row) => row.kind === 'track' && row.track.kind === 'video')
+        if (!body || top < 0) return null
+        return clientY - body.getBoundingClientRect().top + body.scrollTop < rowTops(rows)[top] ? pendingTrack : null
+      }
+      const previewWith = (deltaUs: number, event: PointerEvent, withSnap: boolean) => previewClipDrag({
+        clip: live, mode: drag.mode, deltaUs, targetTrack: drag.mode === 'move' ? targetAt(event.clientY) : null,
+        tracks, clips: drag.clone ? [...clips, live] : clips, assetDurationUs: live.kind === 'color' || live.kind === 'adjustment' ? null : props.assetDurationUs(live.assetId), editMode: props.editMode,
+        snap: withSnap && targets.length ? { targetsUs: targets, thresholdUs } : null,
       })
+      // Like the `clip-trim` commit: a trimmed pair moves by the smallest amount every member can take.
+      const previewAt = (event: PointerEvent) => {
+        const preview = previewWith(sequenceDelta(event.clientX), event, true)
+        if (drag.mode === 'move' || !followers.length) return preview
+        const applied = [preview.appliedDeltaUs, ...partnerPreviews(preview.appliedDeltaUs).map((partner) => partner.appliedDeltaUs)]
+        const common = preview.appliedDeltaUs >= 0 ? Math.min(...applied) : Math.max(...applied)
+        return common === preview.appliedDeltaUs ? preview : previewWith(common, event, false)
+      }
       move = (event) => {
         if (event.pointerId !== drag.pointerId) return
         const preview = previewAt(event)
         setClipPreview(preview.clip)
+        setPartnerPreview(partnersOf(preview))
         setSnapGuideUs(preview.guideUs)
       }
       finish = (event, commit) => {
         if (event.pointerId !== drag.pointerId) return
         const preview = previewAt(event)
-        setDrag(null); setClipPreview(null); setSnapGuideUs(null)
+        setDrag(null); setClipPreview(null); setPartnerPreview([]); setSnapGuideUs(null)
         if (!commit) return
         if (drag.clone) { if (preview.clip.timelineStartUs !== live.timelineStartUs || preview.clip.trackId !== live.trackId) callbacks.current.onClipClone(preview.clip); return }
         if (drag.mode === 'move') {
-          if (preview.clip.timelineStartUs !== live.timelineStartUs || preview.clip.trackId !== live.trackId) callbacks.current.onClipMove(live.id, preview.clip.trackId, preview.clip.timelineStartUs)
-        } else if (preview.appliedDeltaUs) callbacks.current.onClipTrim(live.id, drag.mode, preview.appliedDeltaUs)
+          if (preview.clip.timelineStartUs !== live.timelineStartUs || preview.clip.trackId !== live.trackId) callbacks.current.onClipMove(live.id, preview.clip.trackId, preview.clip.timelineStartUs, drag.unlinked, preview.clip.trackId === pendingTrack.id ? pendingTrack : undefined)
+        } else if (preview.appliedDeltaUs) callbacks.current.onClipTrim(live.id, drag.mode, preview.appliedDeltaUs, drag.unlinked)
       }
     } else if (drag.kind === 'zoom') {
       // Zoom regions are sequence-timed with no clip/media clamping — the simplest of the three: a
@@ -560,7 +624,46 @@ export function Timeline(props: TimelineProps) {
     const content = contentRef.current
     if (!content) return
     const rect = content.getBoundingClientRect()
-    onSeek(Math.max(0, Math.min(durationUs, pixelToTime(clientX - rect.left, durationUs, rect.width))))
+    onSeek(Math.max(0, Math.min(programUs, pixelToTime(clientX - rect.left, durationUs, rect.width))))
+  }
+  /** Selects what was right-clicked (keeping the playhead where it is) and asks the host for its menu. */
+  const openContextMenu = (event: ReactMouseEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, clientX: number, clientY: number) => {
+    if (!props.onContextMenu) return
+    event.preventDefault()
+    const target = event.target as HTMLElement
+    const item = target.closest<HTMLElement>('[data-item-kind]')
+    const kind = item?.dataset.itemKind
+    const id = item?.dataset.itemId
+    if (item && kind && id) {
+      if (kind === 'clip') {
+        const unlinked = event.altKey
+        props.onSelectClip(id, { unlinked })
+        props.onContextMenu({ kind, id, unlinked }, clientX, clientY)
+      } else if (kind === 'cue') { onSeek(currentUs, id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      else if (kind === 'word') {
+        const cue = cues.find((entry) => entry.id === id)
+        const word = cue?.words.find((entry) => entry.id === item.dataset.wordId)
+        if (cue && word) props.onSelectWord(cue, word)
+        props.onContextMenu({ kind, id }, clientX, clientY)
+      } else if (kind === 'text') { props.onSelectText?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      else if (kind === 'zoomRegion') { props.onSelectZoom?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      else if (kind === 'blur') { props.onSelectBlur?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      else if (kind === 'effect') { props.onSelectEffect?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      return
+    }
+    const content = contentRef.current
+    if (!content) return
+    const rect = content.getBoundingClientRect()
+    const atUs = Math.max(0, Math.min(durationUs, Math.round(pixelToTime(clientX - rect.left, durationUs, rect.width))))
+    const trackId = target.closest<HTMLElement>('[data-track-id]')?.dataset.trackId ?? null
+    props.onContextMenu({ kind: 'empty', trackId, atUs }, clientX, clientY)
+  }
+  const onContentContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => openContextMenu(event, event.clientX, event.clientY)
+  const onContentKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+    const box = (event.target as HTMLElement).getBoundingClientRect()
+    event.stopPropagation()
+    openContextMenu(event, box.left + Math.min(box.width, 24), box.bottom)
   }
   const seekTrack = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || event.target !== event.currentTarget) return
@@ -600,7 +703,7 @@ export function Timeline(props: TimelineProps) {
     if (event.key !== 'Enter') return
     event.preventDefault()
     event.stopPropagation()
-    onSeek(span.startUs + Math.max(0, cue.startUs - span.sourceStartUs), cue.id)
+    onSeek(spanSequenceUs(span, Math.max(cue.startUs, span.sourceStartUs)), cue.id)
   }
   const selectClipFromKeyboard = (event: ReactKeyboardEvent<HTMLDivElement>, clip: Clip) => {
     if (event.key !== 'Enter') return
@@ -628,7 +731,7 @@ export function Timeline(props: TimelineProps) {
     event.dataTransfer.dropEffect = 'copy'
     const { timeUs } = dropTarget(event)
     const widthUs = content.kind === 'asset' ? (content.payload.kind === 'image' ? DEFAULT_IMAGE_CLIP_US : content.payload.durationUs ?? 0)
-      : content.kind === 'preset' ? DEFAULT_ZOOM_REGION_US : 0
+      : content.kind === 'preset' ? DEFAULT_ZOOM_REGION_US : content.kind === 'background' ? DEFAULT_BACKGROUND_CLIP_US : content.kind === 'color' ? DEFAULT_ADJUSTMENT_CLIP_US : 0
     setDropIndicator({ leftUs: timeUs, widthUs })
   }
   const onContentDrop = (event: ReactDragEvent<HTMLDivElement>) => {
@@ -639,6 +742,8 @@ export function Timeline(props: TimelineProps) {
     const { timeUs, trackId } = dropTarget(event)
     if (content.kind === 'asset') props.onDropAsset?.(content.payload, timeUs, trackId)
     else if (content.kind === 'preset') props.onDropPreset?.(content.payload, timeUs)
+    else if (content.kind === 'background') props.onDropBackground?.(content.payload, timeUs, trackId)
+    else if (content.kind === 'color') props.onDropColor?.(content.payload, timeUs, trackId)
     else if (content.files.length) props.onDropFiles?.(content.files, timeUs, trackId)
   }
 
@@ -646,7 +751,7 @@ export function Timeline(props: TimelineProps) {
   const contentWidthPx = viewport.widthPx * zoom
   const visibleFrom = pixelToTime(viewport.scrollLeft, durationUs, contentWidthPx)
   const visibleTo = pixelToTime(viewport.scrollLeft + viewport.widthPx, durationUs, contentWidthPx)
-  const clipLabel = (clip: Clip) => assetById.get(clip.assetId)?.name ?? 'Missing file'
+  const clipLabel = (clip: Clip) => clip.kind === 'color' ? colorClipLabel(clip) : clip.kind === 'adjustment' ? 'Adjustment layer' : assetById.get(clip.assetId)?.name ?? 'Missing file'
 
   return <section className={`timeline-panel ${expanded ? 'expanded' : ''}`} aria-label="Timeline">
     <TimelineToolbar
@@ -667,6 +772,7 @@ export function Timeline(props: TimelineProps) {
         onDividerPointerDown={beginDividerDrag} onDividerPointerMove={moveDivider} onDividerPointerUp={endDividerDrag} onDividerKeyDown={nudgeDivider} />
       <div className="timeline-viewport" ref={viewportRef} onScroll={(event) => { const left = event.currentTarget.scrollLeft; setViewport((state) => state.scrollLeft === left ? state : { ...state, scrollLeft: left }) }}>
         <div className="timeline-content" ref={contentRef} style={{ ...gridStyle, width: `${zoom * 100}%` }}
+          onContextMenu={onContentContextMenu} onKeyDown={onContentKeyDown}
           onDragOver={onContentDragOver} onDragLeave={() => setDropIndicator(null)} onDrop={onContentDrop}>
           {rows.map((row, rowIndex) => {
             if (row.kind === 'ruler') return <TimelineRuler key="ruler" ticks={ticks} durationUs={durationUs} onPointerDown={beginScrub} onPointerMove={scrub} onPointerUp={endScrub}
@@ -677,7 +783,7 @@ export function Timeline(props: TimelineProps) {
               return <CaptionsTrack key={row.id} cues={onTrack} spansOf={spansOf} durationUs={durationUs} mode={display} locked={row.track.locked}
                 selectedCueId={selectedCueId} warningCueIds={warningCueIds} draggingId={drag?.kind === 'cue' ? drag.cue.id : null} selectedWordId={props.selectedWordId}
                 onBeginDrag={beginCueDrag} onKeyboardSelect={selectCueFromKeyboard}
-                onSeekSource={(cue, sourceUs, span) => onSeek(span.startUs + Math.max(0, sourceUs - span.sourceStartUs), cue.id)}
+                onSeekSource={(cue, sourceUs, span) => onSeek(spanSequenceUs(span, Math.max(sourceUs, span.sourceStartUs)), cue.id)}
                 onSelectWord={props.onSelectWord} onSeekTrack={seekTrack} />
             }
             if (row.kind === 'zoomLane') return <ZoomLane key="zoomLane" regions={displayZoomRegions} durationUs={durationUs}
@@ -706,7 +812,7 @@ export function Timeline(props: TimelineProps) {
             const { track } = row
             const onTrack = displayClips.filter((clip) => clip.trackId === track.id)
             return <div key={track.id} className={`track ${track.kind} ${track.hidden ? 'is-hidden' : ''} ${track.muted ? 'is-muted' : ''}`}
-              onPointerDown={seekTrack} role="group" aria-label={`${row.label} track`}>
+              data-track-id={track.id} onPointerDown={seekTrack} role="group" aria-label={`${row.label} track`}>
               <span className="track-overlay-label" aria-hidden="true">{row.label}</span>
               {!track.locked && gapsOnTrack(clips, track.id).map((gap) => <span key={gap.startUs} className="gap-zone"
                 style={{ left: `${pct(gap.startUs)}%`, width: `${pct(gap.endUs - gap.startUs)}%` }}>
@@ -714,15 +820,18 @@ export function Timeline(props: TimelineProps) {
                   onPointerDown={(event) => event.stopPropagation()} onClick={() => props.onCloseGap(track.id, gap.startUs)}>Close gap</button>
               </span>)}
               {onTrack.map((clip) => {
-                const asset = assetById.get(clip.assetId) ?? null
+                const asset = clip.kind === 'color' || clip.kind === 'adjustment' ? null : assetById.get(clip.assetId) ?? null
                 const widthPx = timeToPixel(clipLengthUs(clip), durationUs, contentWidthPx)
                 const visible = clip.timelineStartUs < visibleTo && clipEndUs(clip) > visibleFrom
                 const dragging = (drag?.kind === 'clip' && drag.clip.id === clip.id) || false
                 const label = clipLabel(clip)
                 return <ClipBlock key={clip.id} clip={clip} label={label} leftPct={pct(clip.timelineStartUs)} widthPct={pct(clipLengthUs(clip))}
-                  title={`${clip.kind === 'image' ? 'Image' : clip.kind === 'audio' ? 'Audio' : 'Video'} ${label}, ${formatClock(clip.timelineStartUs)} to ${formatClock(clipEndUs(clip))}${track.locked ? ' (track locked)' : ''}`}
+                  title={`${clip.kind === 'image' ? 'Image' : clip.kind === 'audio' ? 'Audio' : clip.kind === 'color' ? 'Background' : clip.kind === 'adjustment' ? 'Adjustment layer' : 'Video'} ${label}, ${formatClock(clip.timelineStartUs)} to ${formatClock(clipEndUs(clip))}${track.locked ? ' (track locked)' : ''}`}
                   selected={clip.id === selectedClipId} dragging={dragging} locked={track.locked}
+                  linked={Boolean(linkIdOf(clip)) && linkPartners(clips, clip).length > 0} linkedSelected={selectedPartnerIds.has(clip.id)}
                   onBeginDrag={(event, mode) => beginClipDrag(event, clip, mode)} onKeyDown={(event) => selectClipFromKeyboard(event, clip)}>
+                  {clip.kind === 'color' && <span className={`clip-swatch ${isAnimated(clip) ? 'animated' : ''}`} style={{ background: swatchCss(clip) }} />}
+                  {clip.kind === 'adjustment' && <span className="clip-swatch clip-adjustment-swatch" />}
                   {clip.kind === 'video' && <VideoClipContent clip={clip} asset={asset} widthPx={widthPx} heightPx={row.heightPx} visible={visible}
                     queue={props.thumbnailQueue ?? null} waveform={waveforms.get(clip.assetId) ?? null} />}
                   {clip.kind === 'audio' && <AudioClipContent clip={clip} waveform={waveforms.get(clip.assetId) ?? null} />}
@@ -739,6 +848,12 @@ export function Timeline(props: TimelineProps) {
           </div>
           {snapGuideUs !== null && <i className="snap-guide" style={{ left: `${pct(snapGuideUs)}%` }} aria-hidden="true" />}
           {dropIndicator && <i className="drop-indicator" style={{ left: `${pct(dropIndicator.leftUs)}%`, width: dropIndicator.widthUs ? `${pct(dropIndicator.widthUs)}%` : undefined }} aria-hidden="true" />}
+          {props.range && <div className="range-layer" aria-hidden="true">
+            <i className="range-shade" style={{ left: 0, width: `${pct(props.range.startUs)}%` }} />
+            <i className="range-shade" style={{ left: `${pct(props.range.endUs)}%`, right: 0 }} />
+            <i className="range-band" style={{ left: `${pct(props.range.startUs)}%`, width: `${pct(props.range.endUs) - pct(props.range.startUs)}%` }} />
+          </div>}
+          {programUs < durationUs && <i className="timeline-tail" style={{ left: `${pct(programUs)}%` }} aria-hidden="true" />}
           <i className="playhead" style={{ left: `${pct(Math.min(currentUs, durationUs))}%`, top: 0 }} aria-hidden="true" />
         </div>
       </div>

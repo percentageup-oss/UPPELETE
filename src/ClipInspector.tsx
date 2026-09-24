@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
-import type { Clip, ClipFit, CompositionRect, ProjectAsset, Track } from './core/edit'
+import type { BackgroundMotion, Clip, ClipFit, ClipSpeed, Fill, Grade, CompositionRect, ProjectAsset, Track } from './core/edit'
 import type { Size } from './core/composition'
 import { formatTimestamp, parseEditedTimestamp } from './core/time'
 import { centerRect, roundRect } from './core/overlayRect'
 import { defaultOverlayRect } from './core/overlayDefaults'
 import { clipEndUs, clipLengthUs } from './core/timelineModel'
+import { FillEditor, MotionEditor } from './BackgroundControls'
+import { SpeedControls } from './SpeedControls'
+import { ColorInspector } from './ColorInspector'
+import { colorClipLabel } from './core/fill'
 import { NumberField, Row, Segmented, SliderWithNumber, TimeFields, Toggle } from './style/controls'
 
 const FIT_OPTIONS: { value: ClipFit; label: string }[] = [
@@ -13,7 +17,7 @@ const FIT_OPTIONS: { value: ClipFit; label: string }[] = [
   { value: 'stretch', label: 'Stretch' },
 ]
 
-const KIND_LABEL: Record<Clip['kind'], string> = { video: 'Video clip', image: 'Image', audio: 'Audio clip' }
+const KIND_LABEL: Record<Clip['kind'], string> = { video: 'Video clip', image: 'Image', color: 'Background', audio: 'Audio clip', adjustment: 'Adjustment layer' }
 
 /** A picture-in-picture rect: the top-right quarter of the frame, keeping the frame's aspect. */
 export function defaultPipRect(composition: Size): CompositionRect {
@@ -27,14 +31,16 @@ export function defaultPipRect(composition: Size): CompositionRect {
  * finished gesture; timing and fit commit immediately. Position/size can also be dragged directly
  * on the preview (`ClipStageEditor`) once the clip has a rect.
  */
-export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, composition, onMove, onLength, onRectDraft, onRectCommit, onFit, onOpacityDraft, onOpacityCommit,
-  onGainDraft, onGainCommit, onDuplicate, onDelete, onRelink, onInvalid }: {
+export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, composition, lutAssets, onMove, onLength, onRectDraft, onRectCommit, onFit, onOpacityDraft, onOpacityCommit,
+  onGainDraft, onGainCommit, onEnabledChange, linkedCount, onToggleLink, onDetachAudio, onSpeedCommit, onFillDraft, onFillCommit, onMotionDraft, onMotionCommit, onGradeDraft, onGradeCommit, onDuplicate, onDelete, onRelink, onInvalid }: {
   clip: Clip
   asset: ProjectAsset | null
   assetIssue: 'missing' | 'mismatch' | null
   track: Track | null
   trackLabel: string
   composition: Size
+  /** Adjustment clips only: every `lut`-kind project asset, for the grade's LUT input picker. */
+  lutAssets: readonly ProjectAsset[]
   /** Moves the clip to a new timeline start on its own track. */
   onMove: (startUs: number) => boolean
   /** Changes the clip's length by trimming its end. */
@@ -47,6 +53,24 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
   onOpacityCommit: (opacity: number) => void
   onGainDraft: (gain: number) => void
   onGainCommit: (gain: number) => void
+  /** A disabled clip stays on the timeline but is skipped by preview and export. */
+  onEnabledChange: (enabled: boolean) => void
+  /** How many clips are linked to this one (a video and its audio). */
+  linkedCount: number
+  /** Unlinks the group, or — when unlinked — links this clip with its matching video/audio. */
+  onToggleLink: () => void
+  /** A video that still carries its own sound: split it into a linked audio clip on an audio lane. */
+  onDetachAudio: (() => void) | null
+  /** Video and audio clips: a new speed curve (or `null` for normal speed); the clip's length follows. */
+  onSpeedCommit: (speed: ClipSpeed | null) => void
+  /** Background clips only: the fill and its preset motion, drafted live and committed once. */
+  onFillDraft: (fill: Fill) => void
+  onFillCommit: (fill: Fill) => void
+  onMotionDraft: (motion: BackgroundMotion) => void
+  onMotionCommit: (motion: BackgroundMotion | null) => void
+  /** Adjustment clips only: the grade, drafted live and committed once (`ColorInspector`). */
+  onGradeDraft: (grade: Grade) => void
+  onGradeCommit: (grade: Grade) => void
   onDuplicate: () => void
   onDelete: (ripple: boolean) => void
   onRelink: () => void
@@ -54,7 +78,7 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
 }) {
   const [start, setStart] = useState(formatTimestamp(clip.timelineStartUs, ':'))
   const [length, setLength] = useState(formatTimestamp(clipLengthUs(clip), ':'))
-  const pictureRect = clip.kind !== 'audio' ? clip.rect ?? null : null
+  const pictureRect = clip.kind !== 'audio' && clip.kind !== 'adjustment' ? clip.rect ?? null : null
   const [rect, setRect] = useState<CompositionRect | null>(pictureRect)
   const [lockAspect, setLockAspect] = useState(true)
   useEffect(() => {
@@ -99,24 +123,34 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
   }
   const applyRect = (next: CompositionRect | null) => { setRect(next); onRectCommit(next && roundRect(next)) }
   const assetName = asset?.name ?? 'Missing file'
-  const hasPicture = clip.kind !== 'audio'
-  const hasSound = clip.kind !== 'image'
+  const hasPicture = clip.kind !== 'audio' && clip.kind !== 'adjustment'
+  const hasSound = clip.kind === 'video' || clip.kind === 'audio'
 
   return <div className="editor-form clip-inspector">
-    <div className="overlay-asset-row">
-      <span className="overlay-asset-name" title={assetName}>{KIND_LABEL[clip.kind]} · {assetName}</span>
-      {assetIssue && <span className={`asset-issue-badge ${assetIssue}`}>{assetIssue === 'missing' ? 'Missing' : 'Mismatch'}</span>}
-      <button type="button" onClick={onRelink}>{assetIssue ? 'Relink…' : 'Replace…'}</button>
-    </div>
+    {clip.kind === 'color'
+      ? <div className="overlay-asset-row"><span className="overlay-asset-name">{KIND_LABEL.color} · {colorClipLabel(clip)}</span></div>
+      : clip.kind === 'adjustment'
+      ? <div className="overlay-asset-row"><span className="overlay-asset-name">{KIND_LABEL.adjustment} · grades the clips below it (Color tab)</span></div>
+      : <div className="overlay-asset-row">
+        <span className="overlay-asset-name" title={assetName}>{KIND_LABEL[clip.kind]} · {assetName}</span>
+        {assetIssue && <span className={`asset-issue-badge ${assetIssue}`}>{assetIssue === 'missing' ? 'Missing' : 'Mismatch'}</span>}
+        <button type="button" onClick={onRelink}>{assetIssue ? 'Relink…' : 'Replace…'}</button>
+      </div>}
     <p className="clip-inspector-meta">On {trackLabel}{track?.locked ? ' (locked)' : ''} · ends {formatTimestamp(clipEndUs(clip), ':')}
-      {clip.kind !== 'image' && <> · plays {formatTimestamp(clip.sourceStartUs, ':')}–{formatTimestamp(clip.sourceEndUs, ':')} of the file</>}</p>
+      {(clip.kind === 'video' || clip.kind === 'audio') && <> · plays {formatTimestamp(clip.sourceStartUs, ':')}–{formatTimestamp(clip.sourceEndUs, ':')} of the file</>}</p>
     <TimeFields fields={[
       { id: 'clip-start', label: 'Start', value: start, onChange: setStart, onBlur: changeStart },
       { id: 'clip-length', label: 'Length', value: length, onChange: setLength, onBlur: changeLength },
     ]} />
+    {(clip.kind === 'video' || clip.kind === 'audio') && <SpeedControls clip={clip} onCommit={onSpeedCommit} />}
+    {clip.kind === 'color' && <>
+      <FillEditor idPrefix="clip-fill" fill={clip.fill} onDraft={onFillDraft} onCommit={onFillCommit} />
+      <MotionEditor idPrefix="clip-motion" fill={clip.fill} motion={clip.motion ?? null} onDraft={onMotionDraft} onCommit={onMotionCommit} />
+    </>}
+    {clip.kind === 'adjustment' && <ColorInspector grade={clip.grade} lutAssets={lutAssets} onDraft={onGradeDraft} onCommit={onGradeCommit} />}
     {hasPicture && <>
       <Row label="Placement" hint={rect ? 'Drag it on the preview to move it; drag its handles to resize. Units: 1080-wide composition.' : 'Fills the frame. Give it a position and size to show it picture-in-picture.'}>
-        <Toggle id="clip-pip" checked={rect !== null} label={clip.kind === 'video' ? 'Picture-in-picture' : 'Position and size'}
+        <Toggle id="clip-pip" checked={rect !== null} label={clip.kind === 'video' || clip.kind === 'color' ? 'Picture-in-picture' : 'Position and size'}
           onChange={(on) => applyRect(on ? (clip.kind === 'image' ? defaultOverlayRect(asset?.metadata ?? null, composition) : defaultPipRect(composition)) : null)} />
         {rect && <>
           <div className="overlay-rect-fields">
@@ -133,15 +167,25 @@ export function ClipInspector({ clip, asset, assetIssue, track, trackLabel, comp
           </div>
         </>}
       </Row>
-      <Row label="Fit" htmlFor="clip-fit">
+      {clip.kind !== 'color' && <Row label="Fit" htmlFor="clip-fit">
         <Segmented id="clip-fit" value={clip.fit} options={FIT_OPTIONS} onChange={onFit} />
-      </Row>
+      </Row>}
       <Row label="Opacity" htmlFor="clip-opacity">
         <SliderWithNumber id="clip-opacity" min={0} max={100} step={1} unit="%" value={Math.round(clip.opacity * 100)}
           onDraft={(value) => onOpacityDraft(value / 100)} onCommit={(value) => onOpacityCommit(Math.max(0, Math.min(100, value)) / 100)} />
       </Row>
     </>}
-    {hasSound && <Row label={clip.kind === 'video' ? 'Volume' : 'Gain'} htmlFor="clip-gain"
+    <Row label="Enabled" htmlFor="clip-enabled" hint="A disabled clip stays on the timeline but is skipped in preview and export (D).">
+      <Toggle id="clip-enabled" checked={clip.enabled !== false} label="Enabled" onChange={onEnabledChange} />
+    </Row>
+    {(clip.kind === 'video' || clip.kind === 'audio') && <Row label="Link" htmlFor="clip-link"
+      hint={linkedCount ? 'Linked clips are cut, moved, trimmed and deleted together. Alt-click a clip to select it alone.' : clip.kind === 'video' && !clip.detachedAudio ? 'This video carries its own sound.' : undefined}>
+      <div className="overlay-quick-actions">
+        <button id="clip-link" type="button" onClick={onToggleLink}>{linkedCount ? `Unlink (${linkedCount})` : 'Link'}</button>
+        {onDetachAudio && <button type="button" onClick={onDetachAudio} title="Move this video’s sound to its own audio lane">Detach audio</button>}
+      </div>
+    </Row>}
+    {hasSound && !(clip.kind === 'video' && clip.detachedAudio) && <Row label={clip.kind === 'video' ? 'Volume' : 'Gain'} htmlFor="clip-gain"
       hint={clip.gain > 1 ? 'The preview plays at most 100%; the exported video uses the full gain.' : undefined}>
       <SliderWithNumber id="clip-gain" min={0} max={400} step={1} unit="%" value={Math.round(clip.gain * 100)}
         onDraft={(value) => onGainDraft(value / 100)} onCommit={(value) => onGainCommit(Math.max(0, Math.min(400, value)) / 100)} />

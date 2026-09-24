@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { cueSchema } from './model'
-import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema } from './edit'
+import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema, layerMaskSchema, fillSchema, backgroundMotionSchema, clipSpeedSchema, gradeSchema } from './edit'
 import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import type { EditCommand } from './commands'
@@ -92,7 +92,7 @@ export const assetCommandSchema = z.discriminatedUnion('type', [assetAdd, assetR
 // TrackCommand (trackCommands.ts)
 // ---------------------------------------------------------------------------------------------
 
-const trackFlags = trackSchema.pick({ name: true, muted: true, hidden: true, locked: true, heightPx: true }).partial()
+const trackFlags = trackSchema.pick({ name: true, muted: true, hidden: true, locked: true, heightPx: true, solo: true, volume: true }).partial()
 const trackAdd = z.strictObject({ type: z.literal('track-add'), track: trackSchema, index: z.number().int().nonnegative().optional() })
 const trackRemove = z.strictObject({ type: z.literal('track-remove'), trackId: itemId })
 const trackUpdate = z.strictObject({ type: z.literal('track-update'), trackId: itemId, changes: trackFlags })
@@ -122,19 +122,30 @@ const clipChanges = z.strictObject({
   opacity: z.number().finite().min(0).max(1).optional(),
   fit: z.enum(['contain', 'cover', 'stretch']).optional(),
   gain: z.number().finite().min(0).max(4).optional(),
+  fill: fillSchema.optional(),
+  motion: backgroundMotionSchema.nullable().optional(),
+  /** Adjustment layers only (docs/EDITING.md "Color: adjustment layers"). */
+  grade: gradeSchema.optional(),
+  speed: clipSpeedSchema.nullable().optional(),
+  enabled: z.boolean().optional(),
 })
+const unlinked = z.boolean().optional()
 const clipAdd = z.strictObject({
-  type: z.literal('clip-add'), clip: clipSchema, asset: projectAssetSchema.optional(), track: trackSchema.optional(),
+  type: z.literal('clip-add'), clip: clipSchema, asset: projectAssetSchema.optional(), track: trackSchema.optional(), trackIndex: z.number().int().min(0).max(63).optional(),
   mode: editMode.optional(), idPrefix: z.string().min(1).optional(),
 })
 const clipMove = z.strictObject({
   type: z.literal('clip-move'), clipId: itemId, trackId: itemId, startUs: z.number().int().nonnegative(),
-  mode: editMode, idPrefix: z.string().min(1), track: trackSchema.optional(),
+  mode: editMode, idPrefix: z.string().min(1), track: trackSchema.optional(), unlinked,
 })
-const clipTrim = z.strictObject({ type: z.literal('clip-trim'), clipId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int(), mode: editMode })
-const clipUpdate = z.strictObject({ type: z.literal('clip-update'), clipId: itemId, changes: clipChanges })
-const clipSplit = z.strictObject({ type: z.literal('clip-split'), atUs: z.number().int().nonnegative(), clipIds: z.array(itemId).optional(), idPrefix: z.string().min(1) })
-const clipDelete = z.strictObject({ type: z.literal('clip-delete'), clipId: itemId, mode: editMode })
+const clipTrim = z.strictObject({ type: z.literal('clip-trim'), clipId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int(), mode: editMode, unlinked })
+const clipTrimTo = z.strictObject({ type: z.literal('clip-trim-to'), atUs: z.number().int().nonnegative(), edge: z.enum(['start', 'end']), clipIds: z.array(itemId).optional(), mode: editMode, unlinked })
+const clipUpdate = z.strictObject({ type: z.literal('clip-update'), clipId: itemId, changes: clipChanges, unlinked })
+const clipSplit = z.strictObject({ type: z.literal('clip-split'), atUs: z.number().int().nonnegative(), clipIds: z.array(itemId).optional(), idPrefix: z.string().min(1), unlinked })
+const clipDelete = z.strictObject({ type: z.literal('clip-delete'), clipId: itemId, mode: editMode, unlinked })
+const clipsLink = z.strictObject({ type: z.literal('clips-link'), clipIds: z.array(itemId).min(2).max(64), linkId: itemId })
+const clipsUnlink = z.strictObject({ type: z.literal('clips-unlink'), clipIds: z.array(itemId).min(1).max(64) })
+const clipDetachAudio = z.strictObject({ type: z.literal('clip-detach-audio'), clipId: itemId, audioClipId: itemId, linkId: itemId, trackId: itemId, track: trackSchema.optional() })
 const gapClose = z.strictObject({ type: z.literal('gap-close'), trackId: itemId, atUs: z.number().int().nonnegative() })
 const clipsSet = z.strictObject({
   type: z.literal('clips-set'),
@@ -183,7 +194,11 @@ const effectEaseUs = z.number().int().nonnegative().max(5_000_000)
 const vignetteChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), softness: z.number().finite().min(0).max(1).optional(), enabled: z.boolean().optional() })
 const letterboxChanges = z.strictObject({ aspect: z.number().finite().min(0.2).max(5).optional(), color: effectHexColor.optional(), easeInUs: effectEaseUs.optional(), easeOutUs: effectEaseUs.optional(), enabled: z.boolean().optional() })
 const fadeChanges = z.strictObject({ shape: z.enum(['in', 'out', 'dip']).optional(), color: effectHexColor.optional(), easeInUs: effectEaseUs.optional(), easeOutUs: effectEaseUs.optional(), enabled: z.boolean().optional() })
-const effectChanges = z.union([vignetteChanges, letterboxChanges, fadeChanges])
+const grainChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), size: z.number().finite().min(0.5).max(6).optional(), enabled: z.boolean().optional() })
+const vhsChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), scanlines: z.number().finite().min(0).max(1).optional(), tracking: z.number().finite().min(0).max(1).optional(), enabled: z.boolean().optional() })
+const particlesChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), size: z.number().finite().min(1).max(12).optional(), speed: z.number().finite().min(0).max(2).optional(), color: effectHexColor.optional(), enabled: z.boolean().optional() })
+const glowChanges = z.strictObject({ amount: z.number().finite().min(0).max(1).optional(), radius: z.number().finite().min(2).max(80).optional(), threshold: z.number().finite().min(0).max(0.95).optional(), enabled: z.boolean().optional() })
+const effectChanges = z.union([vignetteChanges, letterboxChanges, fadeChanges, grainChanges, vhsChanges, particlesChanges, glowChanges])
 const effectAdd = z.strictObject({ type: z.literal('effect-add'), effect: effectRegionSchema })
 const effectMove = z.strictObject({ type: z.literal('effect-move'), effectId: itemId, startUs: z.number().int().nonnegative() })
 const effectTrim = z.strictObject({ type: z.literal('effect-trim'), effectId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int() })
@@ -200,6 +215,7 @@ const markerDelete = z.strictObject({ type: z.literal('marker-delete'), markerId
 const textChanges = z.strictObject({
   text: textOverlaySchema.shape.text.optional(), style: captionStyleSchema.optional(),
   enter: textOverlaySchema.shape.enter.optional(), exit: textOverlaySchema.shape.exit.optional(),
+  titleMotion: textOverlaySchema.shape.titleMotion,
   layerOrder: textOverlaySchema.shape.layerOrder.optional(),
 })
 const textAdd = z.strictObject({ type: z.literal('text-add'), overlay: textOverlaySchema })
@@ -210,8 +226,15 @@ const textDuplicate = z.strictObject({ type: z.literal('text-duplicate'), textId
 const textDelete = z.strictObject({ type: z.literal('text-delete'), textId: itemId })
 const textReorder = z.strictObject({ type: z.literal('text-reorder'), textId: itemId, direction: z.enum(['forward', 'backward', 'above-captions', 'below-captions']) })
 
+const maskTarget = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('clip'), id: itemId }), z.strictObject({ kind: z.literal('text'), id: itemId }),
+  z.strictObject({ kind: z.literal('captionTrack'), id: itemId }), z.strictObject({ kind: z.literal('blur'), id: itemId }),
+  z.strictObject({ kind: z.literal('effect'), id: itemId }),
+])
+const maskSet = z.strictObject({ type: z.literal('mask-set'), target: maskTarget, mask: layerMaskSchema.nullable() })
+
 export const clipCommandSchema = z.discriminatedUnion('type', [
-  clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
+  clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
   blurAdd, blurUpdate, blurDelete, markerAdd, markerUpdate, markerDelete,
 ])
 
@@ -222,10 +245,10 @@ export const clipCommandSchema = z.discriminatedUnion('type', [
 export const itemCommandSchema = z.discriminatedUnion('type', [
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,
   captionTrackAdd, captionTrackRemove, captionTrackUpdate, captionTrackReorder, captionTrackMoveCue,
-  clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
+  clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
-  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder, maskSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 
@@ -239,10 +262,10 @@ export const editCommandSchema = z.discriminatedUnion('type', [
   resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,
   captionTrackAdd, captionTrackRemove, captionTrackUpdate, captionTrackReorder, captionTrackMoveCue,
-  clipAdd, clipMove, clipTrim, clipUpdate, clipSplit, clipDelete, gapClose, clipsSet, clipsRestore, formatSet,
+  clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
-  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder, maskSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 

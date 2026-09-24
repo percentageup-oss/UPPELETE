@@ -1,7 +1,6 @@
 import { TemplatesPanel } from './TemplatesPanel'
 
-/** The left-rail Titles tab: today's caption-motion template picker, moved out of the
- * inspector's Templates tab (InspectorTabs is now Edit/Style only). Same component, new home. */
+/** Titles rail: authored title treatments and the separate caption-style library. */
 export function TitlesPanel(props: Parameters<typeof TemplatesPanel>[0]) {
   return <TemplatesPanel {...props} />
 }

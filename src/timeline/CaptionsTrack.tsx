@@ -2,20 +2,23 @@ import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerE
 import type { CaptionWord, Cue } from '../core/model'
 import type { CueDragMode } from '../core/timeline'
 import { timeToPixel } from '../core/timeline'
+import { spanSequenceUs } from '../core/timelineModel'
+import type { Retime } from '../core/clipTime'
 import { formatClock } from '../core/time'
 import { TIMING_LABELS } from '../TimingProvenance'
 import type { CaptionDisplay } from '../captions/wordDisplay'
 
 /** Where one piece of a caption is seen: its sequence range and the source range it shows. A caption
  * straddling a cut, or spoken twice because its video repeats, has several. */
-export type CaptionSpan = { startUs: number; endUs: number; sourceStartUs: number; sourceEndUs: number; clipId: string | null }
+export type CaptionSpan = { startUs: number; endUs: number; sourceStartUs: number; sourceEndUs: number; clipId: string | null; retime?: Retime }
 
 function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
   cue: Cue; span: CaptionSpan; selectedWordId: string | null
   onSeek: (sourceUs: number, cueId: string) => void
   onSelectWord: (cue: Cue, word: CaptionWord) => void
 }) {
-  const spanUs = span.sourceEndUs - span.sourceStartUs
+  // Positions are laid out in sequence time, so a sped-up or ramped clip spaces its words as they play.
+  const spanUs = span.endUs - span.startUs
   // Enter (or a pointer) activates a word; Space is left alone so it reaches the global play/pause
   // shortcut even while a word is focused/selected.
   const activate = (event: ReactPointerEvent<HTMLElement> | ReactKeyboardEvent<HTMLElement>, word: CaptionWord) => {
@@ -27,7 +30,7 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
     onSelectWord(cue, word)
   }
   if (!cue.words.length) {
-    return <span role="button" tabIndex={0} lang="ml" className="word-block untimed" style={{ left: 0, width: '100%' }}
+    return <span data-item-kind="cue" data-item-id={cue.id} role="button" tabIndex={0} lang="ml" className="word-block untimed" style={{ left: 0, width: '100%' }}
       title="No word timing. Use “Estimate all words & group” in the inspector to create reviewable estimates."
       aria-label={`Caption ${cue.text || 'empty'} without word timing, ${formatClock(cue.startUs)}`}
       onPointerDown={() => onSeek(Math.max(cue.startUs, span.sourceStartUs), cue.id)} onKeyDown={(event) => {
@@ -41,11 +44,11 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
     const selected = word.id === selectedWordId
     const startUs = Math.max(word.startUs, span.sourceStartUs)
     const endUs = Math.min(word.endUs, span.sourceEndUs)
-    return <span key={word.id} role="button" tabIndex={0} lang="ml" aria-pressed={selected}
+    return <span key={word.id} data-item-kind="word" data-item-id={cue.id} data-word-id={word.id} role="button" tabIndex={0} lang="ml" aria-pressed={selected}
       className={`word-block ${estimated ? 'estimated' : ''} ${selected ? 'selected' : ''}`}
       title={`${TIMING_LABELS[word.timingSource]}${estimated ? ' — needs review' : ''}`}
       aria-label={`Word ${word.text}, ${formatClock(word.startUs)}, ${TIMING_LABELS[word.timingSource]}`}
-      style={{ left: `${timeToPixel(startUs - span.sourceStartUs, spanUs, 100)}%`, width: `${Math.max(.5, timeToPixel(endUs - startUs, spanUs, 100))}%` }}
+      style={{ left: `${timeToPixel(spanSequenceUs(span, startUs) - span.startUs, spanUs, 100)}%`, width: `${Math.max(.5, timeToPixel(spanSequenceUs(span, endUs) - spanSequenceUs(span, startUs), spanUs, 100))}%` }}
       onPointerDown={(event) => activate(event, word)} onKeyDown={(event) => activate(event, word)}>{word.text}</span>
   })}</>
 }
@@ -77,6 +80,7 @@ export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, 
     aria-label={mode === 'line' ? 'Caption lines. Tab to a caption, then press Enter or Space to select and seek to it.' : 'Caption words. Tab to a word, then press Enter or Space to seek to it.'}>
     {mode === 'line' ? cues.flatMap((cue) => spansOf(cue).map((span, spanIndex, spans) => <div
       key={`${cue.id}:${spanIndex}`}
+      data-item-kind="cue" data-item-id={cue.id}
       role="button"
       tabIndex={0}
       lang="ml"

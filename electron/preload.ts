@@ -8,7 +8,7 @@ import type { ProgressMessage } from '../workers/media/protocol'
 import type { WaveformLoadRequest, WaveformLoadResult } from '../src/core/waveform'
 import type { SilenceDetectRequest, SilenceDetectResult } from '../src/core/silenceIpc'
 import type { ThumbnailLoadRequest, ThumbnailLoadResult } from '../src/core/thumbnails'
-import type { ProxyCreateRequest, ProxySupport } from '../src/core/proxy'
+import type { ProxyCreateRequest, ProxySupport, PlaybackProxyEnsureRequest, PlaybackProxyStatus } from '../src/core/proxy'
 
 import { modelStateSchema, type ManagedModelId, type ModelListing, type ModelState } from '../src/core/modelCatalog'
 import { transcriptionProgressSchema, type TranscriptionAvailability, type TranscriptionOutcome, type TranscriptionProgress, type TranscriptionStartRequest } from '../src/core/transcriptionIpc'
@@ -23,9 +23,13 @@ export type OperationResult<T> = { ok: true } & T | { ok: false; message: string
 export type OpenedVideo = OperationResult<{ candidate: MediaCandidate }>
 export type OpenedText = { path: string; content: string }
 export type SaveRequest = { content: string; defaultName: string }
-export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | 4 | null; migrationNotes: MigrationNote[]; assets: AssetResolution[] }>
+export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | 4 | null; migrationNotes: MigrationNote[]; assets: AssetResolution[]; lutTexts: Record<string, string> }>
 export type ImportedAsset = OperationResult<{ media: ProjectMedia; url: string }>
 export type AssetRelinkResult = OperationResult<{ candidate: MediaCandidate }>
+/** A fresh "My LUTs" import or a relink of a missing/mismatched one — both go through the same
+ * `lut:import` dialog (Slice 5), so the renderer decides which command (`asset-add` vs
+ * `asset-update`) the result becomes. */
+export type LutImportResult = OperationResult<{ candidate: MediaCandidate }>
 export type SavedProject = { path: string; project: CaptionProject }
 export type WaveformProgress = { requestId: string; progress: ProgressMessage['progress'] }
 export type SilenceProgress = { requestId: string; progress: ProgressMessage['progress'] }
@@ -85,6 +89,7 @@ contextBridge.exposeInMainWorld('captionStudio', {
   editText: (action: 'undo' | 'redo'): Promise<void> => ipcRenderer.invoke('edit:text', action),
   importAsset: (kind: 'image' | 'audio'): Promise<ImportedAsset | null> => ipcRenderer.invoke('assets:import', kind),
   relinkAsset: (expected: ProjectAsset): Promise<AssetRelinkResult | null> => ipcRenderer.invoke('assets:relink', expected),
+  importLut: (): Promise<LutImportResult | null> => ipcRenderer.invoke('lut:import'),
   importAssetFiles: (): Promise<InspectedFile[] | null> => ipcRenderer.invoke('assets:import-files'),
   // The renderer only ever holds `File` objects from a drop event; the path is resolved here, inside
   // the sandboxed preload, so no filesystem path ever crosses into renderer-controlled code.
@@ -118,6 +123,13 @@ contextBridge.exposeInMainWorld('captionStudio', {
     const listener = (_event: Electron.IpcRendererEvent, message: ProxyProgress) => callback(message)
     ipcRenderer.on('media:proxy-progress', listener)
     return () => ipcRenderer.removeListener('media:proxy-progress', listener)
+  },
+  // Automatic playback proxies: fire-and-forget, status arrives only through onPlaybackProxyStatus.
+  ensurePlaybackProxy: (request: PlaybackProxyEnsureRequest): void => { ipcRenderer.invoke('media:playback-proxy-ensure', request).catch(() => {}) },
+  onPlaybackProxyStatus: (callback: (status: PlaybackProxyStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, message: PlaybackProxyStatus) => callback(message)
+    ipcRenderer.on('media:playback-proxy-status', listener)
+    return () => ipcRenderer.removeListener('media:playback-proxy-status', listener)
   },
   checkExportSupport: (): Promise<ExportSupport> => ipcRenderer.invoke('export:support'),
   startExport: (request: ExportStartRequest): Promise<ExportOutcome | null> => ipcRenderer.invoke('export:start', request),

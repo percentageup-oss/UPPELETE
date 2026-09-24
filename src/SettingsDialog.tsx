@@ -1,23 +1,27 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { AlignmentSettingsStatus } from './core/alignmentIpc'
 import type { McpSettingsView } from '../electron/mcp/config'
+import type { PlaybackProxyMode } from './core/proxy'
 import { ModelManager } from './ModelManager'
 
-export type SettingsTab = 'models' | 'gemini' | 'agent' | 'shortcuts'
+export type SettingsTab = 'models' | 'gemini' | 'agent' | 'playback' | 'shortcuts'
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'models', label: 'Speech models' },
   { id: 'gemini', label: 'Gemini API key' },
   { id: 'agent', label: 'AI agents' },
+  { id: 'playback', label: 'Playback' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
 ]
 
 /** One settings surface for configuration that used to be three separate toolbar buttons. `tab === null` means closed. */
-export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, onMessage }: {
+export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, playbackProxyMode, onPlaybackProxyMode, onMessage }: {
   tab: SettingsTab | null
   onTab(tab: SettingsTab): void
   onClose(): void
   geminiKey: AlignmentSettingsStatus | null
   onGeminiKey(status: AlignmentSettingsStatus): void
+  playbackProxyMode: PlaybackProxyMode
+  onPlaybackProxyMode(mode: PlaybackProxyMode): void
   onMessage(tone: 'info' | 'error', text: string): void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -51,6 +55,7 @@ export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, on
         {tab === 'models' && <ModelManager />}
         {tab === 'gemini' && <GeminiKeySettings status={geminiKey} onStatus={onGeminiKey} onMessage={onMessage} />}
         {tab === 'agent' && <AgentSettings onMessage={onMessage} />}
+        {tab === 'playback' && <PlaybackProxySettings mode={playbackProxyMode} onMode={onPlaybackProxyMode} />}
         {tab === 'shortcuts' && <ShortcutReference />}
       </div>
     </>}
@@ -79,6 +84,33 @@ export function GeminiKeySettings({ status, onStatus, onMessage }: {
     <div className="dialog-actions">
       <button className="accent" onClick={() => void save()} disabled={!apiKey.trim()}>Save key</button>
       {status?.configured && status.source !== 'environment' && <button onClick={() => void remove()}>Remove key</button>}
+    </div>
+  </section>
+}
+
+const PLAYBACK_PROXY_MODES: { id: PlaybackProxyMode; label: string; hint: string }[] = [
+  { id: 'off', label: 'Off', hint: 'Preview always plays the original file, whatever its size.' },
+  { id: 'auto', label: 'Auto (recommended)', hint: 'A lighter local copy is generated in the background only for video above 1080p, and used for preview once ready.' },
+  { id: 'always', label: 'Always', hint: 'A lighter local copy is generated in the background for every video, however small.' },
+]
+
+/**
+ * Large source video (a 4K import edited for a 1080p delivery) decodes at full size in preview even
+ * though the sequence and export target something smaller — this is the setting for the fix: a
+ * background-generated, disk-cached proxy that preview plays instead. It never touches export,
+ * transcription, waveform extraction, thumbnails or export parity, which always use the original
+ * file; the per-clip "Preview: proxy/original quality" toggle over the video preview overrides this
+ * per session to check full-quality framing.
+ */
+export function PlaybackProxySettings({ mode, onMode }: { mode: PlaybackProxyMode; onMode(mode: PlaybackProxyMode): void }) {
+  return <section className="alignment-settings" aria-labelledby="playback-proxy-heading">
+    <h3 id="playback-proxy-heading">Playback proxies</h3>
+    <p>Large source video (e.g. a 4K import) can be sluggish to scrub and play back in preview even when the sequence and export target something smaller. This generates a lighter local copy in the background and plays that in preview only — export, transcription and waveform extraction always use the original file, and nothing is uploaded or sent anywhere.</p>
+    <div role="radiogroup" aria-labelledby="playback-proxy-heading" className="playback-proxy-modes">
+      {PLAYBACK_PROXY_MODES.map((entry) => <label key={entry.id}>
+        <input type="radio" name="playback-proxy-mode" checked={mode === entry.id} onChange={() => onMode(entry.id)} />
+        <span><strong>{entry.label}</strong> — {entry.hint}</span>
+      </label>)}
     </div>
   </section>
 }
@@ -156,6 +188,11 @@ export function ShortcutReference() {
       <div><dt>Delete / Backspace</dt><dd>Delete selected cue (or word in WORD mode); a selected clip is lifted, leaving a gap</dd></div>
       <div><dt>Shift+Delete</dt><dd>Ripple delete the selected clip: later clips on its track close up</dd></div>
       <div><dt>⌘/Ctrl+B</dt><dd>Split clips at the playhead (the selected clip, or every clip under it on unlocked tracks)</dd></div>
+      <div><dt>D</dt><dd>Disable / enable the selected clip (a linked video and audio together)</dd></div>
+      <div><dt>⌘/Ctrl+Alt+L</dt><dd>Link or unlink the selected video and its audio</dd></div>
+      <div><dt>Alt+click</dt><dd>Select one side of a linked pair; edits then affect only that clip</dd></div>
+      <div><dt>Q / W</dt><dd>Trim the start / end of the selected clip (or every clip under the playhead) to the playhead; ripple or overwrite follows the toolbar toggle</dd></div>
+      <div><dt>I / O</dt><dd>Mark the In / Out of the export range at the playhead; Shift+I / Shift+O jump to them, X clears the range. Playback stops at Out</dd></div>
       <div><dt>⌘/Ctrl+Z</dt><dd>Undo</dd></div>
       <div><dt>⌘/Ctrl+Shift+Z or Ctrl+Y</dt><dd>Redo</dd></div>
       <div><dt>⌘/Ctrl+O</dt><dd>Open project</dd></div>

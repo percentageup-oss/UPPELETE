@@ -2,6 +2,7 @@ import { sliceEmphasis } from '../core/emphasis'
 import { captionTokens, graphemes, locateWordSpans, type TextSpan } from '../core/captionText'
 import type { CaptionWord } from '../core/model'
 import type { CaptionMotion } from './style'
+import type { TitleMotion } from './style'
 
 export type Size = { width: number; height: number }
 export type Rect = Size & { x: number; y: number }
@@ -27,6 +28,7 @@ export type CaptionAppearance = {
 export type LayoutInputs = {
   /** Stable composition/media space, independent of preview pixels. */
   viewport: Size
+  titleMotion?: TitleMotion
   safeArea: { top: number; right: number; bottom: number; left: number }
   font: CaptionFont
   /** Optional measured local font for selected words. */
@@ -110,7 +112,7 @@ export function fittedEmphasisFont(inputs: LayoutInputs, fitted: CaptionFont): C
 
 /** Range metrics come from complete shaped lines, not isolated token measurements. */
 export function layoutCaptionWords(layout: CaptionLayout, cue: MotionCue, measure: MeasureRange): CaptionLayout {
-  if (layout.status !== 'ready' || !wordMotionAvailability(cue).enabled || layout.inputs.emphasized?.length) return layout
+  if (layout.status !== 'ready' || !wordMotionAvailability(cue).enabled) return layout
   const spans = locateWordSpans(cue.text, cue.words!)!
   // The layout's own font may have been shrunk to fit maxLines; the emphasis face must track that
   // fitted size (keeping its own ratio to the base font), or its word rects would be measured
@@ -119,15 +121,18 @@ export function layoutCaptionWords(layout: CaptionLayout, cue: MotionCue, measur
   const wordRegions = spans.flatMap((span, wordIndex) => layout.lines.flatMap((line, lineIndex) => {
     const start = Math.max(span.textStart, line.textStart), end = Math.min(span.textEnd, line.textEnd)
     if (end <= start) return []
+    const selectedEmphasis = layout.inputs.emphasized?.length
+      ? { spans: sliceEmphasis(layout.inputs.emphasized, line.textStart, line.textEnd), font: fittedEmphasisFont(layout.inputs, layout.font) }
+      : undefined
     const revealEnd = Math.min(line.textEnd, spans[wordIndex + 1]?.textStart ?? cue.text.length)
-    const prefix = measure(line.text, 0, revealEnd - line.textStart, layout.font)
+    const prefix = measure(line.text, 0, revealEnd - line.textStart, layout.font, selectedEmphasis)
     const revealRight = line.x + Math.max(0, ...prefix.map((rect) => rect.x + rect.width))
     // Measure the emphasis face against the *same complete line*, not a scaled copy of the regular
     // rect: a bolder/italic face has different glyph advances, so cropping a bold shaping run with
     // the regular rect would clip the wrong glyphs (docs/CAPTION_RENDERER.md).
-    const emphasisRects = emphasisFont ? measure(line.text, start - line.textStart, end - line.textStart, emphasisFont) : null
+    const emphasisRects = emphasisFont && !selectedEmphasis ? measure(line.text, start - line.textStart, end - line.textStart, emphasisFont) : null
     const emphasisRect = emphasisRects?.[0]
-    return measure(line.text, start - line.textStart, end - line.textStart, layout.font).map((rect) => ({
+    return measure(line.text, start - line.textStart, end - line.textStart, layout.font, selectedEmphasis).map((rect) => ({
       ...rect, x: line.x + rect.x, y: line.y, height: line.height, lineIndex, wordIndex,
       textStart: start, textEnd: end, revealRight,
       emphasis: emphasisRect ? { x: line.x + emphasisRect.x, width: emphasisRect.width } : undefined,

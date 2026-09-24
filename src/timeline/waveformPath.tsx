@@ -1,5 +1,6 @@
 import type { WaveformData } from '../core/waveform'
-import { slicePeaks } from '../core/waveformSlice'
+import type { ClipSpeed } from '../core/edit'
+import { clipPeaks } from '../core/waveformSlice'
 
 export function waveformPath(peaks: readonly number[]): string {
   return peaks.map((peak, index) => {
@@ -12,10 +13,10 @@ export function waveformPath(peaks: readonly number[]): string {
  * Peaks are extracted and cached per file against its whole source range; each clip draws only the
  * slice of them it plays, so a trimmed or split clip shows exactly its own audio.
  */
-export function ClipWaveform({ waveform, sourceStartUs, sourceEndUs, className = 'waveform' }: {
-  waveform: WaveformData; sourceStartUs: number; sourceEndUs: number; className?: string
+export function ClipWaveform({ waveform, sourceStartUs, sourceEndUs, speed, className = 'waveform' }: {
+  waveform: WaveformData; sourceStartUs: number; sourceEndUs: number; speed?: ClipSpeed; className?: string
 }) {
-  const peaks = slicePeaks(waveform, { startUs: sourceStartUs, endUs: sourceEndUs })
+  const peaks = clipPeaks(waveform, { sourceStartUs, sourceEndUs, speed })
   if (!peaks.length) return null
   // Explicit full-box geometry: a replaced element with a definite height but no width attribute
   // and no CSS width sizes itself from the viewBox aspect ratio instead of its containing block,

@@ -34,7 +34,7 @@ it('presents title styles and decorative word animation independently of caption
   const html = render({ target: 'text', cues: [plainCue], style: { ...DEFAULT_CAPTION_STYLE, motion: 'word-pop' } })
   expect(html).toContain('Title styles')
   expect(html).toContain('Word animation')
-  expect(html).toContain('Position, word animation, and layer transitions stay as set.')
+  expect(html).toContain('Keynote templates set appearance and animation while keeping title position and timing.')
   expect(html).toContain('Word animation is decorative and does not use or alter speech caption timing.')
   expect(motionLabel(html, 'word-pop')).not.toContain('disabled')
 })

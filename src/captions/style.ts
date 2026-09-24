@@ -13,12 +13,17 @@ export type CaptionMotion = z.infer<typeof motionSchema>
 export const motionSpeedSchema = z.number().min(.25).max(4)
 
 /** Local installed system faces only (CAPTION_RENDERER.md); no font is bundled or downloaded. */
-export const FONT_FAMILY_CHOICES = ['Noto Sans Malayalam', 'Anek Malayalam', 'Malayalam Sangam MN', 'Kartika', 'Nirmala UI', 'Arial'] as const
+export const FONT_FAMILY_CHOICES = ['Noto Sans Malayalam', 'Anek Malayalam', 'Malayalam Sangam MN', 'Kartika', 'Nirmala UI', 'Helvetica Neue', 'Arial'] as const
 const color = z.string().regex(/^#[\da-fA-F]{6}$/)
 const fontWeight = z.number().int().min(100).max(900).multipleOf(100)
 export const TEXT_TRANSFORMS = ['none', 'uppercase', 'lowercase', 'capitalize'] as const
 export const ALIGNMENTS = ['left', 'center', 'right'] as const
 export const EMPHASIS_MODES = ['emphasize', 'spotlight'] as const
+export const titleMotionSchema = z.strictObject({
+  kind: z.enum(['focus', 'lift', 'cascade', 'wipe', 'accent', 'scale']),
+  durationUs: z.number().int().min(100_000).max(5_000_000),
+})
+export type TitleMotion = z.infer<typeof titleMotionSchema>
 export type TextTransform = (typeof TEXT_TRANSFORMS)[number]
 export type CaptionAlignment = (typeof ALIGNMENTS)[number]
 export type EmphasisMode = (typeof EMPHASIS_MODES)[number]
@@ -79,6 +84,7 @@ function fillLegacyToggles(value: unknown): unknown {
 
 export const captionStyleSchema = z.strictObject({
   motion: motionSchema,
+  titleMotion: titleMotionSchema.optional(),
   // Motion is evaluated from source timestamps; this is a multiplier for its 200ms ramps, not a
   // playback rate and never changes cue/word timing.
   motionSpeed: motionSpeedSchema.default(1),
@@ -185,6 +191,7 @@ export function captionStyleInputs(style: CaptionStyle, viewport: Size) {
   const shadow = shadowFor(a.glowEnabled, a.glowColor)
   const emphasisShadowComposed = shadowFor(a.emphasisGlowEnabled || a.glowEnabled, a.emphasisGlowEnabled ? a.emphasisGlowColor : a.glowColor)
   return { ...inputs,
+    ...(style.titleMotion ? { titleMotion: style.titleMotion } : {}),
     font: { ...inputs.font, stack: `"${a.fontFamily}", ${DEFAULT_FONT_STACK}`, size: a.fontSize * scale,
       weight: a.fontWeight, italic: a.fontItalic, lineHeight: a.lineHeight,
       letterSpacing: a.letterSpacing * scale, wordSpacing: a.wordSpacing * scale, textTransform: a.textTransform },

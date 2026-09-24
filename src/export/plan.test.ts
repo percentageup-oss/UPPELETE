@@ -13,6 +13,8 @@ import { activeWordIndex, wordDisplayCue } from '../captions/wordDisplay'
 import type { CaptionProject, CaptionWord, Cue } from '../core/model'
 import type { Clip, Track } from '../core/edit'
 import { defaultTextOverlay } from '../core/textCommands'
+import { CAPTION_TEMPLATES, titleTemplateChanges } from '../captions/templates'
+import { textMotionAt } from '../captions/textMotion'
 
 const fixture = (name: string) => readFile(path.join(__dirname, '../../tests/fixtures', name), 'utf8')
 
@@ -213,11 +215,11 @@ describe('buildExportManifest', () => {
     ({ kind: 'audio', id, trackId, assetId: 'snd', timelineStartUs, sourceStartUs, sourceEndUs, gain: 0.8 })
   const cue = (id: string, mediaAssetId: string): Cue => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'manual', needsReview: false, textSource: 'user', words: [] })
   const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-    schemaVersion: 11, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
+    schemaVersion: 16, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
     tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
   })
-  const resolver: ExportResolver = { assetUrl: (a) => `media://local${a.reference.absolutePath}`, assetPath: (a) => a.reference.absolutePath! }
+  const resolver: ExportResolver = { assetUrl: (a) => `media://local${a.reference.absolutePath}`, assetPath: (a) => a.reference.absolutePath!, lutCube: () => { throw new Error('no lut in this test') } }
 
   it('emits v2 with no segments for the identity project, planned over the whole file', () => {
     const built = buildExportManifest(project({ captionStyle: DEFAULT_CAPTION_STYLE }), resolver)
@@ -225,6 +227,17 @@ describe('buildExportManifest', () => {
     expect(built.manifest.version === 2 && built.manifest.segments).toBeUndefined()
     expect(built.plan).toEqual({ ...format, range: { startUs: 0, endUs: 10 * US } })
     expect(built.inputPaths).toEqual(['/m/x'])
+  })
+
+  it('scales the plan and v3 blur geometry with export settings, and is unchanged without them', () => {
+    const settings = { preset: 'custom' as const, resolution: 720 as const, frameRate: 'source' as const, videoBitrateKbps: null }
+    const plain = buildExportManifest(project(), resolver)
+    expect(buildExportManifest(project(), resolver, undefined, { ...settings, resolution: 'source' })).toEqual(plain)
+    const scaled = buildExportManifest(project(), resolver, undefined, settings)
+    expect(scaled.plan.height).toBe(720)
+    expect(scaled.plan.width / scaled.plan.height).toBeCloseTo(format.width / format.height, 1)
+    const v3 = buildExportManifest(project({ clips: [{ ...video('c1', 0, 0, 10 * US), opacity: 0.5 } as Clip] }), resolver, undefined, settings)
+    expect(v3.manifest.version === 3 && v3.manifest.format.height).toBe(720)
   })
 
   it('keeps a migrated schema-4 project on the byte-identical v2 route: same manifest, same encoder argv', () => {
@@ -254,6 +267,42 @@ describe('buildExportManifest', () => {
     expect(built.manifest.version === 2 && built.manifest.audioClips).toEqual([{ id: 's', path: '/m/snd', delayUs: 2 * US, inPointUs: 250_000, durationUs: 1_500_000, gain: 0.8 }])
     const muted = project({ tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio', { muted: true })], clips: [video('c1', 0, 0, 10 * US), audio('s', 0, 0, US)] })
     expect(buildExportManifest(muted, resolver).manifest).toMatchObject({ version: 2, audioClips: [] })
+  })
+
+  describe('linked audio (schema 15)', () => {
+    const detached = (extra: Partial<Clip> = {}) => video('c1', 0, 0, 10 * US, { detachedAudio: true, linkId: 'L', ...extra } as Partial<Clip>)
+    const linked = (extra: Partial<Clip> = {}): Clip => ({ kind: 'audio', id: 'a1', trackId: 'A1', assetId: 'x', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 10 * US, gain: 1, linkId: 'L', ...extra } as Clip)
+
+    it('keeps v2 for an in-sync unity pair: the video’s own sound already is the linked audio', () => {
+      const built = buildExportManifest(project({ clips: [detached(), linked()] }), resolver)
+      expect(built.manifest).toMatchObject({ version: 2, audioClips: [] })
+      expect(built.inputPaths).toEqual(['/m/x'])
+    })
+    it('goes to v3 with the video silent and one audio input when the audio is not a plain mirror', () => {
+      const tracks = [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio', { volume: 0.5 })]
+      const built = buildExportManifest(project({ tracks, clips: [detached(), linked()] }), resolver)
+      const manifest = built.manifest as ExportManifestV3
+      expect(manifest.version).toBe(3)
+      expect(manifest.clips.map((clip) => [clip.id, clip.kind, clip.gain])).toEqual([['c1', 'video', 0], ['a1', 'audio', 0.5]])
+      expect(manifest.inputs).toEqual([{ path: '/m/x', kind: 'video' }, { path: '/m/x', kind: 'audio' }])
+    })
+    it('mutes and solos through the audio track, and drops a disabled clip', () => {
+      const muted = buildExportManifest(project({ tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio', { muted: true })], clips: [detached(), linked()] }), resolver).manifest as ExportManifestV3
+      expect(muted.version).toBe(3)
+      expect(muted.clips.map((clip) => clip.id)).toEqual(['c1'])
+      expect(muted.clips[0].gain).toBe(0)
+      const soloedElsewhere = project({ tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio'), track('A2', 'audio', { solo: true })], clips: [detached(), linked()] })
+      expect((buildExportManifest(soloedElsewhere, resolver).manifest as ExportManifestV3).clips.map((clip) => clip.id)).toEqual(['c1'])
+      const disabled = buildExportManifest(project({ clips: [detached({ enabled: false }), linked({ enabled: false }), video('c2', 0, 0, 5 * US, { assetId: 'y' } as Partial<Clip>)] }), resolver)
+      expect(disabled.inputPaths).toEqual(['/m/y'])
+    })
+    it('a legacy video keeps its own sound unless another track is soloed', () => {
+      expect(buildExportManifest(project(), resolver).manifest.version).toBe(2)
+      const soloed = project({ tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio', { solo: true })] })
+      const manifest = buildExportManifest(soloed, resolver).manifest as ExportManifestV3
+      expect(manifest.version).toBe(3)
+      expect(manifest.clips[0].gain).toBe(0)
+    })
   })
 
   it('uses v3 for two videos back to back: one input per clip, captions of both, the sequence as the range', () => {
@@ -308,6 +357,27 @@ describe('buildExportManifest', () => {
     }
   })
 
+  it('carries all five keynote title treatments into portrait and landscape export frames at matching times', () => {
+    for (const template of CAPTION_TEMPLATES.filter((entry) => entry.id.startsWith('keynote-')))
+      for (const [width, height] of [[1080, 1920], [1920, 1080]]) {
+        const original = defaultTextOverlay('keynote', 0, 3 * US, 'മലയാളം and English')
+        const item = { ...original, ...titleTemplateChanges(template, original) }
+        const built = buildExportManifest(project({ format: { width, height, frameRate: format.frameRate }, textOverlays: [item] }), resolver)
+        expect(built.manifest.version).toBe(3)
+        if (built.manifest.version !== 3) continue
+        for (const index of [0, 6, 45, 85]) {
+          const { request } = frameRequestAtSequence(built.manifest, index)
+          expect(request.version).toBe(4)
+          if (request.version !== 4) continue
+          const actor = request.textActors[0]
+          const expected = textMotionAt(item, frameSourceUs(index, 0, format.frameRate))
+          expect(actor).toMatchObject({ item, cue: { text: item.text, words: expect.arrayContaining([
+            expect.objectContaining({ text: 'മലയാളം', timingSource: 'decorative' }),
+          ]) }, opacity: expected.opacity, scale: expected.scale, x: expected.x, y: expected.y })
+        }
+      }
+  })
+
   it('falls back to v2 when the only zoom region is bypassed', () => {
     const zoomRegions = [{ id: 'z1', startUs: US, endUs: 3 * US, rect: { x: 270, y: 151.875, width: 540, height: 303.75 }, easeInUs: 500_000, easeOutUs: 500_000, enabled: false }]
     const built = buildExportManifest(project({ zoomRegions }), resolver)
@@ -342,6 +412,39 @@ describe('buildExportManifest', () => {
     const { request } = frameRequestAtSequence(manifest, Math.round(2 * 30))
     expect(request.version).toBe(3)
     if (request.version === 3) expect(request.frameEffects.vignette).toEqual({ amount: .6, softness: .4 })
+  })
+
+  it('carries film grain and VHS through the v3 manifest into the frame request, re-seeded per 24 Hz tick', () => {
+    const effects = [
+      { id: 'g1', kind: 'grain' as const, startUs: 0, endUs: 10 * US, enabled: true, amount: .4, size: 1.5 },
+      { id: 'h1', kind: 'vhs' as const, startUs: 0, endUs: 10 * US, enabled: true, amount: .6, scanlines: .5, tracking: .5 },
+    ]
+    const manifest = buildExportManifest(project({ effects }), resolver).manifest as ExportManifestV3
+    expect(manifest.version).toBe(3)
+    expect(manifest.effects).toEqual(effects)
+    const at = (frame: number) => frameRequestAtSequence(manifest, frame).request
+    const first = at(30 * 2), sameSecond = at(30 * 2), later = at(30 * 2 + 2)
+    expect(first.version).toBe(3)
+    if (first.version !== 3 || sameSecond.version !== 3 || later.version !== 3) return
+    expect(first.frameEffects.grain).toMatchObject({ amount: .4, size: 1.5 })
+    expect(first.frameEffects.vhs).toMatchObject({ amount: .6, scanlines: .5, tracking: .5 })
+    expect(sameSecond.frameEffects).toEqual(first.frameEffects)
+    // 30 fps export: frame 62 lands on a later 24 Hz tick than frame 60 (frame 61 shares its tick), so the noise must differ.
+    expect(later.frameEffects.grain!.seed).not.toBe(first.frameEffects.grain!.seed)
+  })
+
+  it('resolves glow to output pixels in pictureEffects and omits it when bypassed', () => {
+    const glow = { id: 'gl', kind: 'glow' as const, startUs: 0, endUs: 10 * US, enabled: true, amount: .5, radius: 20, threshold: .55 }
+    const manifest = buildExportManifest(project({ effects: [glow] }), resolver).manifest as ExportManifestV3
+    expect(manifest.version).toBe(3)
+    expect(manifest.pictureEffects).toHaveLength(1)
+    expect(manifest.pictureEffects[0]).toMatchObject({ id: 'gl', kind: 'glow', amount: .5, threshold: .55 })
+    expect(manifest.pictureEffects[0].sigmaPx).toBeGreaterThan(0)
+    const bypassed = buildExportManifest(project({ effects: [{ ...glow, enabled: false }] }), resolver).manifest as ExportManifestV3
+    expect((bypassed as ExportManifestV3).pictureEffects ?? []).toEqual([])
+    const built = buildExportManifest(project({ effects: [glow] }), resolver).manifest as ExportManifestV3
+    const { request } = frameRequestAtSequence(built, 30)
+    if (request.version === 3) expect(request.frameEffects).toEqual({})
   })
 
   it('resolves a v3 caption placement override into the export request without changing the project style', () => {
@@ -387,6 +490,27 @@ describe('buildExportManifest', () => {
     expect(flatSequence(project({ clips: [video('c1', 0, 0, 5 * US), audio('s', 4 * US, 0, 2 * US)] }))).toBeNull() // sound runs past the picture
     expect(flatSequence(project({ zoomRegions: [{ id: 'z1', startUs: 0, endUs: US, rect: { x: 0, y: 0, width: 540, height: 303.75 }, easeInUs: 0, easeOutUs: 0, enabled: true }] }))).toBeNull()
     expect(flatSequence(project({ effects: [{ id: 'e1', kind: 'vignette', startUs: 0, endUs: US, enabled: true, amount: .5, softness: .5 }] }))).toBeNull()
+  })
+
+  it('routes any active mask through v3 and carries it to the host request and FFmpeg inputs', () => {
+    const mask = { enabled: true, invert: false, feather: 4, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 100, y: 50, width: 300, height: 200 } } }
+    expect(flatSequence(project({ clips: [{ ...video('c1', 0, 0, 10 * US), mask } as Clip] }))).toBeNull()
+    expect(flatSequence(project({ clips: [{ ...video('c1', 0, 0, 10 * US), mask: { ...mask, enabled: false } } as Clip] }))).not.toBeNull()
+    expect(flatSequence(project({ captionTracks: [{ id: 'ct', name: '', locked: false, mask }] }))).toBeNull()
+    expect(flatSequence(project({ blurRegions: [{ id: 'b', startUs: 0, endUs: US, rect, radius: 5, enabled: true, mask }] }))).toBeNull()
+
+    const built = buildExportManifest(project({
+      clips: [{ ...video('c1', 0, 0, 10 * US), mask } as Clip, image('i', 'V2', 0, 3 * US, { mask } as Partial<Clip>)],
+      cues: [{ ...cue('k', 'x'), captionTrackId: 'ct' }], captionTracks: [{ id: 'ct', name: '', locked: false, mask }],
+    }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version !== 3) return
+    expect(built.manifest.clips[0].mask).toEqual(mask)
+    expect(built.manifest.overlays[0].mask).toEqual(mask)
+    const { request } = frameRequestAtSequence(built.manifest, 3)
+    expect(request.captionMask).toEqual(mask)
+    if (request.version !== 1 && request.version !== 5) expect(request.overlays[0].mask).toEqual(mask)
+    expect(exportManifestSchema.parse(JSON.parse(JSON.stringify(built.manifest)))).toEqual(built.manifest)
   })
 
   it('round-trips v3 through the wire schema, so what main writes is what the worker accepts', () => {

@@ -1,4 +1,4 @@
-import type { EffectRegion, FadeEffect, LetterboxEffect, VignetteEffect } from './edit'
+import type { EffectRegion, FadeEffect, GlowEffect, GrainEffect, LetterboxEffect, ParticlesEffect, VhsEffect, VignetteEffect } from './edit'
 import type { CaptionProject } from './model'
 import { clampZoomRegion, MIN_ZOOM_REGION_US } from './zoomRegion'
 import { dragRangeBy, itemDragBounds, type CueDragMode } from './timeline'
@@ -9,7 +9,11 @@ export type LetterboxChanges = Partial<Pick<LetterboxEffect, 'aspect' | 'color' 
 export type FadeChanges = Partial<Pick<FadeEffect, 'shape' | 'color' | 'easeInUs' | 'easeOutUs' | 'enabled'>>
 /** Never `startUs`/`endUs`/`kind` — those go through `effect-move`/`effect-trim`, the same split
  * clips and zoom regions use. A caller always knows the selected effect's own kind. */
-export type EffectChanges = VignetteChanges | LetterboxChanges | FadeChanges
+export type GrainChanges = Partial<Pick<GrainEffect, 'amount' | 'size' | 'enabled'>>
+export type VhsChanges = Partial<Pick<VhsEffect, 'amount' | 'scanlines' | 'tracking' | 'enabled'>>
+export type ParticlesChanges = Partial<Pick<ParticlesEffect, 'amount' | 'size' | 'speed' | 'color' | 'enabled'>>
+export type GlowChanges = Partial<Pick<GlowEffect, 'amount' | 'radius' | 'threshold' | 'enabled'>>
+export type EffectChanges = VignetteChanges | LetterboxChanges | FadeChanges | GrainChanges | VhsChanges | ParticlesChanges | GlowChanges
 
 export type EffectCommand =
   // Dropped from the Effects panel or added at the playhead. Clamped into the free gap around every
@@ -99,4 +103,16 @@ export function defaultFade(id: string, atUs: number, shape: FadeEffect['shape']
 /** Flash is a preset, not its own kind: a brief white dip (docs/EDITING.md "Frame-paint effects"). */
 export function defaultFlash(id: string, atUs: number): FadeEffect {
   return { id, startUs: atUs, endUs: atUs + FLASH_EFFECT_US, enabled: true, kind: 'fade', shape: 'dip', color: '#ffffff', easeInUs: 100_000, easeOutUs: 100_000 }
+}
+export function defaultGrain(id: string, atUs: number): GrainEffect {
+  return { id, startUs: atUs, endUs: atUs + DEFAULT_LOOK_EFFECT_US, enabled: true, kind: 'grain', amount: 0.35, size: 1.5 }
+}
+export function defaultVhs(id: string, atUs: number): VhsEffect {
+  return { id, startUs: atUs, endUs: atUs + DEFAULT_LOOK_EFFECT_US, enabled: true, kind: 'vhs', amount: 0.6, scanlines: 0.6, tracking: 0.5 }
+}
+export function defaultParticles(id: string, atUs: number): ParticlesEffect {
+  return { id, startUs: atUs, endUs: atUs + DEFAULT_LOOK_EFFECT_US, enabled: true, kind: 'particles', amount: 0.55, size: 4, speed: 1, color: '#FFD6A0' }
+}
+export function defaultGlow(id: string, atUs: number): GlowEffect {
+  return { id, startUs: atUs, endUs: atUs + DEFAULT_LOOK_EFFECT_US, enabled: true, kind: 'glow', amount: 0.5, radius: 24, threshold: 0.55 }
 }
