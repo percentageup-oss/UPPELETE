@@ -4,7 +4,7 @@ import path from 'node:path'
 import { jobFailure, type JobSnapshot } from '../src/core/jobs'
 import type { ExportManifest, ExportPlan } from '../src/export/plan'
 import type { MediaWorkerClient } from '../workers/media/client'
-import { MediaWorkerError } from '../workers/media/protocol'
+import { MediaWorkerError, type ExportTimings } from '../workers/media/protocol'
 import type { JobContext, JobHandle, JobScheduler } from './jobScheduler'
 
 export type ExportServiceOptions = {
@@ -25,7 +25,7 @@ export type ExportRequest = {
   destinationPath: string
 }
 
-export type ExportJobValue = { path: string; durationUs: number; frameCount: number }
+export type ExportJobValue = { path: string; durationUs: number; frameCount: number; timings?: ExportTimings }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -96,7 +96,7 @@ export class ExportService {
       const result = await this.render(request, ctx, durationUs, manifestPath, temporaryOutputPath)
       if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Export was cancelled before it could be finalized.')
       await rename(temporaryOutputPath, request.destinationPath)
-      return { path: request.destinationPath, durationUs: result.durationUs, frameCount: result.frameCount }
+      return { path: request.destinationPath, durationUs: result.durationUs, frameCount: result.frameCount, ...(result.timings ? { timings: result.timings } : {}) }
     } finally {
       await rm(temporaryOutputPath, { force: true })
       await rm(directory, { recursive: true, force: true })

@@ -144,7 +144,7 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
     try {
       const outcome = await handle.outcome
       logExport('outcome', { requestId: request.requestId, state: outcome.state, ...(outcome.state === 'failed' ? { error: outcome.error } : {}),
-        ...(outcome.state === 'succeeded' ? { path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount } : {}) })
+        ...(outcome.state === 'succeeded' ? { path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount, timings: outcome.value.timings } : {}) })
       if (outcome.state === 'succeeded') return { state: 'succeeded', path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount }
       return outcome.state === 'failed' ? { state: 'failed', error: outcome.error } : { state: 'cancelled' }
     } finally {
@@ -185,7 +185,7 @@ export async function runExportSmoke(mediaPath: string, media: ProjectMedia, srt
   return {
     parentPid: process.pid, nodeVersion: process.versions.node, electronVersion: process.versions.electron,
     cueCount: 'cues' in manifest ? manifest.cues.length : 0, path: outcome.value.path, durationUs: outcome.value.durationUs,
-    frameCount: outcome.value.frameCount, plan,
+    frameCount: outcome.value.frameCount, timings: outcome.value.timings, plan,
   }
 }
 

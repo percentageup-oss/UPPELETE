@@ -6,7 +6,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { failure, type Toolchain } from './protocol'
 import { PngReader } from './exportProcesses'
-import { exportSupport, mostInformativeFailure, renderVideo, type ExportDependencies } from './export'
+import { exportSupport, mostInformativeFailure, resetExportSupportCacheForTests, renderVideo, type ExportDependencies } from './export'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 import { exportManifestV3Schema, frameSourceUs, type ExportManifest } from '../../src/export/plan'
 import { encodeCubeData, parseCube } from '../../src/color/cube'
@@ -101,7 +101,7 @@ function outputProbe(width: number, height: number, durationUs: number, hasAudio
 function inputProbe(durationUs: number, hasAudio: boolean) { return outputProbe(1080, 1920, durationUs, hasAudio) }
 
 const directories: string[] = []
-afterEach(async () => { await Promise.all(directories.splice(0).map((d) => rm(d, { recursive: true, force: true }))) })
+afterEach(async () => { resetExportSupportCacheForTests(); await Promise.all(directories.splice(0).map((d) => rm(d, { recursive: true, force: true }))) })
 
 /**
  * One distinct cue per output frame, so every frame has its own layer signature and therefore its
@@ -177,6 +177,20 @@ describe('exportSupport', () => {
     expect(result).toEqual({ supported: true, reason: null })
     expect(runTool).toHaveBeenCalledTimes(2)
   })
+  it('caches a supported result so a second check does not rerun the -version probes', async () => {
+    const runTool = vi.fn().mockResolvedValue(PINNED_VERSION)
+    await exportSupport(tools, new AbortController().signal, { runTool })
+    const calls = runTool.mock.calls.length
+    expect(await exportSupport(tools, new AbortController().signal, { runTool })).toEqual({ supported: true, reason: null })
+    expect(runTool).toHaveBeenCalledTimes(calls)
+  })
+  it('does not cache an unsupported result', async () => {
+    const runTool = vi.fn().mockResolvedValue('ffmpeg version 7.0.0\nconfiguration: --enable-gpl\n')
+    await exportSupport(tools, new AbortController().signal, { runTool })
+    const calls = runTool.mock.calls.length
+    await exportSupport(tools, new AbortController().signal, { runTool })
+    expect(runTool.mock.calls.length).toBeGreaterThan(calls)
+  })
   it('reports the exact reason for an unsupported FFmpeg configuration without touching the filesystem', async () => {
     const runTool = vi.fn().mockResolvedValue('ffmpeg version 7.0.0\nconfiguration: --enable-gpl\n')
     const result = await exportSupport(tools, new AbortController().signal, { runTool })
@@ -201,7 +215,12 @@ describe('renderVideo', () => {
       operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
       range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
     }, tools, signal, (value) => progress.push(value), { spawn, probe, runTool, temporaryRoot: root })
-    expect(result).toEqual({ operation: 'export', path: '/media/out.mp4', durationUs: 1_000_000, frameCount: 30, frameRate: { numerator: 30, denominator: 1 } })
+    const { timings, ...rest } = result
+    expect(rest).toEqual({ operation: 'export', path: '/media/out.mp4', durationUs: 1_000_000, frameCount: 30, frameRate: { numerator: 30, denominator: 1 } })
+    expect(timings).toBeDefined()
+    expect(timings!.paintedFrames + timings!.reusedFrames).toBe(result.frameCount)
+    expect(timings!.paintedFrames).toBeGreaterThan(0)
+    expect(timings!.totalMs).toBeGreaterThanOrEqual(timings!.startupMs)
     expect(encoderHandle.received.length).toBe(30) // one PNG write per frame, in order
     // Both processes are always reaped in `finally`, even on success — killing an already-exited
     // process is a harmless no-op, and this is the same safety net a hung process needs.

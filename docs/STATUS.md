@@ -1,5 +1,26 @@
 # Status
 
+## 2026-09-25 — Export speed 01: stage timings + cached support check
+
+Every export now records `timings` (startup, host wait, encoder wait, painted/reused frames, finalize, total, fps) in the local export log and the smoke output; `exportSupport()` caches `supported: true` per session. No output changes. Baseline (Windows 11, 30 cues, 1 cue/0.5 s, real `--export-smoke`):
+
+| Run | Frames | fps | startupMs | hostWaitMs | encoderWaitMs | painted/reused |
+|---|---|---|---|---|---|---|
+| 1080p (15 s) | 447 | 102.6 | 705 | 3233 | 1087 | 31 / 416 |
+| 4K (19.8 s) | 474 | 25.8 | 746 | 11616 | 6734 | 31 / 443 |
+
+Verified: typecheck clean; `workers/media/export.test.ts` 29/29 with `process.platform` spoofed to darwin. On real Windows 18 tests in that file fail with or without this change (fixtures assume VideoToolbox; thumbnails.test.ts path-separator failure too). Limitations: Windows only; macOS untested. Next: brief 02 (host wait dominates: ~375 ms per painted 4K frame).
+
+## 2026-09-25 — New monochrome KathaCut logo
+
+**Changes.** The logo is now the single-colour "K + play" mark (`img/logo.png`) and lockup (`img/logo-with-text.png`), both black ink on transparent. Everything below is derived from them by a PIL script that uses the alpha channel as the mask: `src/assets/brand/icon-dark.png` (toolbar mark, light on transparent), `public/favicon.png`, `src/assets/brand/logo-dark.png` (splash lockup, light), `assets/icon.png` (1024², black mark on a white rounded 824² tile with a soft shadow; window, dock and Windows installer icon) and `assets/icon.icns` (PNG entries ic07–ic14, written directly since `iconutil` is macOS-only). `assets/logo.png` is a copy of the new mark. The toolbar wordmark matches the lockup: one colour, "Katha" heavy and "Cut" light, with the pink→orange gradient gone. The splash tagline is now HTML text under the lockup, and the splash sweep is neutral white. The UI accent tokens (violet `#6a58fc`) stay as they were.
+
+**Verification (Windows 11).** `vite build` passes. I checked the generated assets visually on the app's #090b10 background and on a light background. The app was not run.
+
+**Limitations.** Not checked in a running window: the toolbar, the splash, the taskbar/dock icon. `assets/icon.icns` has not been opened on macOS. The violet accent came from the old gradient logo and may need revisiting now that the mark is monochrome.
+
+**Next.** Run `.\dev.ps1` and check the toolbar, splash and taskbar icon; build a Windows installer to see the `.ico` electron-builder generates.
+
 ## 2026-09-24 — MCP: editorial judgment guidance, `import_media`, `place_at_word`
 
 **Changes.** The agent no longer has to be told what to add. `list_creative_options` now returns `mood`/`useWhen`/`avoidWhen` for every background preset, look, title treatment and effect kind, plus `effectGuidance`, `zoomGuidance` and five `styleRecipes` (`src/core/editorialGuidance.ts`, `src/core/styleRecipes.ts`); a test fails if a catalog entry lacks guidance. `EDITING_GUIDE` and the `auto_edit` prompt were rewritten as a senior-editor workflow (sample frames, diagnose, commit to a recipe, map beats to tools, restraint, verify, report). New `import_media` (path, clipboard, base64 or public https url; optional same-undo-step image placement) and `place_at_word` (image at a spoken word/phrase in sequence time; flags estimated timing). Bytes not from a path land content-addressed in `<userData>/agent-media/` and go through the same probe/fingerprint path as a dragged-in file. Two new IPC request kinds (`import-inspected`, `place-image`), validated in the preload schema.
@@ -3139,3 +3160,53 @@ Verification (Windows 11): `tsc --noEmit` clean. Two new `layerPlan.test.ts` cas
 Limitations: `scripts/export-parity.mjs` paints single frames and bypasses the layer plan, so it cannot catch signature omissions of this kind.
 
 Next: re-export `img/chatgpt-newplan.cstudio` and check the titles at about 44.4 s (focus) and 46.4 s (cascade).
+
+## 2026-09-25 — MCP clients no longer block each other after a stale session
+
+Completed: the loopback MCP endpoint previously created one `McpServer` and one stateful
+`StreamableHTTPServerTransport` for the entire app lifetime. A tunnel or agent that exited without
+an MCP `DELETE` left that transport initialized, so a later OpenAI Secure MCP Tunnel discovery (or
+any second agent) failed with `Invalid Request: Server already initialized`. `startMcpServer` now
+follows the SDK's stateful HTTP routing pattern: each headerless initialize request gets a fresh
+server/transport pair, initialized sessions are stored by `Mcp-Session-Id`, and subsequent
+POST/GET/DELETE requests are routed only to their own transport. Closing one session removes only
+that entry; an abruptly abandoned entry cannot prevent another client from connecting. App shutdown
+closes every remaining server/transport. Bearer authentication and exact loopback/DNS-rebinding
+guards remain ahead of protocol handling.
+
+Verification (Windows 11): `npx vitest run electron/mcp/server.test.ts
+electron/mcp/stdioBridge.test.ts` passes 35/35, including a new regression that keeps an abandoned
+client session while a second session continues, terminates that session, and connects a third.
+`npx tsc --noEmit -p .`, `npm run build:electron`, and the full Windows packaging command
+`npm run dist:win` pass. The rebuilt installer is
+`release/KathaCut-Setup-0.2.0-win-x64.exe`.
+
+Limitations: an abandoned HTTP session remains counted until the app exits because an HTTP client
+that crashes cannot send the protocol's termination request; it is isolated and no longer blocks
+new clients. The rebuilt installer has not yet been installed or exercised against ChatGPT's live
+connector-creation flow.
+
+Next: install the rebuilt Windows package, restart KathaCut with agent access enabled, restart the
+local tunnel so its stdio bridge reads the current `mcp.json`, then create the ChatGPT connector and
+confirm that repeated tunnel restarts no longer require toggling agent access.
+
+## 2026-09-25 — MCP tool safety metadata for ChatGPT connector discovery
+
+Completed: all 17 MCP tools now explicitly publish `readOnlyHint`, `destructiveHint`,
+`openWorldHint`, and `idempotentHint`. The labels follow each tool's real behavior rather than a
+single blanket value: inspection/list tools are read-only; `edit` is potentially destructive because
+its validated command union includes deletion and overwrite operations; `import_media` is
+open-world because its URL form fetches a public HTTPS resource; playhead/selection changes and
+undoable additions are writes but non-destructive. This closes the metadata gap found by auditing
+the installed app's live `tools/list` response, where all 17 tools previously lacked annotations.
+
+Verification (Windows 11): direct authenticated MCP discovery against the installed app returned 17
+tools and confirmed 17/17 were missing annotations before the change. After the change,
+`npx vitest run electron/mcp/server.test.ts electron/mcp/stdioBridge.test.ts` passes 35/35; the
+real-server list test now requires all four boolean annotations on every tool and checks representative
+read-only, destructive, open-world and editor-state classifications. `npx tsc --noEmit -p .` is clean.
+
+Limitations/next: the source fix still needs to be bundled, installed, and checked through the live
+OpenAI Secure MCP Tunnel. Connector creation can then be retried; if ChatGPT still rejects it, the
+next diagnostic target is the connector-creation API response rather than local reachability or MCP
+discovery, both of which are already returning success.

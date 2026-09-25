@@ -80,9 +80,23 @@ type MediaProber = typeof probeMedia
  * mirroring the `{ runTool, temporaryRoot }` injection already used by `waveform.ts`/`thumbnails.ts`. */
 export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number }
 
+/** Successful support checks for the session, so each export job skips the `-version` runs. Only
+ * `supported: true` is cached: a fixed install is re-checked on the next job. */
+const supportedTools = new Set<string>()
+export function resetExportSupportCacheForTests() { supportedTools.clear() }
+
 export async function exportSupport(tools: Toolchain | undefined, signal: AbortSignal,
   dependencies: Pick<ExportDependencies, 'runTool'> = {}): Promise<ExportSupport> {
   if (!tools?.exportHost) return { supported: false, reason: 'The GPU export host is not configured for this build.' }
+  const cacheKey = `${tools.ffmpegPath}|${tools.ffprobePath}|${tools.exportHost.executable}`
+  if (supportedTools.has(cacheKey)) return { supported: true, reason: null }
+  const support = await checkExportSupport(tools, tools.exportHost, signal, dependencies)
+  if (support.supported) supportedTools.add(cacheKey)
+  return support
+}
+
+async function checkExportSupport(tools: Toolchain, exportHost: NonNullable<Toolchain['exportHost']>, signal: AbortSignal,
+  dependencies: Pick<ExportDependencies, 'runTool'>): Promise<ExportSupport> {
   const runTool = dependencies.runTool ?? runExecutable
   let encodersOutput: string | undefined
   if (process.platform !== 'darwin') {
@@ -95,8 +109,8 @@ export async function exportSupport(tools: Toolchain | undefined, signal: AbortS
   const probeSupport = exportSupportFromConfiguration(await runTool(tools.ffprobePath, ['-version'], signal), process.platform, encodersOutput)
   if (!probeSupport.supported) return probeSupport
   try {
-    await stat(tools.exportHost.executable)
-    await stat(tools.exportHost.scriptPath)
+    await stat(exportHost.executable)
+    await stat(exportHost.scriptPath)
   } catch {
     return { supported: false, reason: 'The built GPU export host is missing; run the export build step.' }
   }
@@ -105,6 +119,7 @@ export async function exportSupport(tools: Toolchain | undefined, signal: AbortS
 
 export async function renderVideo(task: ExportTask, tools: Toolchain, signal: AbortSignal,
   report: (value: ProgressMessage['progress']) => void, dependencies: ExportDependencies = {}): Promise<Extract<MediaResult, { operation: 'export' }>> {
+  const startedAt = performance.now()
   const spawn = dependencies.spawn ?? ownedProcess
   const probe = dependencies.probe ?? probeMedia
   const support = await exportSupport(tools, signal, dependencies)
@@ -192,35 +207,49 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     const stallMs = dependencies.stallMs ?? FRAME_STALL_MS
     const seconds = Math.round(stallMs / 1000)
     const encoderHandle = encoder, hostHandle = host
-    const toEncoder = (index: number, png: Buffer) => withinStallDeadline(writeBounded(encoderHandle.child.stdin, png), stallMs, () => ({
-      message: `Export stalled at frame ${index + 1} of ${total}: the ${videoEncoder} encoder accepted no frame for ${seconds} s`,
-      diagnostic: encoderHandle.diagnostic?.() ?? '',
-    }))
+    let hostWaitMs = 0, encoderWaitMs = 0, paintedFrames = 0, reusedFrames = 0
+    const toEncoder = async (index: number, png: Buffer) => {
+      const waitStart = performance.now()
+      try {
+        await withinStallDeadline(writeBounded(encoderHandle.child.stdin, png), stallMs, () => ({
+          message: `Export stalled at frame ${index + 1} of ${total}: the ${videoEncoder} encoder accepted no frame for ${seconds} s`,
+          diagnostic: encoderHandle.diagnostic?.() ?? '',
+        }))
+      } finally { encoderWaitMs += performance.now() - waitStart }
+    }
     const fromHost = async (index: number, request: unknown) => {
-      await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
-      return withinStallDeadline(reader.frame(), stallMs, () => ({
-        message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
-        diagnostic: hostHandle.diagnostic?.() ?? '',
-      }))
+      const waitStart = performance.now()
+      try {
+        await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
+        return await withinStallDeadline(reader.frame(), stallMs, () => ({
+          message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
+          diagnostic: hostHandle.diagnostic?.() ?? '',
+        }))
+      } finally { hostWaitMs += performance.now() - waitStart }
     }
     let previous: RenderedFrame | null = null
     let gap: RenderedFrame | null = null
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
+    const loopStartedAt = performance.now()
+    const startupMs = loopStartedAt - startedAt
     for (let index = 0; index < total; index++) {
       if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
       const frame = job.layer.frameAt(index)
       const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
       if (cached) {
         previous = { signature: frame.signature, png: cached }
+        reusedFrames++
         await toEncoder(index, cached)
         continue
       }
       const { request } = job.request(index, frame)
       const png = await fromHost(index, request)
+      paintedFrames++
       previous = { signature: frame.signature, png }
       if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
       await toEncoder(index, png)
     }
+    const loopEndedAt = performance.now()
     host.child.stdin.end(); encoder.child.stdin.end()
     await encoder.closed
     // Every frame is already encoded; the host is only asked to exit. It is given a moment and then
@@ -233,7 +262,13 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     const video = output.metadata.streams.find((s) => s.kind === 'video')
     if (video?.codec.name !== 'h264' || video.width !== job.width || video.height !== job.height
       || !output.metadata.durationUs || (graph.hasAudioOut && !output.metadata.streams.some((s) => s.kind === 'audio' && s.codec.name === 'aac'))) throw failure('TOOL_FAILED', 'Encoded MP4 failed stream validation')
-    return { operation: 'export', path: task.outputPath, durationUs: output.metadata.durationUs, frameCount: total, frameRate: job.frameRate }
+    const finishedAt = performance.now()
+    const loopSeconds = (loopEndedAt - loopStartedAt) / 1000
+    const timings = {
+      startupMs, hostWaitMs, encoderWaitMs, paintedFrames, reusedFrames,
+      finalizeMs: finishedAt - loopEndedAt, totalMs: finishedAt - startedAt, fps: loopSeconds > 0 ? total / loopSeconds : 0,
+    }
+    return { operation: 'export', path: task.outputPath, durationUs: output.metadata.durationUs, frameCount: total, frameRate: job.frameRate, timings }
   } catch (error) {
     // Recover the actual encoder/host failure before translating external cancellation. A peer that
     // is already dying on its own (the host writing its error and exiting, say) is given a moment
@@ -339,7 +374,7 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
   }
   const { width, height, frameRate } = manifest.format
   const layer = createLayerPlan({
-    cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays, effects: manifest.effects, textOverlays: manifest.textOverlays,
+    cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays, effects: manifest.effects, textOverlays: manifest.textOverlays, shapes: manifest.shapes,
     timeline: manifestTimeline(manifest), output: { width, height },
   })
   const graph = exportFilterGraphV3(manifest, hasAudioByInput, lutPaths)

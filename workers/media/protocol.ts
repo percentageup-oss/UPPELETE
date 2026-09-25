@@ -60,7 +60,15 @@ export const clientMessageSchema = z.discriminatedUnion('type', [requestSchema, 
 export type RequestMessage = z.infer<typeof requestSchema>
 
 const toolReport = z.strictObject({ versionOutput: z.string().min(1).max(65536), licenseOutput: z.string().min(1).max(65536) })
-export const resultSchema = z.discriminatedUnion('operation', [
+/** Local-only export stage timings (milliseconds and frame counts, never content). */
+const exportTimingsSchema = z.strictObject({
+  startupMs: z.number().nonnegative(), hostWaitMs: z.number().nonnegative(), encoderWaitMs: z.number().nonnegative(),
+  paintedFrames: z.number().int().nonnegative(), reusedFrames: z.number().int().nonnegative(),
+  finalizeMs: z.number().nonnegative(), totalMs: z.number().nonnegative(), fps: z.number().nonnegative(),
+})
+export type ExportTimings = z.infer<typeof exportTimingsSchema>
+
+export const resultSchema =z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('runtime'), pid: positiveInt, platform: z.string().min(1).max(32),
     architecture: z.string().min(1).max(32), nodeVersion: z.string().min(1).max(128) }),
   z.strictObject({ operation: z.literal('inspectToolchain'), ffmpeg: toolReport, ffprobe: toolReport }),
@@ -86,7 +94,7 @@ export const resultSchema = z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('speechChunks'), speechGating: z.string().min(1).max(128), silences: z.array(range).max(100000),
     chunks: z.array(z.strictObject({ path: filePath, startUs: microseconds, endUs: microseconds })).max(100000) }),
   z.strictObject({ operation: z.literal('export'), path: filePath, durationUs: microseconds,
-    frameCount: positiveInt, frameRate: rational }),
+    frameCount: positiveInt, frameRate: rational, timings: exportTimingsSchema.optional() }),
 ])
 export type MediaResult = z.infer<typeof resultSchema>
 export type ResultFor<T extends MediaTask> = Extract<MediaResult, { operation: T['operation'] }>
