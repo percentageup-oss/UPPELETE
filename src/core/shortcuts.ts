@@ -28,6 +28,9 @@ export type ShortcutAction =
   // Cmd/Ctrl+C copies the selected timeline item (cue, clip or text); Cmd/Ctrl+V pastes a clone of it.
   | 'copy-item'
   | 'paste-item'
+  // Cmd/Ctrl+G groups the shapes and titles picked with Ctrl/Shift-click; Cmd/Ctrl+Shift+G ungroups.
+  | 'group-items'
+  | 'ungroup-items'
 
 export type KeyboardShortcutEvent = Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'metaKey' | 'shiftKey' | 'altKey'>
 
@@ -48,6 +51,7 @@ export function shortcutForEvent(event: KeyboardShortcutEvent, target: EventTarg
   if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'y') return 'redo'
   if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'b') return 'split-clips'
   if (modifier && event.altKey && !event.shiftKey && event.key.toLowerCase() === 'l') return 'toggle-clip-link'
+  if (modifier && !event.altKey && event.key.toLowerCase() === 'g') return event.shiftKey ? 'ungroup-items' : 'group-items'
   if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'c') return 'copy-item'
   if (modifier && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'v') return 'paste-item'
   if (modifier || event.altKey) return null

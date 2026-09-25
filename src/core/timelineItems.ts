@@ -9,7 +9,7 @@ import type { Cue } from './model'
  * (vignette/letterbox/fade) rather than one lane for everything (`docs/EDITING.md` "Frame-paint
  * effects").
  */
-export type TimelineItemKind = 'cue' | 'clip' | 'blur' | 'zoomRegion' | 'effect' | 'text' | 'marker'
+export type TimelineItemKind = 'cue' | 'clip' | 'blur' | 'zoomRegion' | 'effect' | 'text' | 'shape' | 'marker'
 
 /** Clamps for one drag gesture, in the item's own time base. */
 export type DragBounds = {
@@ -31,7 +31,8 @@ export type TimelineItem = {
 
 /** What is selected anywhere in the editor. One ID namespace (model.ts) makes `{kind, id}` exact. */
 export type Selection = {
-  kind: TimelineItemKind; id: string
+  /** `group` (schema 22) selects a whole group of shapes and titles; the id is the group's id. */
+  kind: TimelineItemKind | 'group'; id: string
   /** A clip selected on its own (Alt-click): edits skip its link partners instead of acting on the whole group. */
   unlinked?: boolean
 }

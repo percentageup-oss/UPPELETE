@@ -26,6 +26,20 @@ export function groupMembers(project: CaptionProject, groupId: string): GroupMem
   ]
 }
 
+/** A stable accent hue (0..359) for a group, so its members and rows share one colour on the timeline and Layers tab. */
+export function groupHue(groupId: string): number {
+  let hash = 0
+  for (let index = 0; index < groupId.length; index++) hash = (hash * 31 + groupId.charCodeAt(index)) >>> 0
+  return hash % 360
+}
+
+/** The time range every member of a group covers together, or null for an unknown or empty group. */
+export function groupSpan(project: CaptionProject, groupId: string): { startUs: number; endUs: number; count: number } | null {
+  const members = groupMembers(project, groupId)
+  if (members.length === 0) return null
+  return { startUs: Math.min(...members.map((member) => member.item.startUs)), endUs: Math.max(...members.map((member) => member.item.endUs)), count: members.length }
+}
+
 /** Deletes every group with fewer than two members and clears the `groupId` of any member left behind. Returns the same project when nothing changed. */
 export function pruneGroups(project: CaptionProject): CaptionProject {
   const counts = new Map<string, number>()

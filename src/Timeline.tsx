@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
 import type { CaptionWord, Cue } from './core/model'
-import type { BlurRegion, CaptionTrack, Clip, EffectRegion, Marker, ProjectAsset, TextOverlay, Track, ZoomRegion } from './core/edit'
+import type { BlurRegion, CaptionTrack, Clip, EffectRegion, Group, Marker, ProjectAsset, Shape, TextOverlay, Track, ZoomRegion } from './core/edit'
 import { anchoredScrollLeft, dragCueBy, pixelToTime, snapDelta, timeToPixel, type CueDragMode } from './core/timeline'
 import { colorClipLabel, isAnimated, swatchCss } from './core/fill'
 import { captionClips, clipEndUs, clipLengthUs, sequenceUsOf, sourceUsAt, spanSequenceUs, spansInSequence } from './core/timelineModel'
@@ -25,6 +25,7 @@ import { ZoomLane } from './timeline/ZoomLane'
 import { BlurLane } from './timeline/BlurLane'
 import { EffectLane } from './timeline/EffectLane'
 import { TextLane } from './timeline/TextLane'
+import { ShapeLane } from './timeline/ShapeLane'
 import { packTextOverlays } from './core/textLayout'
 import { ClipBlock } from './timeline/ClipBlock'
 import { VideoClipContent } from './timeline/VideoClipContent'
@@ -109,6 +110,7 @@ type TimelineProps = {
   /** Frame-paint effects (schema 9): one lane per kind present, shown only when used, like blur. */
   effects?: EffectRegion[]
   textOverlays?: TextOverlay[]
+  shapes?: Shape[]
   assets: ProjectAsset[]
   /** Sequence time. */
   currentUs: number
@@ -158,6 +160,12 @@ type TimelineProps = {
   onAddText?: () => void
   onTextMove?: (textId: string, startUs: number) => void
   onTextTrim?: (textId: string, edge: 'start' | 'end', deltaUs: number) => void
+  onSelectShape?: (shapeId: string) => void
+  /** Schema 22 groups and the Ctrl/Shift-click pending selection, for the group chip, shared accent and highlight. */
+  groups?: readonly Group[]
+  pendingGroupIds?: readonly string[]
+  onShapeMove?: (shapeId: string, startUs: number) => void
+  onShapeTrim?: (shapeId: string, edge: 'start' | 'end', deltaUs: number) => void
   trackActions: TrackHeaderActions
   captionTrackActions: CaptionTrackHeaderActions
   /** A file's measured duration where its probe reported none, for clamping trims. */
@@ -188,7 +196,7 @@ type TimelineProps = {
 }
 
 export type TimelineMenuTarget =
-  | { kind: 'clip' | 'cue' | 'word' | 'text' | 'zoomRegion' | 'blur' | 'effect'; id: string; unlinked?: boolean }
+  | { kind: 'clip' | 'cue' | 'word' | 'text' | 'shape' | 'zoomRegion' | 'blur' | 'effect'; id: string; unlinked?: boolean }
   | { kind: 'empty'; trackId: string | null; atUs: number }
 
 const ZOOM_MIN = 1
@@ -197,7 +205,7 @@ const SNAP_THRESHOLD_PX = 8
 const FOLLOW_MARGIN = 0.1
 
 export function Timeline(props: TimelineProps) {
-  const { cues, tracks, captionTracks, clips, zoomRegions = [], blurRegions = [], effects = [], textOverlays = [], assets, currentUs, durationUs, programUs = durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
+  const { cues, tracks, captionTracks, clips, zoomRegions = [], blurRegions = [], effects = [], textOverlays = [], shapes = [], assets, currentUs, durationUs, programUs = durationUs, selection, markers = [], warningCueIds, waveforms, onSeek, display, actions } = props
   const [zoom, setZoom] = useState(1)
   const [snap, setSnap] = useState(true)
   const [expanded, setExpanded] = useState(false)
@@ -230,6 +238,9 @@ export function Timeline(props: TimelineProps) {
   const selectedBlurId = selection?.kind === 'blur' ? selection.id : null
   const selectedEffectId = selection?.kind === 'effect' ? selection.id : null
   const selectedTextId = selection?.kind === 'text' ? selection.id : null
+  const selectedShapeId = selection?.kind === 'shape' ? selection.id : null
+  const selectedGroupId = selection?.kind === 'group' ? selection.id : null
+  const groupNames = useMemo(() => new Map((props.groups ?? []).map((group) => [group.id, group.name])), [props.groups])
 
   useEffect(() => {
     const body = bodyRef.current
@@ -247,8 +258,9 @@ export function Timeline(props: TimelineProps) {
 
   const effectKinds = useMemo(() => [...new Set(effects.map((effect) => effect.kind))], [effects])
   const textRows = useMemo(() => Math.max(1, packTextOverlays(textOverlays).rows.length), [textOverlays])
-  const rows = useMemo(() => timelineRows(tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length > 0, effectKinds, textRows),
-    [tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length, effectKinds, textRows])
+  const shapeRows = useMemo(() => packTextOverlays(shapes).rows.length, [shapes])
+  const rows = useMemo(() => timelineRows(tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length > 0, effectKinds, textRows, shapeRows),
+    [tracks, captionTracks, viewport.heightPx, mediaSplit, blurRegions.length, effectKinds, textRows, shapeRows])
   const gridStyle = { gridTemplateRows: trackRows(rows) } as CSSProperties
   const mediaHeightPx = rows.filter((row) => row.kind === 'track').reduce((sum, row) => sum + row.heightPx, 0)
   const trackById = useMemo(() => new Map(tracks.map((track) => [track.id, track])), [tracks])
@@ -655,6 +667,7 @@ export function Timeline(props: TimelineProps) {
         if (cue && word) props.onSelectWord(cue, word)
         props.onContextMenu({ kind, id }, clientX, clientY)
       } else if (kind === 'text') { props.onSelectText?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
+      else if (kind === 'shape') { props.onSelectShape?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
       else if (kind === 'zoomRegion') { props.onSelectZoom?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
       else if (kind === 'blur') { props.onSelectBlur?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
       else if (kind === 'effect') { props.onSelectEffect?.(id); props.onContextMenu({ kind, id }, clientX, clientY) }
@@ -814,9 +827,12 @@ export function Timeline(props: TimelineProps) {
                 if (event.key !== 'Enter') return
                 event.preventDefault(); event.stopPropagation(); props.onSelectEffect?.(region.id); onSeek(region.startUs)
               }} onSeekTrack={seekTrack} />
-            if (row.kind === 'textLane') return <TextLane key="textLane" items={textOverlays} durationUs={durationUs} selectedId={selectedTextId}
+            if (row.kind === 'textLane') return <TextLane key="textLane" items={textOverlays} durationUs={durationUs} selectedId={selectedTextId} selectedGroupId={selectedGroupId} pendingIds={props.pendingGroupIds} groupNames={groupNames}
               onSelect={(id) => { props.onSelectText?.(id); const item = textOverlays.find((entry) => entry.id === id); if (item) onSeek(item.startUs) }}
               onMove={(id, startUs) => props.onTextMove?.(id, startUs)} onTrim={(id, edge, deltaUs) => props.onTextTrim?.(id, edge, deltaUs)} onSeekTrack={seekTrack} />
+            if (row.kind === 'shapeLane') return <ShapeLane key="shapeLane" items={shapes} durationUs={durationUs} selectedId={selectedShapeId} selectedGroupId={selectedGroupId} pendingIds={props.pendingGroupIds} groupNames={groupNames}
+              onSelect={(id) => { props.onSelectShape?.(id); const item = shapes.find((entry) => entry.id === id); if (item) onSeek(item.startUs) }}
+              onMove={(id, startUs) => props.onShapeMove?.(id, startUs)} onTrim={(id, edge, deltaUs) => props.onShapeTrim?.(id, edge, deltaUs)} onSeekTrack={seekTrack} />
             if (row.kind === 'divider') return <div key="divider" className="track-divider-line" aria-hidden="true" />
             const { track } = row
             const onTrack = displayClips.filter((clip) => clip.trackId === track.id)

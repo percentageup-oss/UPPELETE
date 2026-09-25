@@ -197,6 +197,8 @@ export function ShortcutReference() {
       <div><dt>D</dt><dd>Disable / enable the selected clip (a linked video and audio together)</dd></div>
       <div><dt>⌘/Ctrl+Alt+L</dt><dd>Link or unlink the selected video and its audio</dd></div>
       <div><dt>Alt+click</dt><dd>Select one side of a linked pair; edits then affect only that clip</dd></div>
+      <div><dt>Ctrl/Shift+click</dt><dd>Add shapes and titles to a pending selection; then ⌘/Ctrl+G groups them, ⌘/Ctrl+Shift+G ungroups</dd></div>
+      <div><dt>Alt+click / double-click</dt><dd>Select one part of a group instead of the whole group</dd></div>
       <div><dt>Q / W</dt><dd>Trim the start / end of the selected clip (or every clip under the playhead) to the playhead; ripple or overwrite follows the toolbar toggle</dd></div>
       <div><dt>I / O</dt><dd>Mark the In / Out of the export range at the playhead; Shift+I / Shift+O jump to them, X clears the range. Playback stops at Out</dd></div>
       <div><dt>⌘/Ctrl+C, ⌘/Ctrl+V</dt><dd>Copy the selected caption, clip, text or zoom region, then paste a clone of it</dd></div>

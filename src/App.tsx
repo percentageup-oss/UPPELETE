@@ -2,7 +2,9 @@ import { TimingProvenance } from './TimingProvenance'
 import { ExportDialog } from './ExportDialog'
 import { SequenceSettingsDialog } from './SequenceSettingsDialog'
 import { formatFromMedia } from './core/format'
-import type { ExportSettings } from './export/settings'
+import { DEFAULT_EXPORT_SETTINGS, resolveExportFormat, type ExportSettings } from './export/settings'
+import { recordExportSpeed } from './export/exportHistory'
+import { createProgressRate, describeExport, type ExportRateView } from './export/progressRate'
 import { untimedTokenCount } from './core/wordTiming'
 import { parseEditedTimestamp } from './core/time'
 import { diagnosticSummary } from './core/exportDiagnostic'
@@ -52,13 +54,17 @@ import { assetUsers, bindUnboundItems, clipCountByAsset, hasTrimmedClips, primar
 import { TIMELINE_WAVEFORM_PEAKS, type WaveformData } from './core/waveform'
 import { containerPlaybackHint, describeMediaError, describePlayFailure } from './core/codecSupport'
 import { CaptionPreview } from './captions/CaptionPreview'
-import { CompositionLayers, glowFilterStyle, pinnedEffectLayers, type CompositionLayer } from './captions/CompositionLayers'
+import { BLEND_BACKDROP_STYLE, CompositionLayers, glowFilterStyle, hasBlendedLayer, pinnedEffectLayers, type CompositionLayer } from './captions/CompositionLayers'
 import type { Cube3D } from './color/cube'
 import { ClipInspector } from './ClipInspector'
 import { ClipStageEditor } from './ClipStageEditor'
 import { RectStageEditor } from './RectStageEditor'
+import { LineStageEditor } from './LineStageEditor'
 import { MaskStageEditor } from './MaskStageEditor'
 import { LayersPanel } from './LayersPanel'
+import { GroupInspector } from './GroupInspector'
+import { applyGroupCommand, groupMembers, groupSpan, type GroupCommand, type GroupMember } from './core/groupCommands'
+import { glassBounds } from './core/glassMap'
 import { defaultMaskBounds, itemStartUs, layerStackAt, type LayerRow } from './core/layerStack'
 import { defaultMask } from './core/layerMask'
 import type { MaskTarget } from './core/maskCommands'
@@ -66,10 +72,11 @@ import { assetIdOf, gradeSchema, type LayerMask, type MaskPathPoint, type MaskSh
 import { paintAt } from './core/fill'
 import { CaptionStageEditor, type CaptionPlacementPatch } from './CaptionStageEditor'
 import { defaultOverlayRect } from './core/overlayDefaults'
-import type { AdjustmentClip, BackgroundMotion, BlurRegion, CaptionTrack, Clip, ClipFit, ClipSpeed, CompositionRect, EffectRegion, Fill, Grade, ProjectAsset, TextOverlay, Track, VisualClip, ZoomRegion } from './core/edit'
+import type { AdjustmentClip, BlendMode, BackgroundMotion, BlurRegion, CaptionTrack, Clip, ClipFit, ClipSpeed, CompositionRect, EffectRegion, Fill, Grade, ProjectAsset, Shape, TextOverlay, Track, VisualClip, ZoomRegion } from './core/edit'
 import { linkIdOf, linkPartners } from './core/clipLinks'
 import { adjustmentTrackAbove, backgroundTrackFor, clipAt, freeTrackFor, gapsOnTrack, topAdjustmentTrackFor, trackEndUs, type ClipEdge, type EditMode } from './core/clipEdits'
 import { gradeStackFor } from './core/gradeStack'
+import { imagesHostPainted } from './core/hostPainted'
 import { bakedGradeStack } from './color/previewGrade'
 import { useLutAssets } from './app/useLutAssets'
 import { ColorPanel } from './ColorPanel'
@@ -115,12 +122,16 @@ import { compositionScale } from './core/composition'
 import { EffectInspector } from './EffectInspector'
 import { TextInspector } from './TextInspector'
 import { TextOverlayActor } from './captions/TextOverlayActor'
+import { ShapeActor } from './captions/ShapeActor'
+import { ShapeInspector } from './ShapeInspector'
+import { defaultShape, type ShapePreset } from './core/shapeCommands'
+import { belowCaptions, compareLayered } from './core/graphicsOrder'
 import { defaultTextOverlay } from './core/textCommands'
 import { textAnchorAt, type TextAnchor } from './core/textPlacement'
 import { TextStageInput } from './TextStageInput'
 import brandIcon from './assets/brand/icon-dark.png'
 
-type Notice = { tone: 'info' | 'error' | 'warning'; text: string } | null
+type Notice = { tone: 'info' | 'error' | 'warning'; text: string; action?: { label: string; run(): void } } | null
 type SaveStatus = { kind: 'saved'; at: number } | { kind: 'saving' } | { kind: 'error'; message: string }
 /** Changes settle for this long before a named project is rewritten; a window blur flushes sooner. */
 const AUTOSAVE_DELAY_MS = 1000
@@ -189,6 +200,8 @@ export default function App() {
   const [effectDraft, setEffectDraft] = useState<{ id: string; changes: EffectChanges } | null>(null)
   // Layer masks (docs/EDITING.md "Layer masks"): a mask being slid or dragged previews live without touching history.
   const [maskDraft, setMaskDraft] = useState<{ key: string; target: MaskTarget; mask: LayerMask } | null>(null)
+  // Layer opacity (docs/EDITING.md "Layer opacity and blend"): a slider drag previews live, then commits once.
+  const [lookDraft, setLookDraft] = useState<{ key: string; target: MaskTarget; opacity: number } | null>(null)
   const [layerFocus, setLayerFocus] = useState<string | null>(null)
   const [maskEdit, setMaskEdit] = useState<{ key: string; drawing: boolean } | null>(null)
   // An Alt+drag clone on the stage, previewed on a transient track above everything until it commits.
@@ -198,6 +211,17 @@ export default function App() {
   // One selection for every kind of timeline item (one ID namespace). `selectedCueId` keeps every
   // caption read site unchanged.
   const [selection, setSelection] = useState<Selection | null>(null)
+  // Shapes and titles picked with Ctrl/Shift-click, waiting for Ctrl+G. Only meaningful while the
+  // selection is one of them (`pendingItems` below), so any other selection change discards it.
+  const [pendingGroup, setPendingGroup] = useState<{ kind: 'shape' | 'text'; id: string }[]>([])
+  // Modifier keys as they were at the last pointer press, so the stage, timeline and Layers tab can
+  // tell a plain click from Ctrl/Shift-click (add to pending) and Alt-click (select one part).
+  const modifiersRef = useRef({ multi: false, alt: false })
+  useEffect(() => {
+    const record = (event: PointerEvent) => { modifiersRef.current = { multi: event.ctrlKey || event.metaKey || event.shiftKey, alt: event.altKey } }
+    window.addEventListener('pointerdown', record, true)
+    return () => window.removeEventListener('pointerdown', record, true)
+  }, [])
   // Ctrl/Cmd+C snapshots which item to clone by reference; Ctrl/Cmd+V re-resolves it against the
   // live project so a paste after further edits (or the original's deletion) fails cleanly.
   const [clipboardItem, setClipboardItem] = useState<{ kind: 'cue' | 'clip' | 'text' | 'zoomRegion'; id: string } | null>(null)
@@ -304,7 +328,42 @@ export default function App() {
   const captionComposition = useMemo(() => compositionFor(formatAspect(project.format)), [project.format])
   const visibleCues = useMemo(() => dragPreview ? project.cues.map((cue) => cue.id === dragPreview.id ? dragPreview : cue) : project.cues, [project.cues, dragPreview])
   const selected = visibleCues.find((cue) => cue.id === selectedCueId) ?? null
-  const selectedText = selection?.kind === 'text' ? project.textOverlays.find((item) => item.id === selection.id) ?? null : null
+  const [shapeDraft, setShapeDraft] = useState<{ id: string; geometry: Shape['geometry'] } | null>(null)
+  // A group drag or resize previews by applying the same command the release will commit.
+  const [groupDraft, setGroupDraft] = useState<{ command: GroupCommand; rect: CompositionRect; base: CompositionRect } | null>(null)
+  const groupBaseRef = useRef<CompositionRect | null>(null)
+  const groupPreview = useMemo(() => {
+    if (!groupDraft) return null
+    const result = applyGroupCommand(project, groupDraft.command, captionComposition.height)
+    return 'project' in result ? result.project : null
+  }, [project, groupDraft, captionComposition.height])
+  const previewShapes = groupPreview?.shapes ?? project.shapes
+  const previewTexts = groupPreview?.textOverlays ?? project.textOverlays
+  const visibleShapes = useMemo(() => shapeDraft ? previewShapes.map((item) => item.id === shapeDraft.id ? { ...item, geometry: shapeDraft.geometry } : item) : previewShapes, [previewShapes, shapeDraft])
+  // Measured layout boxes of grouped titles, so the group's stage box can wrap them.
+  const [textBounds, setTextBounds] = useState<Record<string, CompositionRect>>({})
+  const captureTextBounds = (id: string, frame: CaptionFrame) => setTextBounds((current) => {
+    if (frame.layout.status !== 'ready') return current
+    const { x, y, width, height } = frame.layout.bounds, old = current[id]
+    return old && old.x === x && old.y === y && old.width === width && old.height === height ? current : { ...current, [id]: { x, y, width, height } }
+  })
+  const selectedGroup = selection?.kind === 'group' ? (project.groups ?? []).find((group) => group.id === selection.id) ?? null : null
+  const groupBox = useMemo((): CompositionRect | null => {
+    if (!selectedGroup) return null
+    const boxes: CompositionRect[] = []
+    for (const member of groupMembers(project, selectedGroup.id)) {
+      if (currentUs < member.item.startUs || currentUs >= member.item.endUs) continue
+      if (member.kind === 'shape') boxes.push(glassBounds(member.item.geometry))
+      else if (textBounds[member.item.id]) boxes.push(textBounds[member.item.id])
+    }
+    if (boxes.length === 0) return null
+    const left = Math.min(...boxes.map((box) => box.x)), top = Math.min(...boxes.map((box) => box.y))
+    const right = Math.max(...boxes.map((box) => box.x + box.width)), bottom = Math.max(...boxes.map((box) => box.y + box.height))
+    return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) }
+  }, [selectedGroup, project, currentUs, textBounds])
+  const selectedShape = selection?.kind === 'shape' ? visibleShapes.find((item) => item.id === selection.id) ?? null : null
+  const stageShape = selectedShape && currentUs >= selectedShape.startUs && currentUs < selectedShape.endUs ? selectedShape : null
+  const selectedText = selection?.kind === 'text' ? previewTexts.find((item) => item.id === selection.id) ?? null : null
   const visibleClips = useMemo(() => {
     let clips = clipDraft ? project.clips.map((clip) => clip.id === clipDraft.id ? clipDraft : clip) : project.clips
     if (cloneDraft) clips = [...clips, { ...cloneDraft, trackId: CLONE_TRACK.id }]
@@ -322,14 +381,21 @@ export default function App() {
     : project.effects, [project.effects, effectDraft])
   const maskDrafted = <T extends { id: string; mask?: LayerMask }>(items: readonly T[], kind: MaskTarget['kind']): readonly T[] =>
     maskDraft && maskDraft.target.kind === kind ? items.map((item) => item.id === maskDraft.target.id ? { ...item, mask: maskDraft.mask } : item) : items
+  const lookDrafted = <T extends { id: string; opacity?: number }>(items: readonly T[], kind: MaskTarget['kind']): readonly T[] =>
+    lookDraft && lookDraft.target.kind === kind ? items.map((item) => item.id === lookDraft.target.id ? { ...item, opacity: lookDraft.opacity } : item) : items
   const stackRows = useMemo(() => railTab === 'layers' ? layerStackAt(project, currentUs) : [], [railTab, project, currentUs])
-  const layerRows = maskDraft ? stackRows.map((row) => row.key === maskDraft.key ? { ...row, mask: maskDraft.mask } : row) : stackRows
+  const layerRows = maskDraft || lookDraft ? stackRows.map((row) => {
+    let next = row
+    if (maskDraft && row.key === maskDraft.key) next = { ...next, mask: maskDraft.mask }
+    if (lookDraft && row.key === lookDraft.key) next = { ...next, opacity: lookDraft.opacity }
+    return next
+  }) : stackRows
   const focusedLayer = layerRows.find((row) => row.key === layerFocus) ?? null
   const editingMask = maskEdit && focusedLayer && maskEdit.key === focusedLayer.key ? maskEdit : null
-  const offscreenSelection = railTab === 'layers' && selection !== null && ['clip', 'text', 'blur', 'effect'].includes(selection.kind)
+  const offscreenSelection = railTab === 'layers' && selection !== null && ['clip', 'text', 'shape', 'blur', 'effect'].includes(selection.kind)
     && !stackRows.some((row) => row.selection?.kind === selection.kind && row.selection.id === selection.id)
   useEffect(() => {
-    if (railTab !== 'layers') { setMaskEdit(null); setMaskDraft(null); return }
+    if (railTab !== 'layers') { setMaskEdit(null); setMaskDraft(null); setLookDraft(null); return }
     // Selecting an item on the timeline or stage focuses its layer.
     const row = stackRows.find((candidate) => selection && candidate.selection?.kind === selection.kind && candidate.selection.id === selection.id)
     if (row) setLayerFocus(row.key)
@@ -486,8 +552,12 @@ export default function App() {
   // from a dismissed save dialog: once a job has run, a result that names no outcome is a bug,
   // not a dismissal, and must never return the UI to idle without saying anything.
   const exportStartedRef = useRef<string | null>(null)
+  const exportRateRef = useRef(createProgressRate())
+  const [exportRate, setExportRate] = useState<ExportRateView | null>(null)
   useEffect(() => window.captionStudio?.onExportProgress((message) => {
     exportStartedRef.current = message.requestId
+    const progress = message.job.progress
+    if (progress?.kind === 'measured' && progress.unit === 'frames') setExportRate(exportRateRef.current.sample(progress.completed, progress.total, performance.now()))
     setExportState((state) => state.kind === 'running' && state.requestId === message.requestId ? { ...state, job: message.job } : state)
   }), [])
 
@@ -503,7 +573,14 @@ export default function App() {
   const startExportVideo = async (settings?: ExportSettings) => {
     if (!window.captionStudio) return
     const requestId = crypto.randomUUID()
+    exportRateRef.current = createProgressRate()
+    setExportRate(null)
     setExportState({ kind: 'running', requestId, job: null })
+    const startedMs = performance.now()
+    const outputFormat = (() => {
+      const source = project.format ?? formatFromMedia(primaryVideoAsset(project)?.metadata)
+      return source ? resolveExportFormat(source, settings ?? DEFAULT_EXPORT_SETTINGS) : null
+    })()
     try {
       const outcome = await window.captionStudio.startExport({ requestId, project, ...(settings ? { settings } : {}) })
       setExportState({ kind: 'ready' })
@@ -513,7 +590,18 @@ export default function App() {
         setNotice({ tone: 'error', text: 'The export stopped without reporting a result. Check the export log in the app data folder.' })
         return
       }
-      if (outcome.state === 'succeeded') setNotice({ tone: 'info', text: `Exported video to ${outcome.path}. Source media was not modified.` })
+      if (outcome.state === 'succeeded') {
+        const seconds = (performance.now() - startedMs) / 1000
+        if (outputFormat && outcome.frameCount > 0 && seconds > 0) recordExportSpeed({ width: outputFormat.width, height: outputFormat.height, framesPerSecond: outcome.frameCount / seconds })
+        setNotice({
+          tone: 'info', text: `Exported video to ${outcome.path}. Source media was not modified.`,
+          action: {
+            label: 'Show in folder',
+            run: () => void window.captionStudio?.revealExport(requestId).then((result) => { if (!result.ok) setNotice({ tone: 'error', text: result.message }) })
+              .catch((error) => setNotice({ tone: 'error', text: errorText(error) })),
+          },
+        })
+      }
       else if (outcome.state === 'cancelled') setNotice({ tone: 'info', text: 'Export cancelled.' })
       else setNotice({ tone: 'error', text: exportErrorText(outcome.error) })
     } catch (error) { setExportState({ kind: 'ready' }); setNotice({ tone: 'error', text: errorText(error) }) }
@@ -1274,9 +1362,12 @@ export default function App() {
   const draftEffect = (effectId: string, changes: EffectChanges) => setEffectDraft({ id: effectId, changes })
   const commitEffect = (effectId: string, changes: EffectChanges) => { setEffectDraft(null); return runCommand({ type: 'effect-update', effectId, changes }) }
   const commitMask = (row: LayerRow, mask: LayerMask | null) => { setMaskDraft(null); return runCommand({ type: 'mask-set', target: row.target, mask }) }
+  const commitLook = (row: LayerRow, opacity: number) => { setLookDraft(null); return runCommand({ type: 'layer-look-set', target: row.target, opacity }) }
+  const changeBlend = (row: LayerRow, blendMode: BlendMode) => runCommand({ type: 'layer-look-set', target: row.target, blendMode })
+  const draftLook = (row: LayerRow, opacity: number) => setLookDraft({ key: row.key, target: row.target, opacity })
   const draftMask = (row: LayerRow, mask: LayerMask | null) => setMaskDraft(mask ? { key: row.key, target: row.target, mask } : null)
   const focusLayer = (row: LayerRow) => {
-    setLayerFocus(row.key); setMaskEdit(null); setMaskDraft(null)
+    setLayerFocus(row.key); setMaskEdit(null); setMaskDraft(null); setLookDraft(null)
     if (row.selection?.kind === 'cue') setSelectedId(row.selection.id)
     else if (row.selection) setSelection(row.selection)
   }
@@ -1629,6 +1720,14 @@ export default function App() {
     setInspectorTab('edit')
     if (runCommand({ type: 'text-add', overlay })) setEditingText({ id: overlay.id, selectAll: true })
   }
+  const addShapeAtPlayhead = (preset: ShapePreset) => {
+    if (durationUs <= 0) { setNotice({ tone: 'warning', text: 'Add a video or caption with duration before adding a shape.' }); return }
+    const startUs = Math.min(currentUs, Math.max(0, durationUs - 1))
+    const endUs = Math.min(durationUs, startUs + 3 * US_PER_SECOND)
+    if (startUs !== currentUs) playback.seek(startUs)
+    setInspectorTab('edit')
+    runCommand({ type: 'shape-add', shape: defaultShape(preset, crypto.randomUUID(), startUs, endUs, captionComposition.height) })
+  }
   const addTextFromPreview = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (target instanceof Element && target.closest('.caption-overlay-hit, .text-overlay-hit, .overlay-handle, .zoom-hit, .blur-hit, button, input, textarea')) return
@@ -1650,12 +1749,93 @@ export default function App() {
   }
   const deletePreset = (id: string) => commit((state) => deleteCaptionPreset(state, id))
 
+  // ---- Groups (schema 22): selection, pending group, and the actions that treat a group as one item ----
+  const pendingItems = selection && (selection.kind === 'shape' || selection.kind === 'text') && pendingGroup.some((entry) => entry.id === selection.id)
+    ? pendingGroup.filter((entry) => entry.kind === 'shape' ? project.shapes.some((item) => item.id === entry.id) : project.textOverlays.some((item) => item.id === entry.id)) : []
+  const groupIdOf = (kind: 'shape' | 'text', id: string) => (kind === 'shape' ? project.shapes : project.textOverlays).find((item) => item.id === id)?.groupId
+  /** A click on a shape or title (stage, timeline or Layers tab): Ctrl/Shift adds it to the pending group, a plain click selects its group, Alt selects just the part. */
+  const selectGraphic = (kind: 'shape' | 'text', id: string) => {
+    const { multi, alt } = modifiersRef.current
+    const current = selectionRef.current
+    if (multi) {
+      if (groupIdOf(kind, id)) { setNotice({ tone: 'error', text: 'That item is already in a group. Alt-click selects it on its own; ungroup it before grouping it again.' }); return }
+      const base = pendingItems.length ? pendingItems : current && (current.kind === 'shape' || current.kind === 'text') && !groupIdOf(current.kind, current.id) ? [{ kind: current.kind, id: current.id }] : []
+      const next = base.some((entry) => entry.id === id) ? base.filter((entry) => entry.id !== id) : [...base, { kind, id }]
+      setPendingGroup(next); setSelection({ kind, id })
+      if (next.length >= 2) setNotice({ tone: 'info', text: `${next.length} items picked. Press ${shortcutLabel('G')} to group them.` })
+      return
+    }
+    setPendingGroup([])
+    const groupId = groupIdOf(kind, id)
+    if (groupId && !alt && !(current?.kind === kind && current.id === id)) setSelection({ kind: 'group', id: groupId })
+    else setSelection({ kind, id })
+  }
+  /** Double-click or Alt-click: the part itself, even when it belongs to a group. */
+  const selectPart = (kind: 'shape' | 'text', id: string) => { setPendingGroup([]); setSelection({ kind, id }) }
+  const groupItems = () => {
+    if (pendingItems.length < 2) return setNotice({ tone: 'error', text: 'Ctrl/Shift-click two or more shapes or titles first, then group them.' })
+    const groupId = crypto.randomUUID()
+    if (runCommand({ type: 'group-create', groupId, itemIds: pendingItems.map((entry) => entry.id) }, () => ({ tone: 'info', text: `Grouped ${pendingItems.length} items.` }))) {
+      setPendingGroup([]); setSelection({ kind: 'group', id: groupId })
+    }
+  }
+  const selectedGroupId = selection?.kind === 'group' ? selection.id
+    : selection && (selection.kind === 'shape' || selection.kind === 'text') ? groupIdOf(selection.kind, selection.id) ?? null : null
+  const ungroupItems = (groupId: string | null = selectedGroupId) => {
+    if (!groupId) return setNotice({ tone: 'error', text: 'Select a group to ungroup it.' })
+    const members = groupMembers(project, groupId)
+    // Ungrouping keeps every item; select the first one so the user lands on something editable.
+    if (runCommand({ type: 'group-ungroup', groupId }, () => ({ tone: 'info', text: 'Ungrouped.' })) && members[0]) setSelection({ kind: members[0].kind, id: members[0].item.id })
+  }
+  const duplicateGroup = (groupId: string) => {
+    const idMap: Record<string, string> = { [groupId]: crypto.randomUUID() }
+    for (const member of groupMembers(project, groupId)) idMap[member.item.id] = crypto.randomUUID()
+    if (runCommand({ type: 'group-duplicate', groupId, idMap })) setSelection({ kind: 'group', id: idMap[groupId] })
+  }
+  /** Moving a grouped item moves the whole group (the drag keeps its offset); Alt moves just that item. */
+  const moveGraphic = (kind: 'shape' | 'text', id: string, startUs: number) => {
+    const item = (kind === 'shape' ? project.shapes : project.textOverlays).find((entry) => entry.id === id)
+    const span = item?.groupId && !modifiersRef.current.alt ? groupSpan(project, item.groupId) : null
+    if (item?.groupId && span) { runCommand({ type: 'group-move', groupId: item.groupId, startUs: span.startUs + (startUs - item.startUs) }); return }
+    if (kind === 'shape') runCommand({ type: 'shape-move', shapeId: id, startUs }); else runCommand({ type: 'text-move', textId: id, startUs })
+  }
+  const groupRectCommand = (groupId: string, base: CompositionRect, rect: CompositionRect): GroupCommand => {
+    if (Math.abs(rect.width - base.width) < .5 && Math.abs(rect.height - base.height) < .5) return { type: 'group-translate', groupId, dx: rect.x - base.x, dy: rect.y - base.y }
+    // A corner resize keeps the opposite corner fixed; that corner is the scale anchor.
+    const anchor = {
+      x: Math.abs(rect.x - base.x) <= Math.abs(rect.x + rect.width - base.x - base.width) ? base.x : base.x + base.width,
+      y: Math.abs(rect.y - base.y) <= Math.abs(rect.y + rect.height - base.y - base.height) ? base.y : base.y + base.height,
+    }
+    return { type: 'group-scale', groupId, factor: Math.max(.01, rect.width / base.width), anchor }
+  }
+  const draftGroupRect = (groupId: string, rect: CompositionRect | null) => {
+    if (!rect || !groupBox) { setGroupDraft(null); groupBaseRef.current = null; return }
+    const base = groupBaseRef.current ?? groupBox
+    groupBaseRef.current = base
+    setGroupDraft({ command: groupRectCommand(groupId, base, rect), rect, base })
+  }
+  const commitGroupRect = (groupId: string, rect: CompositionRect) => {
+    const base = groupBaseRef.current ?? groupBox
+    setGroupDraft(null); groupBaseRef.current = null
+    if (base) runCommand(groupRectCommand(groupId, base, rect))
+  }
+  const groupsHere = useMemo(() => {
+    const map = new Map<string, { name: string; startUs: number; endUs: number; count: number }>()
+    for (const group of project.groups ?? []) {
+      const span = groupSpan(project, group.id)
+      if (span) map.set(group.id, { name: group.name, ...span })
+    }
+    return map
+  }, [project])
+
   const deleteSelection = (ripple: boolean) => {
+    if (selection?.kind === 'group') return runCommand({ type: 'group-delete', groupId: selection.id })
     if (selection?.kind === 'clip') return deleteClip(ripple)
     if (selection?.kind === 'blur') return runCommand({ type: 'blur-delete', blurId: selection.id })
     if (selection?.kind === 'zoomRegion') return runCommand({ type: 'zoom-region-delete', zoomId: selection.id })
     if (selection?.kind === 'effect') return runCommand({ type: 'effect-delete', effectId: selection.id })
     if (selection?.kind === 'text') return runCommand({ type: 'text-delete', textId: selection.id })
+    if (selection?.kind === 'shape') return runCommand({ type: 'shape-delete', shapeId: selection.id })
     if (ripple) return
     if (selectedWord) return deleteSelectedWord()
     return deleteSelectedCue()
@@ -1726,6 +1906,8 @@ export default function App() {
         'show-shortcuts': () => setSettingsTab('shortcuts'),
         'copy-item': copySelection,
         'paste-item': pasteClipboard,
+        'group-items': groupItems,
+        'ungroup-items': () => ungroupItems(),
       }
       actions[action]()
     }
@@ -1829,10 +2011,27 @@ export default function App() {
         ...(target.kind === 'word' ? [{ id: 'ctx-word-delete', label: 'Delete word', onSelect: deleteSelectedWord, disabledReason: selectedWord ? null : 'Select a word first' }] : []),
         { id: 'ctx-cue-delete', label: 'Delete caption', onSelect: deleteSelectedCue },
       ]
-      case 'text': return [
+      case 'text':
+      case 'shape': {
+        const own = (target.kind === 'text' ? project.textOverlays : project.shapes).find((item) => item.id === target.id)
+        const groupId = own?.groupId
+        const groupEntries: MenuEntry[] = groupId ? [
+          { id: 'ctx-group-ungroup', label: 'Ungroup', onSelect: () => ungroupItems(groupId), shortcut: shortcutLabel('⇧G') },
+          { id: 'ctx-group-duplicate', label: 'Duplicate group', onSelect: () => duplicateGroup(groupId) },
+          { id: 'ctx-group-delete', label: 'Delete group', onSelect: () => runCommand({ type: 'group-delete', groupId }), shortcut: 'Del' },
+          { id: 'ctx-group-sep', separator: true },
+        ] : [
+          { id: 'ctx-group-create', label: 'Group picked items', onSelect: groupItems, disabledReason: pendingItems.length >= 2 ? null : 'Ctrl/Shift-click two or more shapes or titles first', shortcut: shortcutLabel('G') },
+          { id: 'ctx-group-sep', separator: true },
+        ]
+        return [...groupEntries, ...(target.kind === 'text' ? [
         { id: 'ctx-text-duplicate', label: 'Duplicate', onSelect: () => runCommand({ type: 'text-duplicate', textId: target.id, duplicateId: crypto.randomUUID() }) },
-        { id: 'ctx-text-delete', label: 'Delete', onSelect: () => runCommand({ type: 'text-delete', textId: target.id }), shortcut: 'Del' },
-      ]
+        { id: 'ctx-text-delete', label: groupId ? 'Delete item only' : 'Delete', onSelect: () => runCommand({ type: 'text-delete', textId: target.id }), shortcut: groupId ? undefined : 'Del' },
+        ] : [
+        { id: 'ctx-shape-duplicate', label: 'Duplicate', onSelect: () => runCommand({ type: 'shape-duplicate', shapeId: target.id, duplicateId: crypto.randomUUID() }) },
+        { id: 'ctx-shape-delete', label: groupId ? 'Delete item only' : 'Delete', onSelect: () => runCommand({ type: 'shape-delete', shapeId: target.id }), shortcut: groupId ? undefined : 'Del' },
+        ])]
+      }
       case 'zoomRegion': {
         const region = project.zoomRegions.find((item) => item.id === target.id)
         return [
@@ -1904,8 +2103,8 @@ export default function App() {
           cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}
           onNeedKey={() => { setSettingsTab('gemini'); setNotice({ tone: 'info', text: 'Add a Gemini API key to align audio.' }) }}
           onApply={(transcript, run, snapshot) => applyAlignedTiming(transcript, run, snapshot, pickedVideo.id)} onMessage={(tone, text) => setNotice({ tone, text })} />}
-        {exportState.kind === 'running' && <span className="job-pill" role="status">
-          <span>Exporting · {describeJob(exportState.job).label}{describeJob(exportState.job).percent === null ? '' : ` ${describeJob(exportState.job).percent}%`}</span>
+        {exportState.kind === 'running' && <span className="job-pill" role="status" title="Uses the project as it was when the export started. You can keep editing.">
+          <span>{describeExport(exportState.job, exportRate).label}</span>
           <button onClick={cancelExportVideo}>Cancel</button>
         </span>}
         {offlineVideos.length > 0 && <button className="warning-chip" onClick={relinkOffline} title={`${offlineVideos.map((asset) => asset.name).join(', ')} not available at the stored location`}>Media offline · Relink</button>}
@@ -1966,7 +2165,7 @@ export default function App() {
           videos={videoAssets(project)} pickedVideo={pickedVideo} onPickVideo={setPickedVideoId} mediaReady={pickedReady} onApplyTranscript={applyTranscript}
           geminiKeyConfigured={Boolean(geminiKey?.configured)} onNeedGeminiKey={() => setSettingsTab('gemini')} onImportSrt={() => void importSrt()} />}
         {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
-          onImportAndAdd={() => void importImageOverlay()} mediaReady />}
+          onImportAndAdd={() => void importImageOverlay()} mediaReady onAddShape={addShapeAtPlayhead} />}
         {railTab === 'titles' && <TitlesPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []} selectedText={selectedText} target={selectedText ? 'text' : 'captions'}
           onApplyTemplate={applyTemplate} onCommitMotion={(motion) => commitStyle({ ...effectiveStyle, motion, titleMotion: undefined })}
           onSavePreset={savePreset} onApplyPreset={applyPreset} onDeletePreset={deletePreset}
@@ -1975,10 +2174,11 @@ export default function App() {
         {railTab === 'effects' && <EffectsPanel onAddAtPlayhead={addEffectPreset} onAddBackground={(look) => addBackground(look, Math.round(currentUs))} />}
         {railTab === 'color' && <ColorPanel lutAssets={lutAssetsList} lutIssues={media.issues} frame={colorFrame} captureSource={() => captureFrame(underElement(), 320)}
           onSaveMatch={saveMatchLut} onAddAtPlayhead={(grade) => addAdjustment(grade, Math.round(currentUs), null)} onImportLut={() => void importLut()} onRelinkLut={(assetId) => void relinkLut(assetId)} />}
-        {railTab === 'layers' && <LayersPanel rows={layerRows} timeLabel={formatTimestamp(currentUs, ':')} units={captionComposition} focusKey={layerFocus}
+        {railTab === 'layers' && <LayersPanel rows={layerRows} groups={groupsHere} selectedGroupId={selection?.kind === 'group' ? selection.id : null}
+          onSelectGroup={(groupId) => setSelection({ kind: 'group', id: groupId })} onRenameGroup={(groupId, name) => runCommand({ type: 'group-rename', groupId, name })} timeLabel={formatTimestamp(currentUs, ':')} units={captionComposition} focusKey={layerFocus}
           editing={editingMask !== null} drawing={editingMask?.drawing ?? false} offscreenSelection={offscreenSelection}
           onFocus={focusLayer} onAddMask={addMask} onEditOnStage={(row) => setMaskEdit({ key: row.key, drawing: false })} onStopEditing={() => setMaskEdit(null)}
-          onDraft={draftMask} onCommit={commitMask} onRemove={(row) => { setMaskEdit(null); commitMask(row, null) }} onReset={resetMask}
+          onDraft={draftMask} onCommit={commitMask} onLookDraft={draftLook} onLookCommit={commitLook} onBlendChange={changeBlend} onRemove={(row) => { setMaskEdit(null); commitMask(row, null) }} onReset={resetMask}
           onJumpToSelection={() => { const at = selection ? itemStartUs(project, selection) : null; if (at !== null) playback.seek(at) }} />}
       </aside>
 
@@ -1995,11 +2195,11 @@ export default function App() {
           }}>
           {project.clips.length || project.cues.length ? <div ref={videoFrameRef} className="video-frame" style={{ '--video-aspect': formatAspect(project.format), transform: stageView.scale === 1 ? undefined : `translate(${stageView.x}px, ${stageView.y}px) scale(${stageView.scale})` } as CSSProperties} onDoubleClick={addTextFromPreview}>
             <CaptionStage clock={clock} cues={visibleCues} dragPreview={dragPreview} composition={captionComposition} style={previewCaptionStyle} display={captionDisplay}
-              tracks={visibleTracks} clips={maskDrafted(visibleClips, 'clip')} assets={project.assets} blurRegions={maskDrafted(visibleBlurRegions, 'blur')} zoomRegions={visibleZoomRegions} effects={maskDrafted(visibleEffects, 'effect')} textOverlays={maskDrafted(project.textOverlays, 'text')} captionTracks={maskDrafted(project.captionTracks, 'captionTrack')} urlOf={media.urlOf} lutCubes={lut.cubes}
+              tracks={visibleTracks} clips={lookDrafted(maskDrafted(visibleClips, 'clip'), 'clip')} assets={project.assets} blurRegions={maskDrafted(visibleBlurRegions, 'blur')} zoomRegions={visibleZoomRegions} effects={maskDrafted(visibleEffects, 'effect')} textOverlays={lookDrafted(maskDrafted(previewTexts, 'text'), 'text')} shapes={lookDrafted(maskDrafted(visibleShapes, 'shape'), 'shape')} captionTracks={lookDrafted(maskDrafted(project.captionTracks, 'captionTrack'), 'captionTrack')} urlOf={media.urlOf} lutCubes={lut.cubes}
               poolVersion={playback.poolVersion} elementFor={(trackId, assetId) => playback.transport.elementFor(trackId, assetId) as HTMLVideoElement | null}
-              selectedCueId={selectedCueId} selectedTextId={selectedText?.id ?? null} onSelectCue={setSelectedId} onSelectText={(textId) => setSelection({ kind: 'text', id: textId })} onStyleDraft={draftStyle} onStyleCommit={commitStyle}
+              selectedCueId={selectedCueId} selectedTextId={selectedText?.id ?? null} selectedShapeId={selectedShape?.id ?? null} onSelectShape={(shapeId) => selectGraphic('shape', shapeId)} onSelectShapePart={(shapeId) => selectPart('shape', shapeId)} onSelectCue={setSelectedId} onSelectText={(textId) => selectGraphic('text', textId)} onTextLayout={captureTextBounds} onStyleDraft={draftStyle} onStyleCommit={commitStyle}
               editingTextId={editingText?.id ?? null} editingTextSelectAll={editingText?.selectAll ?? false}
-              onEditText={(textId) => { setSelection({ kind: 'text', id: textId }); setEditingText({ id: textId, selectAll: false }) }}
+              onEditText={(textId) => { selectPart('text', textId); setEditingText({ id: textId, selectAll: false }) }}
               onFinishTextEdit={() => setEditingText(null)} onCommitText={(textId, text) => runCommand({ type: 'text-update', textId, changes: { text } })}
               onCuePlacementCommit={(cueId, override) => runCommand({ type: 'set-placement-override', cueId, override })} />
             <ClipStageEditor tracks={visibleTracks} clips={visibleClips} composition={captionComposition} clock={clock}
@@ -2019,6 +2219,26 @@ export default function App() {
               onSelect={(id) => setSelection({ kind: 'blur', id })}
               onDraft={(rect) => selection?.kind === 'blur' && (rect ? draftBlurRegion(selection.id, { rect }) : setBlurRegionDraft(null))}
               onCommit={(rect) => selection?.kind === 'blur' && commitBlurRegion(selection.id, { rect })} />
+            {selectedGroup && groupBox && <RectStageEditor label="Group" hitClassName="group-hit" keepAspect
+              region={{ id: selectedGroup.id, rect: groupDraft?.rect ?? groupBox }} composition={captionComposition} selected
+              onSelect={(id) => setSelection({ kind: 'group', id })}
+              onDraft={(rect) => draftGroupRect(selectedGroup.id, rect)}
+              onCommit={(rect) => commitGroupRect(selectedGroup.id, rect)} />}
+            {stageShape && (stageShape.geometry.kind === 'rect' || stageShape.geometry.kind === 'ellipse' || stageShape.geometry.kind === 'highlight') && (() => {
+              const geometry = stageShape.geometry
+              return <RectStageEditor label="Shape" hitClassName="shape-hit" keepAspect={false}
+                region={{ id: stageShape.id, rect: geometry.rect }} composition={captionComposition} selected
+                onSelect={(id) => setSelection({ kind: 'shape', id })}
+                onDraft={(rect) => setShapeDraft(rect ? { id: stageShape.id, geometry: { ...geometry, rect } } : null)}
+                onCommit={(rect) => { setShapeDraft(null); runCommand({ type: 'shape-update', shapeId: stageShape.id, changes: { geometry: { ...geometry, rect } } }) }} />
+            })()}
+            {stageShape?.geometry.kind === 'line' && (() => {
+              const geometry = stageShape.geometry
+              void geometry
+              return <LineStageEditor line={stageShape.geometry} composition={captionComposition}
+                onDraft={(line) => setShapeDraft(line ? { id: stageShape.id, geometry: line } : null)}
+                onCommit={(line) => { setShapeDraft(null); runCommand({ type: 'shape-update', shapeId: stageShape.id, changes: { geometry: line } }) }} />
+            })()}
             {editingMask && focusedLayer && <MaskStageEditor composition={captionComposition} mask={focusedLayer.mask} drawing={editingMask.drawing}
               onDraft={(mask) => draftMask(focusedLayer, mask)} onCommit={(mask) => commitMask(focusedLayer, mask)}
               onCommitDrawn={(points) => finishDrawnMask(focusedLayer, points)} onExit={() => setMaskEdit(null)} />}
@@ -2030,6 +2250,7 @@ export default function App() {
           </div>} />}
           {stageView.scale !== 1 && <button className="stage-zoom-reset" title="Reset preview zoom" onClick={() => setStageView({ scale: 1, x: 0, y: 0 })}>{Math.round(stageView.scale * 100)}% · Reset</button>}
           {selection?.kind === 'cue' && <CaptionShortcutHint />}
+          {pendingItems.length >= 2 && <div className="group-pending-hint" role="status">{pendingItems.length} items picked · {shortcutLabel('G')} to group</div>}
           {summaryAsset?.metadata && <MediaSummary name={summaryAsset.name} metadata={summaryAsset.metadata} format={project.format ?? null} onEditFormat={() => setSequenceSettingsOpen(true)}
             proxyStatus={playbackProxies.statusOf(summaryAsset)} proxyOverride={playbackProxies.override}
             onToggleProxyOverride={() => playbackProxies.setOverride(playbackProxies.override === 'original' ? null : 'original')} />}
@@ -2114,7 +2335,22 @@ export default function App() {
               onCommit={(changes) => commitEffect(selectedEffect.id, changes)}
               onDelete={() => runCommand({ type: 'effect-delete', effectId: selectedEffect.id })}
               onInvalid={(text) => setNotice({ tone: 'error', text })}
-            /> : selectedText ? <TextInspector item={selectedText}
+            /> : selectedGroup ? (() => {
+              const span = groupSpan(project, selectedGroup.id)
+              return span ? <GroupInspector group={selectedGroup} members={groupMembers(project, selectedGroup.id)} startUs={span.startUs} endUs={span.endUs}
+                onRename={(name) => runCommand({ type: 'group-rename', groupId: selectedGroup.id, name })}
+                onMove={(startUs) => runCommand({ type: 'group-move', groupId: selectedGroup.id, startUs })}
+                onSelectPart={(member: GroupMember) => selectPart(member.kind, member.item.id)}
+                onUngroup={() => ungroupItems(selectedGroup.id)} onDuplicate={() => duplicateGroup(selectedGroup.id)}
+                onDelete={() => runCommand({ type: 'group-delete', groupId: selectedGroup.id })}
+                onInvalid={(text) => setNotice({ tone: 'error', text })} /> : null
+            })() : selectedShape ? <ShapeInspector item={selectedShape}
+              onUpdate={(changes) => runCommand({ type: 'shape-update', shapeId: selectedShape.id, changes })}
+              onMove={(startUs) => runCommand({ type: 'shape-move', shapeId: selectedShape.id, startUs })}
+              onLength={(lengthUs) => runCommand({ type: 'shape-trim', shapeId: selectedShape.id, edge: 'end', deltaUs: lengthUs - (selectedShape.endUs - selectedShape.startUs) })}
+              onDuplicate={() => runCommand({ type: 'shape-duplicate', shapeId: selectedShape.id, duplicateId: crypto.randomUUID() })}
+              onDelete={() => runCommand({ type: 'shape-delete', shapeId: selectedShape.id })}
+              onInvalid={(text) => setNotice({ tone: 'error', text })} /> : selectedText ? <TextInspector item={selectedText}
               onUpdate={(changes) => runCommand({ type: 'text-update', textId: selectedText.id, changes })}
               onMove={(startUs) => runCommand({ type: 'text-move', textId: selectedText.id, startUs })}
               onLength={(lengthUs) => runCommand({ type: 'text-trim', textId: selectedText.id, edge: 'end', deltaUs: lengthUs - (selectedText.endUs - selectedText.startUs) })}
@@ -2148,7 +2384,7 @@ export default function App() {
         />
         <div className="inspector-footer">
           {exportState.kind === 'running' ? <span className="export-progress" role="status">
-            <span>{describeJob(exportState.job).label}{describeJob(exportState.job).percent === null ? '' : ` ${describeJob(exportState.job).percent}%`}</span>
+            <span>{describeExport(exportState.job, exportRate).label}</span>
             <button onClick={cancelExportVideo}>Cancel</button>
           </span> : <button className="accent" disabled={!project.cues.length && exportVideoBlocker !== null}
             title={exportVideoBlocker === null ? 'Render the timeline with captions into a new MP4; source media is never modified' : 'Export an SRT subtitle file'}
@@ -2157,7 +2393,7 @@ export default function App() {
       </aside>
     </section>
 
-    <Timeline cues={project.cues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
+    <Timeline cues={project.cues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} shapes={project.shapes} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
       selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
       warningCueIds={warningCueIds} waveforms={waveforms}
       waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
@@ -2169,10 +2405,14 @@ export default function App() {
       onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomClone={(region) => { runCommand({ type: 'zoom-region-add', region }) }} onZoomTrim={trimZoomRegion}
       onSelectBlur={(blurId) => setSelection({ kind: 'blur', id: blurId })} onBlurMove={moveBlurRegion} onBlurTrim={trimBlurRegion}
       onSelectEffect={(effectId) => setSelection({ kind: 'effect', id: effectId })} onEffectMove={moveEffect} onEffectTrim={trimEffect}
-      onSelectText={(textId) => setSelection({ kind: 'text', id: textId })}
+      onSelectText={(textId) => selectGraphic('text', textId)}
+      onSelectShape={(shapeId) => selectGraphic('shape', shapeId)}
+      groups={project.groups} pendingGroupIds={pendingItems.map((entry) => entry.id)}
+      onShapeMove={(shapeId, startUs) => moveGraphic('shape', shapeId, startUs)}
+      onShapeTrim={(shapeId, edge, deltaUs) => runCommand({ type: 'shape-trim', shapeId, edge, deltaUs })}
       onAddText={() => addTextAtPlayhead()}
       onContextMenu={(target, x, y) => setContextMenu({ x, y, target })}
-      onTextMove={(textId, startUs) => runCommand({ type: 'text-move', textId, startUs})}
+      onTextMove={(textId, startUs) => moveGraphic('text', textId, startUs)}
       onTextTrim={(textId, edge, deltaUs) => runCommand({ type: 'text-trim', textId, edge, deltaUs })}
       onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
       trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
@@ -2190,7 +2430,10 @@ export default function App() {
       onCancel={() => setPendingSrt(null)} onReplace={() => { applyParsedSrt(pendingSrt.parsed); setPendingSrt(null) }} />}
     {pendingReset && <DiscardProjectReview kind={pendingReset.kind}
       onCancel={() => setPendingReset(null)} onSaveFirst={() => void saveThenResumePendingReset()} onDiscard={resumePendingReset} />}
-    {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
+    {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>
+      {notice.text}
+      {notice.action && <button className="notice-action" onClick={(event) => { event.stopPropagation(); notice.action?.run() }}>{notice.action.label}</button>}
+    </div>}
   {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} entries={contextEntries(contextMenu.target)} onClose={() => setContextMenu(null)} />}
   </main>
 }
@@ -2202,8 +2445,8 @@ const CLONE_TRACK: Track = { id: '__clone-preview__', kind: 'video', name: '', m
  * small subtree — the transcript list, timeline body and waveform/thumbnails never re-render per
  * frame. It composites every visual clip under the playhead, back to front, then blur, then the
  * caption the one shared rule (`activeCueAt`) picks, evaluated at its own source time. */
-function CaptionStage({ clock, cues, dragPreview, composition, style, display, tracks, clips, assets, blurRegions, zoomRegions, effects, textOverlays, captionTracks, urlOf, elementFor, lutCubes,
-  selectedCueId, selectedTextId, onSelectCue, onSelectText, onStyleDraft, onStyleCommit, onCuePlacementCommit,
+function CaptionStage({ clock, cues, dragPreview, composition, style, display, tracks, clips, assets, blurRegions, zoomRegions, effects, textOverlays, shapes, captionTracks, urlOf, elementFor, lutCubes,
+  selectedCueId, selectedTextId, selectedShapeId, onSelectShape, onSelectShapePart, onTextLayout, onSelectCue, onSelectText, onStyleDraft, onStyleCommit, onCuePlacementCommit,
   editingTextId, editingTextSelectAll, onEditText, onFinishTextEdit, onCommitText }: {
   /** Bumped when the transport creates a pooled element, so a new video layer finds it. */
   poolVersion: number
@@ -2212,6 +2455,7 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   tracks: readonly Track[]; clips: readonly Clip[]; assets: readonly ProjectAsset[]; blurRegions: readonly BlurRegion[]; zoomRegions: readonly ZoomRegion[]
   effects: readonly EffectRegion[]
   textOverlays: readonly TextOverlay[]
+  shapes: readonly Shape[]
   captionTracks: readonly CaptionTrack[]
   urlOf: (asset: ProjectAsset | null | undefined) => string | null
   elementFor: (trackId: string, assetId: string) => HTMLVideoElement | null
@@ -2220,6 +2464,11 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   lutCubes: ReadonlyMap<string, Cube3D>
   selectedCueId: string | null
   selectedTextId: string | null
+  selectedShapeId: string | null
+  onSelectShape: (shapeId: string) => void
+  /** Double-click on a grouped shape: select the shape itself, not its group. */
+  onSelectShapePart: (shapeId: string) => void
+  onTextLayout: (textId: string, frame: CaptionFrame) => void
   onSelectCue: (cueId: string) => void
   onSelectText: (textId: string) => void
   onStyleDraft: (style: CaptionStyle) => void
@@ -2266,21 +2515,20 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   const hiddenGradeTracks = new Set(tracks.filter((track) => track.hidden).map((track) => track.id))
   const gradingClips = clips.filter((clip) => !hiddenGradeTracks.has(clip.trackId))
   const hasAdjustments = gradingClips.some((clip) => clip.kind === 'adjustment' && clip.enabled !== false)
-  const highestVideoTrack = Math.max(-1, ...clips.filter((clip) => clip.kind === 'video' || clip.kind === 'color').map((clip) => trackOrder.get(clip.trackId) ?? -1))
-  const hostPaintedImages = !hasAdjustments && clips.every((clip) => clip.kind !== 'image' || (trackOrder.get(clip.trackId) ?? -1) > highestVideoTrack)
+  const hostPaintedImages = imagesHostPainted(clips, tracks, { adjustments: hasAdjustments })
   const missingLut = activeVisual.flatMap(({ clip }) => gradeStackFor(gradingClips, trackOrder, clip, frameUs))
     .map((adjustment) => adjustment.grade.input)
     .find((input) => input.type === 'lut' && !lutCubes.has(input.assetId))
   const visualLayers = activeVisual.map(({ clip, track }): CompositionLayer => {
-      if (clip.kind === 'color') return { kind: 'color', id: clip.id, paint: paintAt(clip, frameUs), rect: clip.rect ?? null, opacity: clip.opacity, mask: clip.mask }
+      if (clip.kind === 'color') return { kind: 'color', id: clip.id, paint: paintAt(clip, frameUs), rect: clip.rect ?? null, opacity: clip.opacity, blendMode: clip.blendMode, mask: clip.mask }
       const asset = assetById.get(clip.assetId)
       const label = asset?.name ?? 'Missing file'
       // Color: adjustment layers (docs/EDITING.md) — the same bottom-up stack the export plan bakes,
       // resolved here from the live LUT-asset cache instead of an on-disk `.cube` file. `null` (no
       // adjustment layer above it right now) draws the plain, ungraded layer, same as before Slice 4.
       const grade = bakedGradeStack(gradeStackFor(gradingClips, trackOrder, clip, frameUs), lutCubes)
-      if (clip.kind === 'video') return { kind: 'video', id: `${track.id}/${clip.assetId}`, element: elementFor(track.id, clip.assetId), label, rect: clip.rect ?? null, opacity: clip.opacity, fit: clip.fit, mask: clip.mask, grade }
-      return { kind: 'image', id: clip.id, url: urlOf(asset), label, rect: clip.kind === 'image' ? clip.rect ?? null : null, opacity: clip.kind === 'image' ? clip.opacity : 1, fit: clip.kind === 'image' ? clip.fit : 'contain', mask: clip.kind === 'image' ? clip.mask : undefined, grade }
+      if (clip.kind === 'video') return { kind: 'video', id: `${track.id}/${clip.assetId}`, element: elementFor(track.id, clip.assetId), label, rect: clip.rect ?? null, opacity: clip.opacity, blendMode: clip.blendMode, fit: clip.fit, mask: clip.mask, grade }
+      return { kind: 'image', id: clip.id, url: urlOf(asset), label, rect: clip.kind === 'image' ? clip.rect ?? null : null, opacity: clip.kind === 'image' ? clip.opacity : 1, blendMode: clip.kind === 'image' ? clip.blendMode : undefined, fit: clip.kind === 'image' ? clip.fit : 'contain', mask: clip.kind === 'image' ? clip.mask : undefined, grade }
     })
   const pictureLayers: CompositionLayer[] = [
     ...visualLayers.filter((layer) => layer.kind !== 'image' || !hostPaintedImages),
@@ -2295,15 +2543,24 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
     ? <CompositionLayers layers={[{ kind: 'fade', id: 'fade', color: frameEffects.fade.color, opacity: frameEffects.fade.opacity, mask: frameEffects.fade.mask }]} composition={composition} />
     : null
   const activeText = textOverlays.filter((item) => item.startUs <= frameUs && frameUs < item.endUs)
-    .sort((a, b) => a.layerOrder - b.layerOrder || a.startUs - b.startUs || a.id.localeCompare(b.id))
+    .sort(compareLayered)
+  const activeShapes = shapes.filter((item) => item.startUs <= frameUs && frameUs < item.endUs)
   const [textStageFrame, setTextStageFrame] = useState<{ id: string; frame: CaptionFrame | null } | null>(null)
   const captureTextStageFrame = (id: string, frame: CaptionFrame | null) => setTextStageFrame((current) =>
     current?.id === id && current.frame?.layout === frame?.layout ? current : { id, frame })
   const textActor = (item: TextOverlay) => <TextOverlayActor key={item.id} item={item} timestampUs={frameUs} composition={composition}
     onFrame={item.id === selectedTextId ? (frame) => captureTextStageFrame(item.id, frame) : undefined} editing={item.id === editingTextId}
+    onLayout={item.groupId ? (frame) => onTextLayout(item.id, frame) : undefined}
     onPointerDown={() => onSelectText(item.id)} onDoubleClick={() => onEditText(item.id)} />
-  const belowText = activeText.filter((item) => item.layerOrder < 0).map(textActor)
-  const aboveText = activeText.filter((item) => item.layerOrder >= 0).map(textActor)
+  const shapeActor = (item: Shape) => <ShapeActor key={item.id} shape={item} timestampUs={frameUs} composition={composition}
+    onPointerDown={() => onSelectShape(item.id)} onDoubleClick={() => onSelectShapePart(item.id)} />
+  // Text and shapes interleave by one shared layer order, the same sort the export host uses.
+  const graphics = [
+    ...activeText.map((item) => ({ order: item, node: textActor(item) })),
+    ...activeShapes.map((item) => ({ order: item, node: shapeActor(item) })),
+  ].sort((a, b) => compareLayered(a.order, b.order))
+  const belowText = graphics.filter((entry) => belowCaptions(entry.order)).map((entry) => entry.node)
+  const aboveText = graphics.filter((entry) => !belowCaptions(entry.order)).map((entry) => entry.node)
   const editingTextItem = activeText.find((item) => item.id === editingTextId) ?? null
   const selectedStageText = activeText.find((item) => item.id === selectedTextId) ?? null
   const selectedTextFrame = selectedStageText && textStageFrame?.id === selectedStageText.id ? textStageFrame.frame : null
@@ -2335,7 +2592,8 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   return <>
     <CaptionPreview cue={shownCue} timestampUs={sourceUs} composition={composition} inputs={captionInputs} motion={resolvedStyle.motion} motionSpeed={resolvedStyle.motionSpeed} fontSample={lineCue?.text}
       captionMask={captionTracks.find((track) => track.id === lineCue?.captionTrackId)?.mask}
-      onFrame={setStageFrame} layers={<><div style={{ position: 'absolute', inset: 0, ...glowFilter?.style }}>{glowFilter?.defs}<div style={zoomStyle}><div style={pictureStyle}><CompositionLayers layers={pictureLayers} composition={composition} /></div></div></div><CompositionLayers layers={pinnedLayers} composition={composition} />{belowText}</>}
+      captionOpacity={captionTracks.find((track) => track.id === lineCue?.captionTrackId)?.opacity}
+      onFrame={setStageFrame} layers={<><div style={{ position: 'absolute', inset: 0, ...glowFilter?.style }}>{glowFilter?.defs}<div style={zoomStyle}><div style={pictureStyle}>{hasBlendedLayer(pictureLayers) ? <div style={BLEND_BACKDROP_STYLE}><CompositionLayers layers={pictureLayers} composition={composition} /></div> : <CompositionLayers layers={pictureLayers} composition={composition} />}</div></div></div><CompositionLayers layers={pinnedLayers} composition={composition} />{belowText}</>}
       overCaption={<>{aboveText}{fadeLayer}</>} />
     {selectedStageText ? <CaptionStageEditor frame={selectedTextFrame} composition={composition} appearance={selectedStageText.style.appearance}
       selected onSelect={() => onSelectText(selectedStageText.id)} onDoubleClick={() => onEditText(selectedStageText.id)} fixedScope="project"

@@ -1,8 +1,12 @@
-import type { Clip, CompositionRect, LayerMask } from './edit'
+import type { BlendMode, Clip, CompositionRect, LayerMask } from './edit'
 import type { Size } from './composition'
 import type { CaptionProject } from './model'
 import type { MaskTarget } from './maskCommands'
 import type { Selection } from './timelineItems'
+import { compareLayered } from './graphicsOrder'
+import { imagesHostPainted } from './hostPainted'
+import { shapeBox } from './shapePath'
+import { groupSpan } from './groupCommands'
 import { activeClipsAt, activeCueAt, captionTrackLabel, trackLabel } from './timelineModel'
 
 /**
@@ -14,14 +18,20 @@ import { activeClipsAt, activeCueAt, captionTrackLabel, trackLabel } from './tim
  */
 export type LayerRow = {
   key: string
-  kind: 'fade' | 'text' | 'captions' | 'effect' | 'blur' | 'image' | 'video'
+  kind: 'fade' | 'text' | 'shape' | 'captions' | 'effect' | 'blur' | 'image' | 'video'
   label: string
   /** A short kind hint shown beside the label. */
   detail: string
   target: MaskTarget
   mask: LayerMask | null
+  /** 0-1, or null when the layer has no opacity (effects, blur, fade). Absent on the item reads as 1. */
+  opacity: number | null
+  /** Only picture clips blend; null everywhere else. Absent on the clip reads as 'normal'. */
+  blendMode: BlendMode | null
   /** What clicking the row selects on the timeline (a caption plane selects its active cue). */
   selection: Selection | null
+  /** The group this shape or title belongs to (schema 22); the Layers tab nests such rows under a group row. */
+  groupId?: string
   /** False for a caption track with no caption showing at this instant (listed only once the project has captions). */
   active: boolean
 }
@@ -38,19 +48,29 @@ export function layerStackAt(project: CaptionProject, sequenceUs: number): Layer
   const activeEffect = (kind: string) => project.effects.find((effect) => effect.kind === kind && effect.enabled && at >= effect.startUs && at < effect.endUs)
   const effectRow = (kind: 'fade' | 'effect', effect: NonNullable<ReturnType<typeof activeEffect>>): LayerRow => ({
     key: effect.id, kind, label: EFFECT_NAME[effect.kind] ?? effect.kind, detail: 'Effect', target: { kind: 'effect', id: effect.id },
-    mask: 'mask' in effect ? effect.mask ?? null : null, selection: { kind: 'effect', id: effect.id }, active: true,
+    mask: 'mask' in effect ? effect.mask ?? null : null, opacity: null, blendMode: null, selection: { kind: 'effect', id: effect.id }, active: true,
   })
   const textRow = (item: CaptionProject['textOverlays'][number]): LayerRow => ({
     key: item.id, kind: 'text', label: snippet(item.text) || 'Title', detail: 'Title', target: { kind: 'text', id: item.id },
-    mask: item.mask ?? null, selection: { kind: 'text', id: item.id }, active: true,
+    mask: item.mask ?? null, opacity: item.opacity ?? 1, blendMode: null, selection: { kind: 'text', id: item.id }, active: true,
+    ...(item.groupId ? { groupId: item.groupId } : {}),
+  })
+
+  const shapeRow = (item: CaptionProject['shapes'][number]): LayerRow => ({
+    key: item.id, kind: 'shape', label: item.name?.trim() || item.geometry.kind, detail: 'Graphic', target: { kind: 'shape', id: item.id },
+    mask: item.mask ?? null, opacity: item.opacity, blendMode: item.blendMode ?? 'normal', selection: { kind: 'shape', id: item.id }, active: true,
+    ...(item.groupId ? { groupId: item.groupId } : {}),
   })
 
   const fade = activeEffect('fade')
   if (fade) rows.push(effectRow('fade', fade))
 
-  const activeText = project.textOverlays.filter((item) => item.startUs <= at && at < item.endUs)
-    .sort((a, b) => a.layerOrder - b.layerOrder || a.startUs - b.startUs || a.id.localeCompare(b.id))
-  rows.push(...activeText.filter((item) => item.layerOrder >= 0).reverse().map(textRow))
+  // Text and shapes share one layer order (`graphicsOrder.ts`), exactly as preview and export sort them.
+  const activeText = [
+    ...project.textOverlays.filter((item) => item.startUs <= at && at < item.endUs).map((item) => ({ order: item, row: textRow(item) })),
+    ...project.shapes.filter((item) => item.startUs <= at && at < item.endUs).map((item) => ({ order: item, row: shapeRow(item) })),
+  ].sort((a, b) => compareLayered(a.order, b.order))
+  rows.push(...activeText.filter(({ order }) => order.layerOrder >= 0).reverse().map(({ row }) => row))
 
   const shown = activeCueAt(at, project.tracks, project.clips, project.cues)
   const trackIds = shown?.cue.captionTrackId ? [shown.cue.captionTrackId] : shown ? [] : project.cues.length ? project.captionTracks.map((track) => track.id) : []
@@ -58,10 +78,10 @@ export function layerStackAt(project: CaptionProject, sequenceUs: number): Layer
     const track = project.captionTracks.find((candidate) => candidate.id === id)
     if (!track) continue
     rows.push({ key: `captions:${track.id}`, kind: 'captions', label: captionTrackLabel(track, project.captionTracks), detail: 'Captions',
-      target: { kind: 'captionTrack', id: track.id }, mask: track.mask ?? null, selection: shown?.cue.captionTrackId === id ? { kind: 'cue', id: shown.cue.id } : null, active: Boolean(shown) })
+      target: { kind: 'captionTrack', id: track.id }, mask: track.mask ?? null, opacity: track.opacity ?? 1, blendMode: null, selection: shown?.cue.captionTrackId === id ? { kind: 'cue', id: shown.cue.id } : null, active: Boolean(shown) })
   }
 
-  rows.push(...activeText.filter((item) => item.layerOrder < 0).reverse().map(textRow))
+  rows.push(...activeText.filter(({ order }) => order.layerOrder < 0).reverse().map(({ row }) => row))
   for (const kind of PINNED_FRONT_TO_BACK) {
     const effect = activeEffect(kind)
     if (effect) rows.push(effectRow('effect', effect))
@@ -69,21 +89,21 @@ export function layerStackAt(project: CaptionProject, sequenceUs: number): Layer
 
   // Same rule as `CaptionStage`/`buildExportManifest`: images are host-painted (pinned, above the
   // picture) only when every image track sits above every video track.
-  const trackOrder = new Map(project.tracks.map((track, index) => [track.id, index]))
-  const highestVideoTrack = Math.max(-1, ...project.clips.filter((clip) => clip.kind === 'video' || clip.kind === 'color').map((clip) => trackOrder.get(clip.trackId) ?? -1))
-  const hostPaintedImages = project.clips.every((clip) => clip.kind !== 'image' || (trackOrder.get(clip.trackId) ?? -1) > highestVideoTrack)
+
+  const hiddenTracks = new Set(project.tracks.filter((track) => track.hidden).map((track) => track.id))
+  const hostPaintedImages = imagesHostPainted(project.clips, project.tracks, { adjustments: project.clips.some((clip) => clip.kind === 'adjustment' && clip.enabled !== false && !hiddenTracks.has(clip.trackId)) })
   const assets = new Map(project.assets.map((asset) => [asset.id, asset]))
   const visual = activeClipsAt(at, project.tracks, project.clips.filter((clip) => clip.kind !== 'audio' && clip.kind !== 'adjustment'), { skipHidden: true })
     .filter((entry): entry is { clip: Exclude<Clip, { kind: 'audio' | 'adjustment' }>; track: CaptionProject['tracks'][number]; sourceUs: number } => entry.clip.kind !== 'adjustment')
   const clipRow = ({ clip, track }: { clip: Exclude<Clip, { kind: 'audio' | 'adjustment' }>; track: CaptionProject['tracks'][number] }): LayerRow => ({
     key: clip.id, kind: clip.kind === 'image' ? 'image' : 'video', label: clip.kind === 'color' ? (clip.fill.type === 'solid' ? 'Color background' : 'Gradient background') : assets.get(clip.assetId)?.name ?? 'Missing file',
     detail: `${clip.kind === 'image' ? 'Image' : clip.kind === 'color' ? 'Background' : 'Video'} · ${trackLabel(track, project.tracks)}`, target: { kind: 'clip', id: clip.id },
-    mask: clip.mask ?? null, selection: { kind: 'clip', id: clip.id }, active: true,
+    mask: clip.mask ?? null, opacity: clip.opacity, blendMode: clip.blendMode ?? 'normal', selection: { kind: 'clip', id: clip.id }, active: true,
   })
   const front = [...visual].reverse()
   if (hostPaintedImages) rows.push(...front.filter(({ clip }) => clip.kind === 'image').map(clipRow))
   for (const region of project.blurRegions.filter((candidate) => candidate.enabled && at >= candidate.startUs && at < candidate.endUs).reverse()) {
-    rows.push({ key: region.id, kind: 'blur', label: 'Blur', detail: 'Blur area', target: { kind: 'blur', id: region.id }, mask: region.mask ?? null,
+    rows.push({ key: region.id, kind: 'blur', label: 'Blur', detail: 'Blur area', target: { kind: 'blur', id: region.id }, mask: region.mask ?? null, opacity: null, blendMode: null,
       selection: { kind: 'blur', id: region.id }, active: true })
   }
   rows.push(...front.filter(({ clip }) => clip.kind !== 'image' || !hostPaintedImages).map(clipRow))
@@ -98,6 +118,9 @@ export function defaultMaskBounds(row: LayerRow, project: CaptionProject, compos
   if (row.target.kind === 'clip') {
     const clip = project.clips.find((candidate) => candidate.id === row.target.id)
     if (clip && clip.kind !== 'audio' && clip.kind !== 'adjustment' && clip.rect) return clip.rect
+  } else if (row.target.kind === 'shape') {
+    const shape = project.shapes.find((candidate) => candidate.id === row.target.id)
+    if (shape) return shapeBox(shape.geometry)
   } else if (row.target.kind === 'blur') {
     const region = project.blurRegions.find((candidate) => candidate.id === row.target.id)
     if (region) return region.rect
@@ -109,6 +132,8 @@ export function defaultMaskBounds(row: LayerRow, project: CaptionProject, compos
 export function itemStartUs(project: CaptionProject, selection: Selection): number | null {
   if (selection.kind === 'clip') return project.clips.find((clip) => clip.id === selection.id)?.timelineStartUs ?? null
   if (selection.kind === 'text') return project.textOverlays.find((item) => item.id === selection.id)?.startUs ?? null
+  if (selection.kind === 'shape') return project.shapes.find((item) => item.id === selection.id)?.startUs ?? null
+  if (selection.kind === 'group') return groupSpan(project, selection.id)?.startUs ?? null
   if (selection.kind === 'blur') return project.blurRegions.find((region) => region.id === selection.id)?.startUs ?? null
   if (selection.kind === 'effect') return project.effects.find((effect) => effect.id === selection.id)?.startUs ?? null
   return null
