@@ -1,5 +1,13 @@
 # Status
 
+## 2026-09-25 — Export speed 05: honest export progress
+- New `src/export/progressRate.ts`: EWMA frames/s, ETA and `describeExport`; wired into the topbar pill and inspector footer in `App.tsx` (renderer only, no IPC/schema change).
+- Label reads "Preparing…" until FFmpeg reports frames, then "Exporting 42% · about 1:12 left · 38 fps". ETA and fps stay hidden until ≥3 s of samples and ≥2 % progress.
+- Pill tooltip explains the export uses the project as it was when it started.
+- Verified: `npm test -- src/export src/ExportDialog.test.tsx` (87 pass), `npm run typecheck`, on Windows. Not yet watched in the running app.
+- Limitations: shows fps, not "× realtime" (output frame rate isn't available in App).
+- Next: 06.
+
 ## 2026-09-25 — Vox graphics 01: shapes and arrows (schema 17)
 
 **Changes.** New `project.shapes` (schema 16→17, empty by default): rectangles, ellipses, lines, arrows and highlighter bars with solid/dashed/dotted strokes, arrowheads, fills and draw-on / sweep / fade / pop / slide animation. Commands `shape-*` (undoable, MCP `edit`), a Graphics timeline lane, on-video handles (rectangle gizmo; `LineStageEditor` for ends, bend and move), `ShapeInspector`, six presets under Overlays → Shapes, and an MCP `add_shape` tool with presets in `list_creative_options`. Shapes share `layerOrder` with titles (`graphicsOrder.ts`) and appear in the Layers panel. Export: manifest v3 `shapes`, optional `shapeActors` on frame request v4, the same `ShapeActor` in the host, and shape motion in the layer-plan signature so animating shapes are never frozen. Full description: EDITING.md "Shapes (schema 17)". Roadmap slices 2–5 are in ROADMAP.md 4c.
