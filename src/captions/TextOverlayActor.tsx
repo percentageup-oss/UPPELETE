@@ -33,7 +33,7 @@ export function TextOverlayActor({ item, timestampUs, composition, onFrame, onLa
   // The mask sits on a static outer wrapper, so enter/exit motion moves the text under a fixed mask.
   const masked = maskStyle(item.mask, composition, null)
   const content = <div data-text-overlay-id={item.id}
-    style={{ position: 'absolute', inset: 0, opacity: editing ? 0 : motion.opacity,
+    style={{ position: 'absolute', inset: 0, opacity: editing ? 0 : motion.opacity * (item.opacity ?? 1),
       transform, transformOrigin: 'center', pointerEvents: 'none' } as CSSProperties}>
     <CaptionPreview cue={cue} timestampUs={timestampUs} composition={composition} inputs={style}
       motion={item.style.motion} motionSpeed={item.style.motionSpeed} fontSample={item.text} diagnostics={false} onFrame={captureFrame}

@@ -4,6 +4,7 @@ import type { CaptionProject } from './model'
 import type { Clip, TextOverlay } from './edit'
 import { layerStackAt } from './layerStack'
 import { DEFAULT_CAPTION_STYLE } from '../captions/style'
+import { defaultShape } from './shapeCommands'
 
 const US = 1_000_000
 const mask = { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 0, y: 0, width: 10, height: 10 } } }
@@ -33,6 +34,21 @@ describe('layer stack at the playhead', () => {
       blurRegions: [{ id: 'blur', startUs: 0, endUs: 5 * US, enabled: true, radius: 8, rect: { x: 0, y: 0, width: 100, height: 100 } }],
     })
     expect(layerStackAt(p, US).map((row) => row.key)).toEqual(['fade', 'above', 'below', 'vig', 'blur', 'top', 'bottom'])
+  })
+
+  it('reports opacity and blend per layer kind', () => {
+    const p = project({
+      textOverlays: [text('t', 1, { opacity: .5 })],
+      effects: [{ id: 'vig', kind: 'vignette', startUs: 0, endUs: 5 * US, enabled: true, amount: .5, softness: .5 }],
+      blurRegions: [{ id: 'blur', startUs: 0, endUs: 5 * US, enabled: true, radius: 8, rect: { x: 0, y: 0, width: 100, height: 100 } }],
+      clips: [{ kind: 'video', id: 'v', trackId: shared.tracks[0].id, assetId: 'a', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 5 * US, opacity: .7, blendMode: 'screen', fit: 'contain', gain: 1 }],
+      shapes: [{ ...defaultShape('box', 's', 0, 5 * US), blendMode: 'multiply' }],
+    })
+    const look = Object.fromEntries(layerStackAt(p, US).map((row) => [row.key, [row.opacity, row.blendMode]]))
+    expect(look).toEqual({ t: [.5, null], vig: [null, null], blur: [null, null], v: [.7, 'screen'], s: [1, 'multiply'] })
+    expect(layerStackAt(project(), US).find((row) => row.key === 'bottom')).toMatchObject({ opacity: 1, blendMode: 'normal' })
+    const plainShape = project({ shapes: [defaultShape('box', 's2', 0, 5 * US)] })
+    expect(layerStackAt(plainShape, US).find((row) => row.key === 's2')).toMatchObject({ blendMode: 'normal' })
   })
 
   it('carries each item\'s mask and what clicking selects', () => {

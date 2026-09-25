@@ -30,6 +30,15 @@ Milestones 1-4 constitute the first usable release. No milestone is complete mer
 - Image overlays rendered in the shared caption layer; sound effects mixed in export and scheduled in preview; blur regions with a measured preview/export tolerance; trim in/out; cuts.
 Gate: an exported MP4 reflects overlays, blur, sound effects and cuts placed in the editor; preview and export agree within the documented tolerances; undoing a cut restores captions exactly; SRT export of a cut project is in sequence time; source media and assets remain untouched. Measured on the actual target machines.
 
+## 4c. Vox-style graphics (after the first usable release)
+Explainer-style motion graphics — arrows, dotted lines, highlighter sweeps, paper and collage looks, camera focus — built in slices that each ship, are tested and get a STATUS entry. Preview and export share one painter, so none of this needs FFmpeg filter work.
+1. **Shapes and arrows (schema 17).** Rectangle, ellipse, line, arrow and highlight bar with draw-on, fade, pop, sweep and slide; Graphics lane, on-video editing, inspector, export and MCP. *Built; see STATUS.*
+2. **Hand-drawn.** A seeded in-house roughness generator (no rough.js), optional stop-motion "boil", a scribble-circle preset, a freehand pen path tool, curved arrows and dotted path presets.
+3. **Paper look.** A procedural paper/crumple texture frame effect, a graph-paper background preset, image-clip enter/exit animation ("paper drop") and a sticker style (outline, shadow, tilt), plus a "Vox collage" recipe in creative options.
+4. **Camera.** A per-element choice between *follow camera* and *pinned to screen* (`space`) on shapes, text and host-painted images, so an element can move with a zoom or pan; a Focus preset combining zoom, an inverted blur mask and a dim.
+5. **Cut-outs (separate plan).** A local background-removal model and worker so a person can be lifted out as a sticker. Needs its own model-license review and download flow.
+Gate (per slice): the feature works in the editor, an exported MP4 matches preview within the documented tolerance, undo/redo and save/reload are lossless, and Windows and macOS results are reported separately.
+
 ## 5. Distribution
 - Validate macOS Apple Silicon and Windows x64 clean installation.
 - Dependencies/models/fonts license inventory, selected source license, contributor docs and public-release checklist.

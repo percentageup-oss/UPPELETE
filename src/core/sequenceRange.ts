@@ -77,6 +77,7 @@ export function projectInRange(project: CaptionProject, range: SequenceRange): C
     zoomRegions,
     effects: cropItems(project.effects, range),
     textOverlays: cropItems(project.textOverlays, range),
+    shapes: cropItems(project.shapes, range),
     markers: project.markers.filter((marker) => marker.atUs >= range.startUs && marker.atUs < range.endUs).map((marker) => ({ ...marker, atUs: marker.atUs - range.startUs })),
   }
 }

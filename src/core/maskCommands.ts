@@ -8,6 +8,7 @@ import type { Selection } from './timelineItems'
 export type MaskTarget =
   | { kind: 'clip'; id: string }
   | { kind: 'text'; id: string }
+  | { kind: 'shape'; id: string }
   | { kind: 'captionTrack'; id: string }
   | { kind: 'blur'; id: string }
   | { kind: 'effect'; id: string }
@@ -36,6 +37,11 @@ export function applyMaskCommand(project: CaptionProject, command: MaskCommand):
     case 'text': {
       const textOverlays = replaceById(project.textOverlays, target.id, (item) => withMask(item, mask))
       return textOverlays ? { project: { ...project, textOverlays }, selection: { kind: 'text', id: target.id } } : missing
+    }
+    case 'shape': {
+      if (mask && project.shapes.some((item) => item.id === target.id && item.glass)) return failItem('value-range', [target.id], 'A glass shape cannot have a mask.')
+      const shapes = replaceById(project.shapes, target.id, (item) => withMask(item, mask))
+      return shapes ? { project: { ...project, shapes }, selection: { kind: 'shape', id: target.id } } : missing
     }
     case 'captionTrack': {
       const captionTracks = replaceById(project.captionTracks, target.id, (item) => withMask(item, mask))

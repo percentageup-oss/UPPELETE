@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, type CSSProperties, type ReactElement } from 'react'
-import type { CompositionRect, Fill, LayerMask } from '../core/edit'
+import type { BlendMode, CompositionRect, Fill, LayerMask } from '../core/edit'
 import { fillCss, paintAt, type FillPaint } from '../core/fill'
 import { GridPicture } from './GridPicture'
 import { GradedVideo } from './GradedVideo'
@@ -15,16 +15,16 @@ type Fit = 'contain' | 'cover' | 'stretch'
 /** An image, already resolved to a concrete URL (or `null` for a missing asset, shown as a
  * placeholder in the editor preview — the export harness never sees `null`, since export refuses
  * before the job starts when an image is not registered). */
-export type CompositionLayerImage = { kind?: 'image'; id: string; url: string | null; label: string; rect: CompositionRect | null; opacity: number; fit: Fit; mask?: LayerMask
+export type CompositionLayerImage = { kind?: 'image'; id: string; url: string | null; label: string; rect: CompositionRect | null; opacity: number; blendMode?: BlendMode; fit: Fit; mask?: LayerMask
   /** Schema 16: the baked LUT grading this picture (`gradeStackFor`/`bakedGradeStack`, docs/EDITING.md
    * "Color: adjustment layers"), if any enabled adjustment layer is stacked above it right now. */
   grade?: Cube3D | null }
 /** A pooled `<video>` owned by the playback transport, mounted — never created — by `VideoSlot`
  * (or, once `grade` is set, by `GradedVideo`, which takes over mounting it into a WebGL2 canvas). */
-export type CompositionLayerVideo = { kind: 'video'; id: string; element: HTMLVideoElement | null; label: string; rect: CompositionRect | null; opacity: number; fit: Fit; mask?: LayerMask; grade?: Cube3D | null }
+export type CompositionLayerVideo = { kind: 'video'; id: string; element: HTMLVideoElement | null; label: string; rect: CompositionRect | null; opacity: number; blendMode?: BlendMode; fit: Fit; mask?: LayerMask; grade?: Cube3D | null }
 /** A generated background (schema 13). `paint` is already resolved from the clip and the current
  * sequence time by `paintAt`, so this holds no clock of its own — same as the frame-paint effects. */
-export type CompositionLayerColor = { kind: 'color'; id: string; paint: ReturnType<typeof paintAt>; rect: CompositionRect | null; opacity: number; mask?: LayerMask }
+export type CompositionLayerColor = { kind: 'color'; id: string; paint: ReturnType<typeof paintAt>; rect: CompositionRect | null; opacity: number; blendMode?: BlendMode; mask?: LayerMask }
 /** An effect over everything painted below it (`backdrop-filter` blurs what is under the div). */
 export type CompositionLayerBlur = { kind: 'blur'; id: string; rect: CompositionRect; radius: number; mask?: LayerMask }
 /**
@@ -44,6 +44,16 @@ export type CompositionLayerVhs = { kind: 'vhs'; id: string; amount: number; sca
 export type CompositionLayerParticles = { kind: 'particles'; id: string; amount: number; size: number; speed: number; color: string; tick: number; opacity: number; seed: number; mask?: LayerMask }
 export type CompositionLayer = CompositionLayerImage | CompositionLayerVideo | CompositionLayerColor | CompositionLayerBlur
   | CompositionLayerVignette | CompositionLayerLetterbox | CompositionLayerFade | CompositionLayerGrain | CompositionLayerVhs | CompositionLayerParticles
+
+/** CSS `mix-blend-mode` for a picture layer; `normal` adds no property at all. */
+export const blendStyle = (mode: BlendMode | undefined): CSSProperties => mode && mode !== 'normal' ? { mixBlendMode: mode } : {}
+
+/** Whether any picture layer blends. Export then composites on FFmpeg's black canvas, so preview does too. */
+export const hasBlendedLayer = (layers: readonly CompositionLayer[]): boolean =>
+  layers.some((layer) => (layer.kind === 'video' || layer.kind === 'image' || layer.kind === 'color') && layer.blendMode !== undefined && layer.blendMode !== 'normal')
+
+/** Backdrop for blended picture layers: they blend only within this isolated, opaque black group, never with the stage behind it. */
+export const BLEND_BACKDROP_STYLE: CSSProperties = { position: 'absolute', inset: 0, isolation: 'isolate', background: '#000' }
 
 /** The frame-paint layers pinned to the output frame (under captions), back to front. Preview and the
  * export host both build their list here so the two can never disagree about order or content. */
@@ -166,7 +176,7 @@ export function CompositionLayers({ layers, composition }: { layers: readonly Co
       const { base, overlay } = paint
       const pixels = layer.rect ? { width: layer.rect.width * scale, height: layer.rect.height * scale } : composition
       const picture = (fill: Fill, scroll: FillPaint['scroll']) => fill.type === 'grid' ? <GridPicture grid={fill} width={pixels.width} height={pixels.height} scale={scale} scroll={scroll} /> : null
-      return <div key={layer.id} data-color-id={layer.id} style={{ ...box(layer.rect), overflow: 'hidden', opacity: layer.opacity, ...maskStyle(layer.mask, composition, layer.rect) }}>
+      return <div key={layer.id} data-color-id={layer.id} style={{ ...box(layer.rect), overflow: 'hidden', opacity: layer.opacity, ...blendStyle(layer.blendMode), ...maskStyle(layer.mask, composition, layer.rect) }}>
         <div style={{ position: 'absolute', left: `${base.left * 100}%`, top: `${base.top * 100}%`, width: `${base.width * 100}%`, height: `${base.height * 100}%`, background: fillCss(paint.fill) }}>{picture(paint.fill, paint.scroll)}</div>
         {overlay && <div style={{ position: 'absolute', inset: 0, background: fillCss(overlay.fill), opacity: overlay.opacity }}>{picture(overlay.fill, null)}</div>}
       </div>
@@ -241,12 +251,12 @@ export function CompositionLayers({ layers, composition }: { layers: readonly Co
     }
     if (layer.kind === 'fade') return <div key={layer.id} data-fade-id={layer.id} style={{ ...box(null), background: layer.color, opacity: layer.opacity, ...maskStyle(layer.mask, composition, null) }} />
     if (layer.kind === 'video') {
-      const videoStyle = { ...box(layer.rect), opacity: layer.opacity, ...maskStyle(layer.mask, composition, layer.rect) }
+      const videoStyle = { ...box(layer.rect), opacity: layer.opacity, ...blendStyle(layer.blendMode), ...maskStyle(layer.mask, composition, layer.rect) }
       return layer.grade
         ? <GradedVideo key={layer.id} source={{ kind: 'video', element: layer.element }} grade={layer.grade} fit={layer.fit} style={videoStyle} />
         : <VideoSlot key={layer.id} element={layer.element} fit={layer.fit} style={videoStyle} />
     }
-    const style: CSSProperties = { ...box(layer.rect), opacity: layer.opacity, objectFit: layer.fit === 'stretch' ? 'fill' : layer.fit, ...maskStyle(layer.mask, composition, layer.rect) }
+    const style: CSSProperties = { ...box(layer.rect), opacity: layer.opacity, ...blendStyle(layer.blendMode), objectFit: layer.fit === 'stretch' ? 'fill' : layer.fit, ...maskStyle(layer.mask, composition, layer.rect) }
     if (!layer.url) return <div key={layer.id} data-overlay-missing={layer.id} style={{ ...style, boxSizing: 'border-box',
       border: '1px dashed #ffda8b', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden',
       color: '#ffda8b', fontSize: 11, textAlign: 'center', background: '#10101066' }}>{layer.label}</div>

@@ -16,10 +16,13 @@ import { effectiveGain } from '../core/clipLinks'
 import { frameRequestSchema, frameRequestV1Schema, type FrameRequest } from './frameRequest'
 import { DEFAULT_CAPTION_STYLE, resolveCaptionStyle } from '../captions/style'
 import { decorativeTextCue, textMotionAt } from '../captions/textMotion'
-import { backgroundMotionSchema, clipSpeedSchema, fillSchema, textOverlaySchema, type AudioClip, type ImageClip, type MediaClip, type TextOverlay, type VideoClip, type VisualClip } from '../core/edit'
+import { compareLayered } from '../core/graphicsOrder'
+import { BLEND_MODES, type BlendMode, backgroundMotionSchema, clipSpeedSchema, fillSchema, textOverlaySchema, shapeSchema, type AudioClip, type ImageClip, type MediaClip, type TextOverlay, type VideoClip, type VisualClip } from '../core/edit'
 import { captionDisplaySchema, displayCue } from '../captions/wordDisplay'
 import { frameEffectsAt } from '../core/frameEffects'
 import { activeMask } from '../core/layerMask'
+import { imagesHostPainted } from '../core/hostPainted'
+import { graphicsPasses, passOf } from '../core/graphicsPasses'
 import { resolveExportFormat, type ExportSettings } from './settings'
 
 /**
@@ -128,6 +131,8 @@ export const manifestClipSchema = z.strictObject({
   /** Output pixels (`compositionToPixels`); absent fills the frame. */
   rect: manifestPixelRectSchema.optional(),
   opacity: z.number().finite().min(0).max(1), fit: z.enum(['contain', 'cover', 'stretch']),
+  /** Schema 18, picture clips only; emitted only when not `normal`. Any blending clip forces the stacked route. */
+  blendMode: z.enum(BLEND_MODES).optional(),
   /** 0 for a video on a muted track: its picture still plays, its sound does not. */
   gain: z.number().finite().min(0).max(4),
   /** Schema 12, composition units; FFmpeg-composited clips only (host-painted images carry it on the overlay). */
@@ -170,8 +175,12 @@ export const exportManifestV3Schema = z.strictObject({
   /** Glow etc., resolved for FFmpeg (the host layer above ignores these kinds). */
   pictureEffects: z.array(manifestPictureEffectSchema).max(500).default([]),
   textOverlays: z.array(textOverlaySchema).max(1000).default([]),
+  /** Schema 17: vector shapes, host-painted like text, in composition units and sequence time. */
+  shapes: z.array(shapeSchema).max(1000).default([]),
   /** Schema 12: caption-track id → mask, for tracks that have one; the frame request takes the active cue's. */
   captionMasks: z.record(z.string().min(1).max(128), layerMaskSchema).default({}),
+  /** Schema 18: per caption track opacity, only entries below 1. */
+  captionOpacities: z.record(z.string().min(1).max(128), z.number().finite().min(0).max(1)).default({}),
   /** Schema 16: baked 3D LUTs (`src/color/bake.ts`), one per distinct grade (or stacked-grade
    * composition) actually in use, deduped by content — `manifestClipSchema.lutId` names one of these.
    * The worker turns each into an on-disk `.cube` file and applies it with FFmpeg's `lut3d` filter. */
@@ -334,7 +343,20 @@ export function maskFrameRequest(mask: LayerMask, width: number, height: number)
   return frameRequestSchema.parse({ version: 5, composition: { width, height }, cue: { text: ' ', startUs: 0, endUs: 1 }, style: DEFAULT_CAPTION_STYLE, timestampUs: 1_000_000, maskFill: mask })
 }
 
-export function frameRequestAtSequence(manifest: ExportManifestV3, index: number, active?: ActiveCue | null): PlannedFrame {
+/** A fully transparent pass (docs/plans/shape-blend/02-export-passes.md): nothing pinned, no
+ * caption, no graphics — the same shape `frameRequestAtSequence` builds for an empty band, kept as
+ * its own function so the worker can render (and cache) one without a manifest at hand. */
+export function blankFrameRequest(width: number, height: number): FrameRequest {
+  return frameRequestSchema.parse({ version: 1, composition: { width, height }, cue: { text: ' ', startUs: 0, endUs: 1 }, style: DEFAULT_CAPTION_STYLE, timestampUs: 1_000_000, hideCaption: true })
+}
+
+/**
+ * The v3 frame at output index `index`, for one band of the shape-blend pass model
+ * (`graphicsPasses`, docs/plans/shape-blend/02-export-passes.md). `pass` defaults to 0: with no
+ * blending shapes there is exactly one band (band 0 is also the caption band and the last band), so
+ * every filter below is a no-op and the request is byte-identical to before passes existed.
+ */
+export function frameRequestAtSequence(manifest: ExportManifestV3, index: number, active?: ActiveCue | null, pass = 0): PlannedFrame {
   const sequenceUs = frameSourceUs(index, 0, manifest.format.frameRate)
   const found = active === undefined ? manifestActiveCue(manifest, sequenceUs) : active
   const timestampUs = found ? found.sourceUs : sequenceUs
@@ -342,27 +364,57 @@ export function frameRequestAtSequence(manifest: ExportManifestV3, index: number
   const style = resolveCaptionStyle(manifest.style ?? DEFAULT_CAPTION_STYLE, found?.cue)
   const cue = shown ? { text: shown.text || ' ', startUs: shown.startUs, endUs: shown.endUs, words: shown.words, emphasized: shown.emphasized }
     : { text: ' ', startUs: 0, endUs: 1 }
-  const overlays = manifest.overlays.filter((overlay) => sequenceUs >= overlay.startUs && sequenceUs < overlay.endUs)
+  const passes = graphicsPasses(manifest.shapes)
+  const captionPass = passOf({ kind: 'caption' }, passes)
+  const lastPass = passes.count - 1
+  const isBlendPass = pass % 2 === 1
+  const overlays = pass === 0 ? manifest.overlays.filter((overlay) => sequenceUs >= overlay.startUs && sequenceUs < overlay.endUs) : []
   // Evaluated in composition units, the same space `CaptionStage`'s live preview uses — never the
   // manifest's own output-pixel `format` — so `CompositionLayers`' own scale factor is the only
   // pixel conversion either side ever does (docs/EDITING.md "Frame-paint effects").
-  const frameEffects = manifest.effects.length ? frameEffectsAt(manifest.effects, sequenceUs, compositionFor(formatAspect(manifest.format))) : {}
-  const textActors = manifest.textOverlays.filter((item) => item.startUs <= sequenceUs && sequenceUs < item.endUs)
-    .sort((a, b) => a.layerOrder - b.layerOrder || a.startUs - b.startUs || a.id.localeCompare(b.id))
-    .map((item) => {
-      const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs)
-      return { item, cue: decorativeTextCue(item), timestampUs: sequenceUs, ...motion }
-    })
+  const allEffects = manifest.effects.length ? frameEffectsAt(manifest.effects, sequenceUs, compositionFor(formatAspect(manifest.format))) : {}
+  // Pinned effects (vignette/letterbox/grain/vhs/particles) always land in band 0; fade always
+  // lands in the last band — the same split `pinnedEffectLayers`/`fadeLayers` already make in
+  // `frameHarness.tsx`, just decided here so an unrelated band's request never carries them twice.
+  const frameEffects = {
+    ...(pass === 0 ? { vignette: allEffects.vignette, letterbox: allEffects.letterbox, grain: allEffects.grain, vhs: allEffects.vhs, particles: allEffects.particles } : {}),
+    ...(pass === lastPass ? { fade: allEffects.fade } : {}),
+  }
+  const textActors = !isBlendPass
+    ? manifest.textOverlays.filter((item) => item.startUs <= sequenceUs && sequenceUs < item.endUs && passOf({ kind: 'graphic', item }, passes) === pass)
+      .sort(compareLayered)
+      .map((item) => {
+        const { visible: _visible, ...motion } = textMotionAt(item, sequenceUs)
+        return { item, cue: decorativeTextCue(item), timestampUs: sequenceUs, ...motion }
+      })
+    : []
+  // An odd (blend) pass carries exactly its own blending shape — nothing else — and only when it is
+  // actually on the timeline at this frame; an even (normal) pass never carries a blending shape,
+  // since each one is isolated to its own band.
+  const shapeActors = isBlendPass
+    ? (() => {
+      const { shape: passShape } = passes.bands[(pass - 1) / 2]
+      return passShape.startUs <= sequenceUs && sequenceUs < passShape.endUs ? [{ shape: passShape, timestampUs: sequenceUs }] : []
+    })()
+    : manifest.shapes.filter((item) => item.blendMode === undefined && item.startUs <= sequenceUs && sequenceUs < item.endUs && passOf({ kind: 'graphic', item }, passes) === pass)
+      .map((shape) => ({ shape, timestampUs: sequenceUs }))
+  // A glass band is the opaque refraction map, not the shape (the surface paints in the even band after it).
+  const glassMap = isBlendPass && passes.bands[(pass - 1) / 2].kind === 'glass' && shapeActors.length > 0
   const captionMaskValue = found?.cue.captionTrackId ? activeMask(manifest.captionMasks[found.cue.captionTrackId]) : null
+  const captionOpacityValue = found?.cue.captionTrackId ? manifest.captionOpacities[found.cue.captionTrackId] : undefined
   const hasFrameEffects = Boolean(frameEffects.vignette || frameEffects.letterbox || frameEffects.fade || frameEffects.grain || frameEffects.vhs || frameEffects.particles)
-  const hasText = textActors.length > 0
+  const hasText = textActors.length > 0 || shapeActors.length > 0
   const request = frameRequestSchema.parse({
     version: hasText ? 4 : hasFrameEffects ? 3 : overlays.length ? 2 : 1, composition: { width: manifest.format.width, height: manifest.format.height }, cue,
     style, timestampUs, ...(captionMaskValue ? { captionMask: captionMaskValue } : {}),
+    ...(captionOpacityValue !== undefined && captionOpacityValue < 1 ? { captionOpacity: captionOpacityValue } : {}),
+    ...(pass !== captionPass ? { hideCaption: true as const } : {}),
     ...(overlays.length || hasFrameEffects || hasText ? { overlays: overlays.map((overlay) => ({ id: overlay.id, assetUrl: overlay.assetUrl, rect: overlay.rect, opacity: overlay.opacity, fit: overlay.fit, ...(overlay.mask ? { mask: overlay.mask } : {}) })) } : {}),
     ...(hasFrameEffects ? { frameEffects } : {}),
     ...(hasText ? { frameEffects } : {}),
     ...(hasText ? { textActors } : {}),
+    ...(shapeActors.length ? { shapeActors } : {}),
+    ...(glassMap ? { glassMap: true as const } : {}),
   })
   return { request, active: Boolean(found) }
 }
@@ -483,9 +535,11 @@ export function flatSequence(project: CaptionProject): { asset: ProjectAsset; vi
   // v2's frame request builder (`frameRequestAt`) never evaluates frame-paint effects — the same
   // reason zoom forces v3, above.
   if (project.effects.some((effect) => effect.enabled)) return null
-  if (project.textOverlays.length) return null
+  if (project.textOverlays.length || project.shapes.length) return null
+  // v2 has no blend either: a blending clip needs the stacked v3 route.
+  if (project.clips.some((clip) => (clip.kind === 'video' || clip.kind === 'image' || clip.kind === 'color') && (clip.blendMode ?? 'normal') !== 'normal')) return null
   // v2 has no mask input either: any active mask routes through v3.
-  if (project.captionTracks.some((track) => activeMask(track.mask)) || project.blurRegions.some((region) => region.enabled && activeMask(region.mask))
+  if (project.captionTracks.some((track) => activeMask(track.mask) || (track.opacity ?? 1) < 1) || project.blurRegions.some((region) => region.enabled && activeMask(region.mask))
     || project.clips.some((clip) => clip.kind !== 'audio' && clip.kind !== 'adjustment' && activeMask(clip.mask))) return null
   // v2 cannot synthesise a picture, or apply a grade: a generated background or an adjustment layer
   // needs the stacked v3 route (v3 baking the grade into a `lut3d` filter — docs/EDITING.md).
@@ -516,6 +570,8 @@ export function flatSequence(project: CaptionProject): { asset: ProjectAsset; vi
   if ([...images, ...extraAudio].some((clip) => clipEndUs(clip) > cursor)) return null
   return { asset, videos, images, identity, mirroredAudioIds: mirrored }
 }
+
+const blendField = (mode: BlendMode | undefined) => mode && mode !== 'normal' ? { blendMode: mode } : {}
 
 /** The output frame: the project's own, else the caller's fallback (main derives it from the probed first video). */
 export function buildExportManifest(project: CaptionProject, resolver: ExportResolver, fallbackFormat?: SequenceFormat | null, settings?: ExportSettings): BuiltExport {
@@ -588,12 +644,11 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   // v3. Images are painted by the export host — exact preview parity, ADR 0003 — whenever every image
   // sits above every video; only an image genuinely under a video is composited by FFmpeg (ADR 0005).
   // A generated background is composited by FFmpeg like video, so it counts as "under" a host image too.
-  const videoTrackTop = Math.max(-1, ...visual.filter((clip) => clip.kind === 'video' || clip.kind === 'color').map((clip) => order.get(clip.trackId) ?? 0))
   const hiddenAdjustmentTracks = new Set(project.tracks.filter((track) => track.hidden).map((track) => track.id))
   const adjustments = project.clips.filter((clip): clip is AdjustmentClip => clip.kind === 'adjustment' && clip.enabled !== false && !hiddenAdjustmentTracks.has(clip.trackId))
   // Host-painted images bypass FFmpeg's per-clip LUT chain. Route images through FFmpeg whenever
   // an adjustment is present so a graded image can never disappear from the grading path.
-  const hostImages = adjustments.length === 0 && visual.every((clip) => clip.kind !== 'image' || (order.get(clip.trackId) ?? 0) > videoTrackTop)
+  const hostImages = imagesHostPainted(visual, project.tracks, { adjustments: adjustments.length > 0 })
   // One input per clip FFmpeg reads — never shared — so each clip gets its own decoder, seeked
   // straight to its source range (workers/media/exportArguments.ts `exportFilterGraphV3`).
   const inputs: { path: string; kind: 'video' | 'image' | 'audio' }[] = []
@@ -623,7 +678,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
       clips.push({
         id: clip.id, kind: 'color', trackIndex, timelineStartUs: clip.timelineStartUs, sourceStartUs: clip.sourceStartUs, sourceEndUs: clip.sourceEndUs,
         fill: clip.fill, ...(clip.motion ? { motion: clip.motion } : {}), ...(clip.rect ? { rect: compositionToPixels(clip.rect, output) } : {}),
-        opacity: clip.opacity, fit: 'contain', gain: 0, ...(activeMask(clip.mask) ? { mask: clip.mask } : {}),
+        opacity: clip.opacity, fit: 'contain', gain: 0, ...blendField(clip.blendMode), ...(activeMask(clip.mask) ? { mask: clip.mask } : {}),
       })
       continue
     }
@@ -651,6 +706,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
         ...(clip.kind !== 'image' && clip.speed ? { speed: clip.speed } : {}),
         ...(clip.rect ? { rect: compositionToPixels(clip.rect, output) } : {}), opacity: clip.opacity, fit: clip.fit,
         gain: clip.kind === 'video' ? effectiveGain(clip, project.tracks) : 0,
+        ...blendField(clip.blendMode),
         ...(activeMask(clip.mask) ? { mask: clip.mask } : {}),
         ...(lutId ? { lutId } : {}),
       })
@@ -670,7 +726,9 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     effects: effectsFor(sequenceDurationUs),
     pictureEffects: pictureEffectsFor(sequenceDurationUs),
     textOverlays: project.textOverlays.filter((item) => item.startUs < sequenceDurationUs).map((item) => ({ ...item, endUs: Math.min(item.endUs, sequenceDurationUs) })),
+    shapes: project.shapes.filter((item) => item.startUs < sequenceDurationUs).map((item) => ({ ...item, endUs: Math.min(item.endUs, sequenceDurationUs) })),
     captionMasks: Object.fromEntries(project.captionTracks.flatMap((track) => activeMask(track.mask) ? [[track.id, track.mask]] : [])),
+    captionOpacities: Object.fromEntries(project.captionTracks.flatMap((track) => track.opacity !== undefined && track.opacity < 1 ? [[track.id, track.opacity]] : [])),
   })
   return { manifest, plan: planForFormat(format, sequenceDurationUs), inputPaths: inputs.map((input) => input.path) }
 }

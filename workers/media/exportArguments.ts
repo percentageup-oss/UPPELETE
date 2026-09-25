@@ -5,9 +5,11 @@ import {
 import { DEFAULT_VIDEO_ENCODER, videoEncoderArguments, videoEncoderPixelFormat, type VideoEncoderId } from '../../src/core/exportEncoder'
 import { zoomScaleCropExpressions } from '../../src/core/zoomRegion'
 import { activeMask } from '../../src/core/layerMask'
-import type { Fill, LayerMask } from '../../src/core/edit'
+import type { BlendMode, Fill, LayerMask, Shape } from '../../src/core/edit'
+import { glassBounds } from '../../src/core/glassMap'
 import { angleVector, DRIFT_OVERSIZE, DRIFT_TRAVEL, easedPhaseExpression, gradientLine, motionApplies } from '../../src/core/fill'
 import { captionLayerLabel, captionPipeInputArguments, type FrameTransport } from './exportTransport'
+import { graphicsPasses } from '../../src/core/graphicsPasses'
 import { COMPOSITION_WIDTH } from '../../src/core/composition'
 import { constantRate, isConstantSpeed, speedPieces, timelineLengthUs } from '../../src/core/clipTime'
 import {
@@ -247,9 +249,129 @@ export function exportArguments(inputPath: string, outputPath: string, plan: Exp
  * **stacked**: a black canvas with every visual clip overlaid at its position.
  */
 export type V3Route = 'flat' | 'stacked'
+
+/**
+ * FFmpeg `blend` mode names for the W3C blend modes the editor offers. The clip is always the first
+ * (top) input and the picture beneath it the second, so alpha follows the clip; each name is the one
+ * whose result matches the W3C Compositing formulas that preview's `mix-blend-mode` uses, verified
+ * per pixel against real FFmpeg in `blend.test.ts`.
+ */
+export const BLEND_FFMPEG: Record<BlendMode, string> = {
+  // FFmpeg's operand order is the reverse of W3C's for these two: its `overlay` conditions on the top input, which W3C calls hard light.
+  normal: 'normal', multiply: 'multiply', screen: 'screen', overlay: 'hardlight', darken: 'darken', lighten: 'lighten',
+  'hard-light': 'overlay', difference: 'difference', exclusion: 'exclusion',
+}
+
+/**
+ * Blends the full-frame, full-length clip `[clipLabel]` onto `previous` and returns the new label.
+ * Both go to gbrap (straight-alpha planar RGB) for `blend`, whose result carries the clip's alpha
+ * (`c3_mode=normal`), then `overlay` composites it: `(1-a)·backdrop + a·blend(backdrop, clip)`, the
+ * W3C formula for an opaque backdrop.
+ */
+function blendChains(previous: string, clipLabel: string, mode: BlendMode, index: number, chains: string[]): string {
+  const m = BLEND_FFMPEG[mode]
+  chains.push(`${previous}split[pa${index}][pb${index}]`)
+  chains.push(`${clipLabel}format=gbrap[ct${index}]`)
+  chains.push(`[pa${index}]format=gbrap[pt${index}]`)
+  chains.push(`[ct${index}][pt${index}]blend=c0_mode=${m}:c1_mode=${m}:c2_mode=${m}:c3_mode=normal:shortest=1[bl${index}]`)
+  chains.push(`[pb${index}][bl${index}]overlay=0:0:format=auto[b${index}]`)
+  return `[b${index}]`
+}
+/** `blendChains` label indexes for the graphics passes below, kept clear of the (much smaller)
+ * per-clip blend indexes the stacked route's own clip loop assigns. */
+const GRAPHICS_BLEND_LABEL_OFFSET = 100_000
+
+const fixed = (value: number) => Number(value.toFixed(4)).toString()
+
+/**
+ * The glass pass for one glass shape (docs/plans/liquid-glass/04-glass-export-pass.md): blurs, saturates and
+ * refracts the picture under the shape and lays it back over the picture, `enable`d over the shape's own span.
+ * `mapLabel` is the opaque map sub-frame (R/G displacement, B coverage; `GlassMapActor`). The picture is cropped
+ * to the shape's lifetime bounds plus 3 sigma of blur and the largest refraction shift (clamped to the frame),
+ * so the blur never smears the crop edge in and `displace` never samples outside it. Formulas are the ones
+ * measured in docs/STATUS.md (liquid glass 02): CSS `saturate()` matrix, blur sigma = CSS px, and the map
+ * bytes rescaled to whole-pixel shifts before `displace` (which uses its maps per plane, hence the mixers).
+ */
+function glassChains(previous: string, mapLabel: string, shape: Shape & { glass: NonNullable<Shape['glass']> }, manifest: ExportManifestV3, index: number, chains: string[]): string {
+  const { glass } = shape
+  const { width: frameWidth, height: frameHeight } = manifest.format
+  const scale = frameWidth / COMPOSITION_WIDTH
+  const sigma = glass.blur * scale, maxShift = glass.refraction * scale
+  const bounds = glassBounds(shape.geometry)
+  // Slide moves the shape up to 64 units; pop only scales it down, so the bounds never grow otherwise.
+  const travel = shape.enter.kind === 'slide' || shape.exit.kind === 'slide' ? 64 : 0
+  const margin = Math.ceil(3 * sigma + maxShift) + 2
+  const x0 = Math.max(0, Math.floor((bounds.x - travel) * scale - margin)), y0 = Math.max(0, Math.floor((bounds.y - travel) * scale - margin))
+  const x1 = Math.min(frameWidth, Math.ceil((bounds.x + bounds.width + travel) * scale + margin)), y1 = Math.min(frameHeight, Math.ceil((bounds.y + bounds.height + travel) * scale + margin))
+  const box = `${x1 - x0}:${y1 - y0}:${x0}:${y0}:exact=1`
+  const id = `gk${index}`
+  const s = glass.saturation
+  const saturate = s === 1 ? '' : `,colorchannelmixer=rr=${fixed(0.213 + 0.787 * s)}:rg=${fixed(0.715 - 0.715 * s)}:rb=${fixed(0.072 - 0.072 * s)}`
+    + `:gr=${fixed(0.213 - 0.213 * s)}:gg=${fixed(0.715 + 0.285 * s)}:gb=${fixed(0.072 - 0.072 * s)}`
+    + `:br=${fixed(0.213 - 0.213 * s)}:bg=${fixed(0.715 - 0.715 * s)}:bb=${fixed(0.072 + 0.928 * s)}`
+  const blur = sigma > 0 ? `,gblur=sigma=${fixed(sigma)}:steps=2` : ''
+  const shift = `128+(val-128)*${fixed(maxShift)}/127`
+  chains.push(`${previous}split=2[${id}a][${id}b]`)
+  chains.push(`[${id}a]crop=${box},format=gbrp${blur}${saturate}[${id}pic]`)
+  chains.push(`${mapLabel}crop=${box},format=gbrp,split=2[${id}ma][${id}mb]`)
+  chains.push(`[${id}ma]lutrgb=r='${shift}':g='${shift}':b=128,split=2[${id}m1][${id}m2]`)
+  chains.push(`[${id}m1]colorchannelmixer=rr=1:gr=1:br=1:gg=0:bb=0[${id}xm]`)
+  chains.push(`[${id}m2]colorchannelmixer=rr=0:rg=1:gg=1:bg=1:bb=0[${id}ym]`)
+  chains.push(`[${id}mb]extractplanes=b[${id}cov]`)
+  chains.push(`[${id}pic][${id}xm][${id}ym]displace=edge=smear,format=gbrap[${id}dp]`)
+  chains.push(`[${id}dp][${id}cov]alphamerge[${id}gl]`)
+  chains.push(`[${id}b][${id}gl]overlay=x=${x0}:y=${y0}:format=auto:enable='between(t,${usDecimal(shape.startUs)},${usDecimal(shape.endUs)})'[${id}out]`)
+  return `[${id}out]`
+}
+
+/**
+ * Composites the caption-layer pipe onto `pictureLabel`, splitting into the shape-blend pass model
+ * (`graphicsPasses`, docs/plans/shape-blend/02-export-passes.md) whenever the project has a
+ * blending shape. With none, this is exactly the single `overlay` both routes always used — byte
+ * for byte, so a shape-free (or blend-free) export's arguments never change. Pushes onto `chains`
+ * and ends with `[outv]`; used by both the flat and stacked routes, after `pictureEffectChain`.
+ */
+function compositeGraphicsPasses(pictureLabel: string, manifest: ExportManifestV3, transport: FrameTransport, chains: string[]): void {
+  const layer = `[${manifest.inputs.length}:v:0]`
+  const passes = graphicsPasses(manifest.shapes)
+  const captioned = captionLayerLabel(transport, layer, chains)
+  if (passes.count === 1) {
+    chains.push(`${pictureLabel}${captioned}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    return
+  }
+  const { frameRate } = manifest.format
+  const rate = `${frameRate.numerator}/${frameRate.denominator}`
+  const splitLabels = Array.from({ length: passes.count }, (_, pass) => `[gp${pass}]`)
+  chains.push(`${captioned}split=${passes.count}${splitLabels.join('')}`)
+  let previous = pictureLabel
+  for (let pass = 0; pass < passes.count; pass++) {
+    const selected = `[gs${pass}]`
+    chains.push(`${splitLabels[pass]}select='eq(mod(n\\,${passes.count})\\,${pass})',setpts=N/(${rate})/TB${selected}`)
+    if (pass % 2 === 1) {
+      const band = passes.bands[(pass - 1) / 2]
+      previous = band.kind === 'glass'
+        ? glassChains(previous, selected, { ...band.shape, glass: band.shape.glass! }, manifest, GRAPHICS_BLEND_LABEL_OFFSET + pass, chains)
+        : blendChains(previous, selected, band.shape.blendMode!, GRAPHICS_BLEND_LABEL_OFFSET + pass, chains)
+    } else if (pass === passes.count - 1) {
+      chains.push(`${previous}${selected}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    } else {
+      const next = `[gb${pass}]`
+      chains.push(`${previous}${selected}overlay=0:0:alpha=straight:format=auto:eof_action=pass:repeatlast=0${next}`)
+      previous = next
+    }
+  }
+}
+
+/** The caption pipe's own framerate: K sub-frames per output frame at K× the output rate. */
+export function captionPipeRate(manifest: ExportManifestV3): string {
+  const { frameRate } = manifest.format
+  const passes = graphicsPasses(manifest.shapes)
+  return `${frameRate.numerator * passes.count}/${frameRate.denominator}`
+}
+
 export function v3Route(manifest: ExportManifestV3): V3Route {
   const visual = manifest.clips.filter((clip) => clip.kind !== 'audio').sort((a, b) => a.timelineStartUs - b.timelineStartUs)
-  if (!visual.length || visual.some((clip) => clip.kind !== 'video' || clip.trackIndex !== visual[0].trackIndex || clip.rect || clip.opacity !== 1 || activeMask(clip.mask))) return 'stacked'
+  if (!visual.length || visual.some((clip) => clip.kind !== 'video' || clip.trackIndex !== visual[0].trackIndex || clip.rect || clip.opacity !== 1 || clip.blendMode || activeMask(clip.mask))) return 'stacked'
   let cursor = 0
   for (const clip of visual) {
     if (clip.timelineStartUs !== cursor) return 'stacked'
@@ -525,7 +647,6 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
   const duration = usDecimal(manifest.sequenceDurationUs)
-  const layer = `[${manifest.inputs.length}:v:0]`
   const chains: string[] = []
   const visual = manifest.clips.filter((clip) => clip.kind !== 'audio')
   const maskInputs = maskInputIndexes(manifest)
@@ -543,7 +664,7 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
     chains.push(`${ordered.map((_, index) => `[v${index}]`).join('')}concat=n=${ordered.length}:v=1:a=0,fps=fps=${rate}:start_time=0${hasBlur ? ',format=rgba' : ''}[${vLabel}]`)
     const blurred = blurPictureChain(`[${vLabel}]`, manifest.blurRegions, chains, maskInputs.blur)
     const picture = pictureEffectChain(zoomPictureChain(blurred, manifest, 'vz', chains), manifest, chains)
-    chains.push(`${picture}${captionLayerLabel(transport, layer, chains)}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    compositeGraphicsPasses(picture, manifest, transport, chains)
   } else {
     // A black RGBA canvas as long as the sequence; each visual clip, back to front, is padded at its
     // start with transparent frames (`tpad`) so the overlay never stalls waiting for it, and ends
@@ -555,11 +676,17 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
     ordered.forEach((clip, index) => {
       const box = clip.rect ?? { x: 0, y: 0, width, height }
       const alpha = clip.opacity < 1 ? `,colorchannelmixer=aa=${clip.opacity.toFixed(6)}` : ''
+      const blended = clip.blendMode !== undefined && clip.blendMode !== 'normal'
+      // A blended clip becomes a full-frame, full-length transparent-padded layer so `blend` sees the
+      // whole backdrop and the clip's absence outside its rect and its time span leaves the picture untouched.
+      const place = blended ? `,pad=${width}:${height}:${box.x}:${box.y}:color=black@0` : ''
+      const tailUs = manifest.sequenceDurationUs - clip.timelineStartUs - clipLength(clip)
       const pad = clip.timelineStartUs > 0 ? `,tpad=start_duration=${usDecimal(clip.timelineStartUs)}:start_mode=add:color=black@0` : ''
+      const endPad = blended && tailUs > 0 ? `,tpad=stop_duration=${usDecimal(tailUs)}:stop_mode=add:color=black@0` : ''
       const maskInput = maskInputs.clip.get(clip.id)
       // The mask goes on the fitted picture, before opacity and the start padding, so it multiplies
       // whatever transparency `contain` letterboxing already produced.
-      const tail = `setsar=1${maskInput === undefined ? `${alpha}${pad}[c${index}]` : `[cf${index}]`}`
+      const tail = `setsar=1${maskInput === undefined ? `${alpha}${place}${pad}${endPad}[c${index}]` : `[cf${index}]`}`
       if (clip.kind === 'color') {
         // Generated at exactly the box size: nothing to fit, and no input file behind it.
         colorClipChains(clip, box.width, box.height, rate, `k${index}`, chains, manifest.format.width / COMPOSITION_WIDTH)
@@ -568,7 +695,11 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
         + `${fitChain(clip.fit, box.width, box.height, true)},${tail}`)
       if (maskInput !== undefined) {
         chains.push(...maskAlphaChain(`[cf${index}]`, `[${maskInput}:v:0]`, box, `cm${index}`, `cx${index}`))
-        chains.push(`[cx${index}]null${alpha ? alpha : ''}${pad}[c${index}]`)
+        chains.push(`[cx${index}]null${alpha ? alpha : ''}${place}${pad}${endPad}[c${index}]`)
+      }
+      if (blended) {
+        previous = blendChains(previous, `[c${index}]`, clip.blendMode!, index, chains)
+        return
       }
       const next = `[b${index}]`
       chains.push(`${previous}[c${index}]overlay=${box.x}:${box.y}:format=auto:eof_action=pass:repeatlast=0${next}`)
@@ -578,7 +709,7 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
     // rgba too), so blur needs no extra format conversion here.
     const blurred = blurPictureChain(previous, manifest.blurRegions, chains, maskInputs.blur)
     const picture = pictureEffectChain(zoomPictureChain(blurred, manifest, 'vz', chains), manifest, chains)
-    chains.push(`${picture}${captionLayerLabel(transport, layer, chains)}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    compositeGraphicsPasses(picture, manifest, transport, chains)
   }
   const maps = ['-map', '[outv]']
   // Sound: every video clip's own audio (on an unmuted track, with an audio stream) and every audio
@@ -623,7 +754,7 @@ export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string
   const maskInputArguments = targets.flatMap((target, index) => ['-loop', '1', '-framerate', rate, '-t', usDecimal(target.lengthUs), '-i', maskFiles[index]])
   const plan: ExportPlan = { width, height, frameRate, range: { startUs: 0, endUs: manifest.sequenceDurationUs } }
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', ...inputArguments(manifest, rate),
-    '-thread_queue_size', '8', ...captionPipeInputArguments(transport, rate, width, height), '-i', 'pipe:0', ...maskInputArguments,
+    '-thread_queue_size', '8', ...captionPipeInputArguments(transport, captionPipeRate(manifest), width, height), '-i', 'pipe:0', ...maskInputArguments,
     ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
     ...videoEncoderArguments(videoEncoder, videoBitrate(width, height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),

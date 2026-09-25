@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { editCommandSchema, captionCommandSchema, itemCommandSchema } from './editCommandSchema'
 import { ITEM_COMMAND_TYPES } from './itemCommands'
+import { defaultShape } from './shapeCommands'
 import type { CaptionProject, Cue } from './model'
 import type { Clip, ProjectAsset, Track, BlurRegion, Marker } from './edit'
 
@@ -103,6 +104,17 @@ describe('editCommandSchema round trips real commands', () => {
     { name: 'marker-add', command: { type: 'marker-add', marker: marker('m1') } },
     { name: 'marker-update', command: { type: 'marker-update', markerId: 'm1', changes: { text: 'moved note', color: '#ff8800' } } },
     { name: 'mask-set', command: { type: 'mask-set', target: { kind: 'clip', id: 'c1' }, mask: { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'ellipse', rect: { x: 0, y: 0, width: 100, height: 100 } } } } },
+    { name: 'layer-look-set', command: { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, opacity: .5, blendMode: 'multiply' } },
+    { name: 'layer-look-clear-blend', command: { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, blendMode: null } },
+    { name: 'layer-look-set (shape)', command: { type: 'layer-look-set', target: { kind: 'shape', id: 's1' }, blendMode: 'screen' } },
+    { name: 'shape-add', command: { type: 'shape-add', shape: defaultShape('dotted-arrow', 's1', 0, 1_000_000) } },
+    { name: 'shape-update', command: { type: 'shape-update', shapeId: 's1', changes: { opacity: .5, arrowEnd: 'triangle' } } },
+    { name: 'shape-move', command: { type: 'shape-move', shapeId: 's1', startUs: 500_000 } },
+    { name: 'shape-trim', command: { type: 'shape-trim', shapeId: 's1', edge: 'end', deltaUs: -100_000 } },
+    { name: 'shape-duplicate', command: { type: 'shape-duplicate', shapeId: 's1', duplicateId: 's2' } },
+    { name: 'shape-delete', command: { type: 'shape-delete', shapeId: 's1' } },
+    { name: 'shape-reorder', command: { type: 'shape-reorder', shapeId: 's1', direction: 'above-captions' } },
+    { name: 'mask-shape', command: { type: 'mask-set', target: { kind: 'shape', id: 's1' }, mask: null } },
     { name: 'mask-clear', command: { type: 'mask-set', target: { kind: 'captionTrack', id: 'ct' }, mask: null } },
     { name: 'marker-delete', command: { type: 'marker-delete', markerId: 'm1' } },
   ]

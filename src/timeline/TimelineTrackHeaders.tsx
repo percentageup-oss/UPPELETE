@@ -144,6 +144,7 @@ export function TimelineTrackHeaders({ rows, style, currentUs, durationUs, clipC
       }
       if (row.kind === 'textLane') return <div key="textLane" className="track-label track-header text-lane-header"><span className="track-name">Text</span>
         {onAddText && <button type="button" className="track-flag" title="Add text at playhead" aria-label="Add text at playhead" onClick={onAddText}>+</button>}</div>
+      if (row.kind === 'shapeLane') return <div key="shapeLane" className="track-label track-header text-lane-header"><span className="track-name">Graphics</span></div>
       if (row.kind === 'divider') return <div key="divider" className={`track-divider ${dividerActive ? 'dragging' : ''}`} role="separator" aria-orientation="horizontal"
         aria-label="Resize video and audio tracks" aria-valuenow={dividerValue} aria-valuemin={0} aria-valuemax={100} tabIndex={0}
         onPointerDown={onDividerPointerDown} onPointerMove={onDividerPointerMove} onPointerUp={onDividerPointerUp} onPointerCancel={onDividerPointerUp} onKeyDown={onDividerKeyDown}><GripIcon /></div>

@@ -69,7 +69,7 @@ describe('schema 16: adjustment clips', () => {
     expect(projectSchemaV15.safeParse(v15).success).toBe(true)
     const loaded = loadProject(v15)
     expect(loaded.migratedFrom).toBe(15)
-    expect(loaded.project.schemaVersion).toBe(16)
+    expect(loaded.project.schemaVersion).toBe(20)
     expect({ ...loaded.project, schemaVersion: 15 }).toEqual(v15)
   })
 

@@ -1,7 +1,8 @@
 import { COMPOSITION_WIDTH } from './edit'
 import type { CaptionProject } from './model'
 import { MAX_BLENDING_SHAPES, MAX_PASS_SHAPES, blendingShapes, passShapes } from './graphicsPasses'
-import { getTemplate, type MeasuredBlock } from './overlayTemplates'
+import type { MeasuredBlock } from './overlayTemplates'
+import { getTemplate } from './overlayTemplateCatalog'
 import { sequenceDurationUs } from './timelineModel'
 import { failItem, type ItemFailure, type ItemStep } from './itemStep'
 
@@ -21,6 +22,8 @@ export type TemplateCommand = {
   at: { x: number; y: number }
   /** Measured text block size for each text key the template lists in `texts`. */
   measured: Record<string, MeasuredBlock>
+  /** Gives the template's glass-capable shapes the Liquid Glass look. Ignored by templates that have none. */
+  glass?: boolean
 }
 
 const orderKey = (a: { startUs: number; layerOrder: number; id: string }, b: { startUs: number; layerOrder: number; id: string }) =>
@@ -50,7 +53,7 @@ export function applyTemplateCommand(project: CaptionProject, command: TemplateC
   let built
   try {
     built = builder.build({ startUs, endUs: startUs + length, at: command.at, composition: { width: COMPOSITION_WIDTH, height },
-      ids: command.ids.items, measured: command.measured })
+      ids: command.ids.items, measured: command.measured, glass: command.glass })
   } catch (error) {
     return failItem('value-range', [command.templateId], error instanceof Error ? error.message : 'The template could not be built.')
   }

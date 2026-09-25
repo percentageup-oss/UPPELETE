@@ -8,13 +8,23 @@ const units = { width: 1080, height: 608 }
 const noop = () => undefined
 const mask: LayerMask = { enabled: true, invert: false, feather: 12, density: 1, shape: { kind: 'ellipse', rect: { x: 100, y: 50, width: 400, height: 300 } } }
 const row = (key: string, extra: Partial<LayerRow> = {}): LayerRow => ({
-  key, kind: 'video', label: `${key}.mp4`, detail: 'Video · V1', target: { kind: 'clip', id: key }, mask: null, selection: { kind: 'clip', id: key }, active: true, ...extra,
+  key, kind: 'video', label: `${key}.mp4`, detail: 'Video · V1', target: { kind: 'clip', id: key }, mask: null, opacity: 1, blendMode: 'normal', selection: { kind: 'clip', id: key }, active: true, ...extra,
 })
 const render = (rows: LayerRow[], props: Partial<Parameters<typeof LayersPanel>[0]> = {}) => renderToStaticMarkup(
   <LayersPanel rows={rows} timeLabel="00:12.34" units={units} focusKey={null} editing={false} drawing={false} offscreenSelection={false}
-    onFocus={noop} onAddMask={noop} onEditOnStage={noop} onStopEditing={noop} onDraft={noop} onCommit={noop} onRemove={noop} onReset={noop} onJumpToSelection={noop} {...props} />)
+    onFocus={noop} onAddMask={noop} onEditOnStage={noop} onStopEditing={noop} onDraft={noop} onCommit={noop} onLookDraft={noop} onLookCommit={noop} onBlendChange={noop} onRemove={noop} onReset={noop} onJumpToSelection={noop} {...props} />)
 
 describe('Layers panel', () => {
+  it('enables the blend menu for clip rows only, and names a non-normal mode in the row detail', () => {
+    const clip = render([row('a', { blendMode: 'multiply' })], { focusKey: 'a' })
+    expect(clip).not.toMatch(/<select[^>]*id="layer-blend"[^>]*disabled/)
+    expect(clip).toContain('<option value="multiply" selected="">Multiply</option>')
+    expect(clip).toContain('Video · V1 · Multiply')
+    for (const dropped of ['color-dodge', 'color-burn', 'soft-light']) expect(clip).not.toContain(`value="${dropped}"`)
+    const title = render([row('t', { kind: 'text', blendMode: null })], { focusKey: 't' })
+    expect(title).toMatch(/<select[^>]*id="layer-blend"[^>]*disabled/)
+  })
+
   it('lists layers in the order given, with a thumbnail only on masked ones', () => {
     const html = render([row('top', { mask }), row('bottom')])
     expect(html).toContain('at 00:12.34')
@@ -25,7 +35,7 @@ describe('Layers panel', () => {
 
   it('offers the three mask shapes on a focused layer that has none, and explains the caption plane', () => {
     const html = render([row('a'), row('cap', { kind: 'captions', label: 'C1', detail: 'Captions', target: { kind: 'captionTrack', id: 'cap' } })], { focusKey: 'cap' })
-    for (const label of ['+ Rectangle', '+ Ellipse', '+ Pen']) expect(html).toContain(label)
+    for (const label of ['Rectangle', 'Ellipse', 'Pen']) expect(html).toMatch(new RegExp(`<svg[^>]*>.*?</svg> ${label}</button>`))
     expect(html).toContain('whole caption plane')
   })
 

@@ -209,7 +209,7 @@ export function captionTypography(font: CaptionFont): CSSProperties {
     textTransform: font.textTransform, fontStyle: font.italic ? 'italic' : 'normal', fontSynthesis: 'none' }
 }
 
-function fontLoadSpec(font: CaptionFont): string {
+export function fontLoadSpec(font: CaptionFont): string {
   return `${font.italic ? 'italic ' : ''}${font.weight} ${font.size}px ${font.stack}`
 }
 
@@ -285,7 +285,7 @@ export function useCompositionProjection(ref: RefObject<HTMLElement | null>, com
   return preview && preview.width > 0 && preview.height > 0 ? projectCaptionViewport(composition, preview) : null
 }
 
-export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers, overCaption, captionMask, titleMotion }: {
+export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied, motion = 'static-clean', motionSpeed = 1, diagnostics = true, onFrame, fontSample, layers, overCaption, captionMask, captionOpacity, titleMotion, hideCaption }: {
   cue: MotionCue | null
   timestampUs: number; composition: Size; inputs?: LayoutInputs; motion?: CaptionMotion; motionSpeed?: number
   /** Observe the actual preview evaluation; export excludes editor notices from caption pixels. */
@@ -302,9 +302,15 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
   overCaption?: ReactNode
   /** Schema 12: the active caption track's layer mask, applied to the caption plane only. */
   captionMask?: LayerMask | null
+  /** Schema 18: the active caption track's opacity, multiplied onto the caption plane (below 1 only). */
+  captionOpacity?: number
   titleMotion?: TitlePaintState | null
+  /** Shape blend export passes: evaluate the caption as normal (readiness, signature) but paint
+   * nothing — a pass whose band is not the caption plane's own. */
+  hideCaption?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
+  const dimmed = captionOpacity !== undefined && captionOpacity < 1
   const projection = useCompositionProjection(ref, composition)
   const [fontState, setFontState] = useState<{ key: string; status: CaptionFont['readiness']; revision: number }>({ key: '', status: 'loading', revision: 0 })
   const [measurer, setMeasurer] = useState<ReturnType<typeof createDomMeasurer> | null>(null)
@@ -353,7 +359,7 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
   const wordLayout = useMemo(() => layout && cue && measurer && needsWords
     ? layoutCaptionWords(layout, layoutCue!, measurer.measureRange) : layout, [layout, cue, layoutCue, measurer, needsWords])
   const frame = useMemo(() => wordLayout && cue ? captionFrame(wordLayout, cue, timestampUs, motion, motionSpeed) : null, [wordLayout, cue, timestampUs, motion, motionSpeed])
-  const paintedCaption = frame && <CaptionView key={`${motion}:${timestampUs}`} frame={frame} titleMotion={resolvedTitleMotion} />
+  const paintedCaption = !hideCaption && frame && <CaptionView key={`${motion}:${timestampUs}`} frame={frame} titleMotion={resolvedTitleMotion} />
   const animatedCaption = paintedCaption && resolvedTitleMotion ? <div style={{ position: 'absolute', inset: 0,
     opacity: titleVisual.opacity, transform: `translateY(${titleVisual.y}px) scale(${titleVisual.scale})`,
     transformOrigin: `${frame!.layout.bounds.x + frame!.layout.bounds.width / 2}px ${frame!.layout.bounds.y + frame!.layout.bounds.height / 2}px`,
@@ -373,8 +379,9 @@ export function CaptionPreview({ cue, timestampUs, composition, inputs: supplied
     {projection && <div style={{ position: 'absolute', left: projection.x, top: projection.y, width: composition.width,
       height: composition.height, transform: `scale(${projection.scale})`, transformOrigin: 'top left' }}>
       {layers}
-      {animatedCaption && (activeMask(captionMask)
-        ? <div data-caption-mask style={{ position: 'absolute', inset: 0, ...maskStyle(captionMask, composition, null) }}>{animatedCaption}</div>
+      {animatedCaption && (activeMask(captionMask) || dimmed
+        ? <div data-caption-mask={activeMask(captionMask) ? '' : undefined} data-caption-opacity={dimmed ? captionOpacity : undefined}
+          style={{ position: 'absolute', inset: 0, ...maskStyle(captionMask, composition, null), ...(dimmed ? { opacity: captionOpacity } : {}) }}>{animatedCaption}</div>
         : animatedCaption)}
       {overCaption}
     </div>}

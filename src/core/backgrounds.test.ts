@@ -47,7 +47,7 @@ describe('schema 13', () => {
     expect(projectSchemaV12.safeParse(v12).success).toBe(true)
     const loaded = loadProject(v12)
     expect(loaded.migratedFrom).toBe(12)
-    expect(loaded.project.schemaVersion).toBe(16)
+    expect(loaded.project.schemaVersion).toBe(20)
     expect({ ...loaded.project, schemaVersion: 12 }).toEqual(v12)
   })
 

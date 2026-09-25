@@ -2,10 +2,11 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { availableParallelism, tmpdir } from 'node:os'
 import path from 'node:path'
 import {
-  exportManifestSchema, exportPlanSchema, exportFrameCountFor, exportOutputDurationUs, frameRequestAt, frameRequestAtSequence, manifestTimeline, maskFrameRequest, normalizeManifest,
+  blankFrameRequest, exportManifestSchema, exportPlanSchema, exportFrameCountFor, exportOutputDurationUs, frameRequestAt, frameRequestAtSequence, manifestTimeline, maskFrameRequest, normalizeManifest,
   type ExportManifestV3, type PlannedFrame,
 } from '../../src/export/plan'
 import { createLayerPlan } from '../../src/core/layerPlan'
+import { glassShapes, graphicsPasses } from '../../src/core/graphicsPasses'
 import { exportSupportFromConfiguration, type ExportSupport } from '../../src/core/exportSupport'
 import type { VideoEncoderId } from '../../src/core/exportEncoder'
 import { selectVideoEncoder } from './exportEncoderSelect'
@@ -162,7 +163,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // filtergraph, since the graph embeds their on-disk paths as literal `lut3d=file=…` text.
     const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, hostProfileDirectory, videoEncoder) : await prepareV2(manifest, task, tools, signal, probe, plan, videoEncoder)
     // Fixed for the whole job: it is FFmpeg's input format.
-    const transport = dependencies.transport ?? selectFrameTransport()
+    const transport = job.pngOnly ? 'png' : dependencies.transport ?? selectFrameTransport()
     // Cuts can chain hundreds of trim/concat filters; past the Windows argv limit the graph moves
     // to a file passed with `-/filter_complex <file>` instead of being inlined (docs/EDITING.md).
     const graph = job.graph(transport)
@@ -243,26 +244,6 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
       diagnostic: host.diagnostic(),
     }))
-    let previous: RenderedFrame | null = null
-    let gap: RenderedFrame | null = null
-    const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
-    // Render pool: which indices need painting is decided from layer signatures alone (the same rule
-    // as the byte-side reuse below), so the scheduler can plan ahead without any bytes. Each painted
-    // index goes to the next idle host; results are consumed strictly in index order. At most 2N
-    // painted frames are outstanding (in flight or waiting to be consumed), which bounds memory.
-    const frames = new Map<number, LayerFrame>()
-    let plannedTo = 0, plannedPrevious: string | null = null, plannedGap: string | null = null
-    const nextPainted = (): number => {
-      for (; plannedTo < total; plannedTo++) {
-        const frame = job.layer.frameAt(plannedTo)
-        frames.set(plannedTo, frame)
-        const reused = frame.signature === plannedPrevious || frame.signature === plannedGap
-        plannedPrevious = frame.signature
-        if (!reused && frame.activeCueId === null) plannedGap ??= frame.signature
-        if (!reused) return plannedTo++
-      }
-      return total
-    }
     const idleHosts = [...hosts]
     const hostWaiters: ((host: RenderHost) => void)[] = []
     const acquireHost = () => new Promise<RenderHost>((resolve, reject) => {
@@ -271,49 +252,115 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       if (host) resolve(host); else hostWaiters.push(resolve)
     })
     const releaseHost = (host: RenderHost) => { const waiter = hostWaiters.shift(); if (waiter) waiter(host); else idleHosts.push(host) }
-    const renders = new Map<number, Promise<Buffer>>()
-    const dispatch = (index: number, frame: LayerFrame) => {
-      const request = job.request(index, frame).request
-      const promise = acquireHost().then(async (host) => {
-        try { return await fromHost(host, index, request) } finally { releaseHost(host) }
-      })
-      // Bookkeeping only: the real rejection is observed when the loop awaits this render, and one
-      // abandoned by an earlier failure must not surface as an unhandled rejection.
-      promise.catch(() => {})
-      return promise
-    }
-    const window = 2 * hosts.length
-    const fill = () => {
-      while (renders.size < window) {
-        const next = nextPainted()
-        if (next >= total) return
-        renders.set(next, dispatch(next, frames.get(next)!))
-      }
-    }
     const loopStartedAt = performance.now()
     const startupMs = loopStartedAt - startedAt
-    fill()
-    for (let index = 0; index < total; index++) {
-      if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
-      const frame = frames.get(index) ?? job.layer.frameAt(index)
-      frames.delete(index)
-      const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
-      if (cached) {
-        previous = { signature: frame.signature, png: cached }
-        reusedFrames++
-        await toEncoder(index, cached)
-        continue
+    if (job.passCount === 1) {
+      let previous: RenderedFrame | null = null
+      let gap: RenderedFrame | null = null
+      const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
+      // Render pool: which indices need painting is decided from layer signatures alone (the same rule
+      // as the byte-side reuse below), so the scheduler can plan ahead without any bytes. Each painted
+      // index goes to the next idle host; results are consumed strictly in index order. At most 2N
+      // painted frames are outstanding (in flight or waiting to be consumed), which bounds memory.
+      const frames = new Map<number, LayerFrame>()
+      let plannedTo = 0, plannedPrevious: string | null = null, plannedGap: string | null = null
+      const nextPainted = (): number => {
+        for (; plannedTo < total; plannedTo++) {
+          const frame = job.layer.frameAt(plannedTo)
+          frames.set(plannedTo, frame)
+          const reused = frame.signature === plannedPrevious || frame.signature === plannedGap
+          plannedPrevious = frame.signature
+          if (!reused && frame.activeCueId === null) plannedGap ??= frame.signature
+          if (!reused) return plannedTo++
+        }
+        return total
       }
-      const render = renders.get(index) ?? dispatch(index, frame)
-      const waitStart = performance.now()
-      let png: Buffer
-      try { png = await render } finally { hostWaitMs += performance.now() - waitStart }
-      renders.delete(index)
-      paintedFrames++
-      previous = { signature: frame.signature, png }
-      if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
+      const renders = new Map<number, Promise<Buffer>>()
+      const dispatch = (index: number, frame: LayerFrame) => {
+        const request = job.request(index, frame).request
+        const promise = acquireHost().then(async (host) => {
+          try { return await fromHost(host, index, request) } finally { releaseHost(host) }
+        })
+        // Bookkeeping only: the real rejection is observed when the loop awaits this render, and one
+        // abandoned by an earlier failure must not surface as an unhandled rejection.
+        promise.catch(() => {})
+        return promise
+      }
+      const window = 2 * hosts.length
+      const fill = () => {
+        while (renders.size < window) {
+          const next = nextPainted()
+          if (next >= total) return
+          renders.set(next, dispatch(next, frames.get(next)!))
+        }
+      }
       fill()
-      await toEncoder(index, png)
+      for (let index = 0; index < total; index++) {
+        if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
+        const frame = frames.get(index) ?? job.layer.frameAt(index)
+        frames.delete(index)
+        const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
+        if (cached) {
+          previous = { signature: frame.signature, png: cached }
+          reusedFrames++
+          await toEncoder(index, cached)
+          continue
+        }
+        const render = renders.get(index) ?? dispatch(index, frame)
+        const waitStart = performance.now()
+        let png: Buffer
+        try { png = await render } finally { hostWaitMs += performance.now() - waitStart }
+        renders.delete(index)
+        paintedFrames++
+        previous = { signature: frame.signature, png }
+        if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
+        fill()
+        await toEncoder(index, png)
+      }
+    } else {
+      // Shape blend export passes (docs/plans/shape-blend/02-export-passes.md): each output frame is
+      // K sub-frames now, sent down the same pipe in pass order. Each band keeps its own "previous"
+      // reuse cache (the whole-frame cache above only makes sense for one pass), and a pass whose
+      // signature says it paints nothing at all writes one cached blank buffer instead of asking a
+      // host to render (and this loop to wait on) content that is fully transparent either way.
+      const passCount = job.passCount
+      const blankBuffer = transport === 'raw'
+        ? Buffer.alloc(job.width * job.height * 4)
+        : await hosts[0].render(blankFrameRequest(job.width, job.height), 'png')
+      const previous: (RenderedFrame | null)[] = new Array(passCount).fill(null)
+      for (let index = 0; index < total; index++) {
+        if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
+        const frame = job.layer.frameAt(index)
+        const passStates = job.layer.passSignatures(index)
+        const buffers: Buffer[] = new Array(passCount)
+        const toRender: number[] = []
+        for (let pass = 0; pass < passCount; pass++) {
+          const state = passStates[pass]
+          const cached = state.empty ? null : previous[pass]
+          if (state.empty) { buffers[pass] = blankBuffer; reusedFrames++ }
+          else if (cached && cached.signature === state.signature) { buffers[pass] = cached.png; reusedFrames++ }
+          else toRender.push(pass)
+        }
+        if (toRender.length) {
+          const waitStart = performance.now()
+          try {
+            await Promise.all(toRender.map(async (pass) => {
+              const host = await acquireHost()
+              try {
+                const request = job.request(index, frame, pass).request
+                const png = await withinStallDeadline(host.render(request), stallMs, () => ({
+                  message: `Export stalled at frame ${index + 1} of ${total} (pass ${pass + 1} of ${passCount}): the caption renderer returned no frame for ${seconds} s`,
+                  diagnostic: host.diagnostic(),
+                }))
+                buffers[pass] = png
+                previous[pass] = { signature: passStates[pass].signature, png }
+              } finally { releaseHost(host) }
+            }))
+          } finally { hostWaitMs += performance.now() - waitStart }
+          paintedFrames += toRender.length
+        }
+        for (let pass = 0; pass < passCount; pass++) await toEncoder(index, buffers[pass])
+      }
     }
     const loopEndedAt = performance.now()
     for (const host of hosts) host.end()
@@ -359,7 +406,9 @@ type LayerFrame = ReturnType<ReturnType<typeof createLayerPlan>['frameAt']>
 /** Everything the frame loop and encoder need, whichever manifest version drives them. */
 type PreparedExport = {
   layer: ReturnType<typeof createLayerPlan>
-  request: (index: number, frame: LayerFrame) => PlannedFrame
+  /** `pass` selects one band of the shape-blend pass model (`graphicsPasses`) for a v3 manifest;
+   * ignored (and never called with more than one value) when `passCount` is 1. */
+  request: (index: number, frame: LayerFrame, pass?: number) => PlannedFrame
   graph: (transport: FrameTransport) => { filterComplex: string; hasAudioOut: boolean }
   args: (transport: FrameTransport, filterComplexScriptPath?: string, maskFiles?: readonly string[]) => string[]
   overlayUrls: string[]
@@ -369,6 +418,13 @@ type PreparedExport = {
   width: number
   height: number
   frameRate: ExportManifestV3['format']['frameRate']
+  /** K in the shape-blend pass model (docs/plans/shape-blend/02-export-passes.md): 1 for every
+   * manifest with no blending shapes (v1/v2 always; v3 unless the project has one), which keeps the
+   * frame loop's single-request-per-output-frame path exactly as it was before passes existed. */
+  passCount: number
+  /** True when a glass shape is present: its map sub-frame must reach FFmpeg exactly, and raw transport has the
+   * documented un-premultiply bug, so the job uses PNG whatever was requested (docs/plans/liquid-glass/04-glass-export-pass.md). */
+  pngOnly?: boolean
 }
 
 /** Manifests v1/v2: one source media, X2's byte-identical encoder arguments. */
@@ -402,6 +458,7 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
     masks: [],
     frameCount: exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate),
     width: plan.width, height: plan.height, frameRate: plan.frameRate,
+    passCount: 1,
   }
 }
 
@@ -450,12 +507,14 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
   const graphFor = (transport: FrameTransport) => graphs.get(transport) ?? (graphs.set(transport, exportFilterGraphV3(manifest, hasAudioByInput, lutPaths, transport)), graphs.get(transport)!)
   return {
     layer,
-    request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
+    request: (index, frame, pass) => frameRequestAtSequence(manifest, index, frame.active, pass),
     graph: graphFor,
     args: (transport, script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graphFor(transport), videoEncoder, transport),
     overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
     masks: maskTargets(manifest),
     frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),
     width, height, frameRate,
+    passCount: graphicsPasses(manifest.shapes).count,
+    pngOnly: glassShapes(manifest.shapes).length > 0,
   }
 }

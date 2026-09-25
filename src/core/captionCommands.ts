@@ -54,7 +54,7 @@ export type CaptionCommand =
  */
 export type ValidationIssue = {
   kind: 'invalid-duration' | 'media-bounds' | 'word-containment' | 'word-text' | 'overlap' | 'estimate-skipped'
-    | 'asset-missing' | 'asset-kind' | 'rect-bounds' | 'clip-order' | 'clip-empty' | 'gain-range' | 'asset-in-use'
+    | 'asset-missing' | 'asset-kind' | 'rect-bounds' | 'clip-order' | 'clip-empty' | 'gain-range' | 'value-range' | 'asset-in-use'
   cueIds: string[]
   message: string
 }

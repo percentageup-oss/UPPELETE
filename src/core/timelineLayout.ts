@@ -32,6 +32,7 @@ export const MIN_TRACK_PX = 28
 export type TimelineRow =
   | { id: 'ruler'; kind: 'ruler'; heightPx: number }
   | { id: 'textLane'; kind: 'textLane'; heightPx: number }
+  | { id: 'shapeLane'; kind: 'shapeLane'; heightPx: number }
   | { id: string; kind: 'captionTrack'; track: CaptionTrack; label: string; heightPx: number }
   | { id: 'zoomLane'; kind: 'zoomLane'; heightPx: number }
   | { id: 'blurLane'; kind: 'blurLane'; heightPx: number }
@@ -50,7 +51,7 @@ function stackHeights(tracks: readonly Track[], total: number): number[] {
 /** `split` is the video stack's share (0-1) of the space below the captions and the effect lanes.
  * `effectKinds` are the frame-paint kinds actually present in the project (any order; shown in
  * `EFFECT_KIND_ORDER`), each getting its own lane the same way blur's does. */
-export function timelineRows(tracks: readonly Track[], captionTracks: readonly CaptionTrack[], bodyHeightPx: number, split: number, hasBlur = false, effectKinds: readonly EffectRegionKind[] = [], textRows = 1): TimelineRow[] {
+export function timelineRows(tracks: readonly Track[], captionTracks: readonly CaptionTrack[], bodyHeightPx: number, split: number, hasBlur = false, effectKinds: readonly EffectRegionKind[] = [], textRows = 1, shapeRows = 0): TimelineRow[] {
   const video = tracks.filter((track) => track.kind === 'video').reverse()
   const audio = tracks.filter((track) => track.kind === 'audio')
   const captionsHeightPx = CAPTIONS_HEIGHT_PX * captionTracks.length
@@ -60,7 +61,9 @@ export function timelineRows(tracks: readonly Track[], captionTracks: readonly C
   const shownEffectKinds = EFFECT_KIND_ORDER.filter((kind) => present.has(kind))
   const effectLanesHeightPx = ZOOM_LANE_HEIGHT_PX + (hasBlur ? BLUR_LANE_HEIGHT_PX : 0) + shownEffectKinds.length * EFFECT_LANE_HEIGHT_PX
   const textLaneHeightPx = TEXT_LANE_HEIGHT_PX + Math.max(0, textRows - 1) * 18
-  const media = Math.max(minVideo + minAudio, bodyHeightPx - RULER_HEIGHT_PX - captionsHeightPx - effectLanesHeightPx - textLaneHeightPx - DIVIDER_HEIGHT_PX)
+  // The Graphics lane (schema 17) is shown only when the project has a shape, like the blur lane.
+  const shapeLaneHeightPx = shapeRows > 0 ? TEXT_LANE_HEIGHT_PX + (shapeRows - 1) * 18 : 0
+  const media = Math.max(minVideo + minAudio, bodyHeightPx - RULER_HEIGHT_PX - captionsHeightPx - effectLanesHeightPx - textLaneHeightPx - shapeLaneHeightPx - DIVIDER_HEIGHT_PX)
   const videoStack = Math.round(Math.min(media - minAudio, Math.max(minVideo, media * Math.max(0, Math.min(1, split)))))
   const videoHeights = stackHeights(video, videoStack)
   const audioHeights = stackHeights(audio, media - videoStack)
@@ -71,6 +74,7 @@ export function timelineRows(tracks: readonly Track[], captionTracks: readonly C
     { id: 'ruler', kind: 'ruler', heightPx: RULER_HEIGHT_PX },
     ...captionTracks.map(captionRow),
     { id: 'textLane', kind: 'textLane', heightPx: textLaneHeightPx },
+    ...(shapeRows > 0 ? [{ id: 'shapeLane' as const, kind: 'shapeLane' as const, heightPx: shapeLaneHeightPx }] : []),
     // One fixed lane, always shown: zoom regions belong to the whole program, not to one video
     // track, so there is nothing to add/remove/reorder here — just a permanent drop target.
     { id: 'zoomLane', kind: 'zoomLane', heightPx: ZOOM_LANE_HEIGHT_PX },

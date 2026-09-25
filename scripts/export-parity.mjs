@@ -18,7 +18,7 @@
 // invariants (caption-layer equality, frame count, duration, rotation, sync-in-range) are asserted.
 import { app, BrowserWindow, nativeImage } from 'electron'
 import { build } from 'esbuild'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir, cpus, totalmem, release } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -47,9 +47,9 @@ await mkdir(scratchRoot, { recursive: true })
 const helpersPath = join(await mkdtemp(join(scratchRoot, 'caption-x3-helpers-')), 'helpers.mjs')
 await build({ entryPoints: ['scripts/export-parity-helpers.ts'], outfile: helpersPath, bundle: true, platform: 'node', format: 'esm' })
 const { frameRequestAt, frameSourceUs, exportFrameCountFor, exportOutputDurationUs, exportPlanSchema,
-  captionTokens, DEFAULT_CAPTION_STYLE, captionFixtures, CAPTION_TEMPLATES, titleTemplateChanges, defaultTextOverlay,
+  captionTokens, DEFAULT_CAPTION_STYLE, captionFixtures, CAPTION_TEMPLATES, titleTemplateChanges, defaultTextOverlay, defaultShape, SHAPE_PRESETS,
   decorativeTextCue, textMotionAt, frameRequestV4Schema, readLocalToolConfig, resolveToolchain, LOCAL_TOOL_CONFIG_FILE,
-  bakeGrade, NEUTRAL_GRADE, encodeLog, encodeCubeData } = await import(helpersPath)
+  frameRequestAtSequence, graphicsPasses, bakeGrade, NEUTRAL_GRADE, encodeLog, encodeCubeData, exportManifestV3Schema, exportFilterGraphV3, paintAt, compositionToPixels } = await import(pathToFileURL(helpersPath).href)
 
 const tools = resolveToolchain(process.env, readLocalToolConfig(join(repoRoot, LOCAL_TOOL_CONFIG_FILE)), LOCAL_TOOL_CONFIG_FILE)
 if (!tools) throw new Error(`Configure ${LOCAL_TOOL_CONFIG_FILE} (or CAPTION_STUDIO_FFMPEG_PATH/CAPTION_STUDIO_FFPROBE_PATH) before running the parity suite`)
@@ -241,7 +241,94 @@ async function keynoteLayerParity(preview, exported, cases) {
         assert.deepEqual(b.bitmap, a.bitmap, `Keynote pixel mismatch: ${template.id}, ${composition.width}x${composition.height}, ${timestampUs}`)
         cases.push({ template: template.id, composition, timestampUs, differingBytes: 0 })
       }
+      // Layer opacity (docs/EDITING.md "Layer opacity and blend"): a 50 % title must paint identically and dimmer.
+      const half = { ...item, opacity: 0.5 }
+      const halfRequest = frameRequestV4Schema.parse({ version: 4, composition,
+        cue: { text: ' ', startUs: 0, endUs: 3_000_000 }, style: DEFAULT_CAPTION_STYLE, timestampUs: 1_500_000,
+        overlays: [], frameEffects: {}, textActors: [{ item: half, cue: decorativeTextCue(half), timestampUs: 1_500_000, ...(({ visible: _v, ...m }) => m)(textMotionAt(half, 1_500_000)) }] })
+      const fullRequest = { ...halfRequest, textActors: [{ ...halfRequest.textActors[0], item }] }
+      const ha = await renderPreview(preview, halfRequest, ++marker)
+      const hb = await renderOffscreen(exported, halfRequest, ++marker)
+      const full = await renderOffscreen(exported, fullRequest, ++marker)
+      assert.deepEqual(hb.bitmap, ha.bitmap, `Title opacity pixel mismatch: ${template.id}, ${composition.width}x${composition.height}`)
+      const alphaSum = (bitmap) => { let sum = 0; for (let i = 3; i < bitmap.length; i += 4) sum += bitmap[i]; return sum }
+      assert.ok(alphaSum(hb.bitmap) < alphaSum(full.bitmap), `A 50% title must be fainter than an opaque one: ${template.id}`)
+      cases.push({ template: template.id, composition, titleOpacity: 0.5, differingBytes: 0 })
     }
+  }
+}
+
+/** The visible preview window's pixels after a request, without the marker handshake the text checks use.
+ * While a shape is on screen that window's capture adds a few levels of noise to flat colours, including the
+ * 1-pixel marker, so an exact marker match never settles; two animation frames plus a short wait do. */
+async function settledPreviewBitmap(window, request) {
+  await window.webContents.executeJavaScript(`window.x1.render(${JSON.stringify(request)}, 0)`)
+  await window.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))')
+  const deadline = Date.now() + 15000
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const image = await window.webContents.capturePage()
+    const size = image.getSize()
+    if (size.width === request.composition.width && size.height === request.composition.height) {
+      const bitmap = image.toBitmap()
+      bitmap.fill(0, bitmap.length - 4) // the marker pixel is not part of the picture
+      return bitmap
+    }
+    if (Date.now() > deadline) throw new Error(`Preview never reached ${request.composition.width}x${request.composition.height} (last ${size.width}x${size.height})`)
+  }
+}
+
+/** Vector shapes (docs/EDITING.md "Shapes"): every preset, at rest and part-way through its draw-on/sweep,
+ * in a portrait and a landscape frame, painted by the export host (offscreen, exact marker handshake) and by the
+ * live-preview window must agree, and the export host must actually draw the shape. A title above the captions is
+ * mixed in to exercise the shared layer order. Each composition gets its own pair of windows created at exactly
+ * that size: resizing an existing offscreen window can keep painting at the old size, and the preview is a real
+ * window that Windows will not grow past the work area (so the portrait frame is 4:5, not 9:16). */
+async function shapeLayerParity(bundleDir, windows, cases) {
+  let marker = 0xC00000
+  for (const composition of [{ width: 1080, height: 1350 }, { width: 1920, height: 1080 }]) {
+    const preview = createWindow(composition, false), exported = createWindow(composition, true)
+    windows.add(preview); windows.add(exported)
+    exported.webContents.setFrameRate(240)
+    await preview.loadFile(join(bundleDir, 'index.html'))
+    await exported.loadFile(join(bundleDir, 'index.html'))
+    const height = composition.height * 1080 / composition.width
+    const title = { ...defaultTextOverlay('title', 0, 3_000_000, 'മലയാളം and English'), layerOrder: 2 }
+    // Every preset, plus a filled box with four different corner radii (schema 20 `cornerRadii`).
+    const box = defaultShape('box', 'shape-box-corners', 0, 3_000_000, height)
+    const cornerBox = { ...box, geometry: { ...box.geometry, cornerRadius: 40, cornerRadii: { tl: 0, tr: 90, br: 0, bl: 90 } }, fill: { color: '#4361EE', opacity: 1 } }
+    const entries = [...SHAPE_PRESETS.map((preset) => [preset, defaultShape(preset, `shape-${preset}`, 0, 3_000_000, height)]), ['box-corners', cornerBox]]
+    for (const [preset, shape] of entries) {
+      for (const timestampUs of [50_000, 300_000, 1_500_000, 2_900_000]) {
+        const { visible: _visible, ...motion } = textMotionAt(title, timestampUs)
+        const build = (shapeActors) => frameRequestV4Schema.parse({ version: 4, composition,
+          cue: { text: ' ', startUs: 0, endUs: 3_000_000 }, style: DEFAULT_CAPTION_STYLE, timestampUs,
+          overlays: [], frameEffects: {}, textActors: [{ item: title, cue: decorativeTextCue(title), timestampUs, ...motion }], shapeActors })
+        const request = build([{ shape, timestampUs }])
+        const b = await renderOffscreen(exported, request, ++marker)
+        const a = await settledPreviewBitmap(preview, request)
+        assert.equal(a.length, b.bitmap.length, `Shape bitmap size: ${preset}`)
+        // Noise, not geometry: flat colours can differ by a few levels between the two rasterisers, while a
+        // wrong position, size or timing changes hundreds of levels over many pixels.
+        let differingBytes = 0, maxByteDelta = 0
+        for (let index = 0; index < a.length; index++) {
+          const delta = Math.abs(a[index] - b.bitmap[index])
+          if (delta) { differingBytes++; maxByteDelta = Math.max(maxByteDelta, delta) }
+        }
+        assert.ok(maxByteDelta <= 8, `Shape pixel mismatch: ${preset}, ${composition.width}x${composition.height}, ${timestampUs} (${differingBytes} bytes, max delta ${maxByteDelta})`)
+        // The export host must really draw the shape: the same frame without it must differ by many bytes once
+        // the shape is up (the draw-on has barely started at 50 ms, and the sweep draws nothing yet).
+        let shapeBytes = null
+        if (timestampUs >= 1_500_000) {
+          const bare = await renderOffscreen(exported, build([]), ++marker)
+          shapeBytes = 0
+          for (let index = 0; index < a.length; index++) if (bare.bitmap[index] !== b.bitmap[index]) shapeBytes++
+          assert.ok(shapeBytes > 2000, `Export host did not draw the shape: ${preset}, ${composition.width}x${composition.height}, ${timestampUs} (${shapeBytes} bytes differ from the bare frame)`)
+        }
+        cases.push({ preset, composition, timestampUs, differingBytes, maxByteDelta, shapeBytes, stalePaints: b.stalePaints })
+      }
+    }
+    preview.destroy(); exported.destroy(); windows.delete(preview); windows.delete(exported)
   }
 }
 
@@ -268,6 +355,28 @@ async function frameEffectsPaint(preview, exported, composition, cases) {
   }
 }
 
+/** Caption-plane opacity (docs/EDITING.md "Layer opacity and blend"): a 50 % plane must paint identically in the
+ * preview window and the export host, and fainter than the same request at full opacity. */
+async function captionOpacityParity(preview, exported, cases) {
+  let marker = 0x500000
+  const composition = { width: 1920, height: 1080 }
+  preview.setContentSize(composition.width, composition.height)
+  exported.setContentSize(composition.width, composition.height)
+  const manifest = shortManifest('static-clean')
+  const plan = exportPlanSchema.parse({ ...composition, frameRate: { numerator: 30, denominator: 1 }, range: { startUs: 0, endUs: 20_000_000 } })
+  const { request: v2 } = frameRequestAt(manifest, plan, 60)
+  const dim = frameRequestV4Schema.parse({ version: 4, composition, cue: { text: 'Opacity caption', startUs: 0, endUs: 3_000_000 }, style: DEFAULT_CAPTION_STYLE, timestampUs: 1_500_000,
+    overlays: [], frameEffects: {}, textActors: [], captionOpacity: 0.5 })
+  const opaque = { ...dim }; delete opaque.captionOpacity
+  const a = await renderPreview(preview, dim, ++marker)
+  const b = await renderOffscreen(exported, dim, ++marker)
+  const solid = await renderOffscreen(exported, opaque, ++marker)
+  assert.deepEqual(b.bitmap, a.bitmap, 'Caption plane opacity pixel mismatch between preview and export host')
+  const alphaTotal = (bitmap) => { let sum = 0; for (let i = 3; i < bitmap.length; i += 4) sum += bitmap[i]; return sum }
+  assert.ok(alphaTotal(b.bitmap) < alphaTotal(solid.bitmap), 'A 50% caption plane must be fainter than an opaque one')
+  cases.push({ composition, captionOpacity: 0.5, differingBytes: 0 })
+}
+
 /** Layer masks (docs/EDITING.md "Layer masks"): the same masked request must paint byte-identically in
  * the live-preview window and the export host (host-painted layers), and a v5 mask-fill request must
  * produce a PNG whose alpha *is* the mask — opaque inside the shape, transparent outside — which is
@@ -287,6 +396,7 @@ async function layerMaskParity(preview, exported, composition, cases) {
   for (let i = 0; i < a.bitmap.length; i++) if (a.bitmap[i] !== b.bitmap[i]) differingBytes++
   assert.equal(differingBytes, 0, 'Masked layer pixel mismatch between preview and export host')
   assert.ok(b.bitmap.some((value, index) => index % 4 === 3 && value > 0), 'The masked vignette painted nothing')
+
 
   const fill = await renderOffscreen(exported, { version: 5, composition, cue: { text: ' ', startUs: 0, endUs: 1 }, style: v2.style, timestampUs: 1_000_000, maskFill: ellipse }, ++marker)
   const alphaAt = (x, y) => fill.bitmap[(Math.round(y * scale) * composition.width + Math.round(x * scale)) * 4 + 3]
@@ -533,6 +643,187 @@ async function captionOnsetSync(exportResult, exported, manifest) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Layer blend modes (docs/EDITING.md "Layer blend modes"): the preview paints CSS `mix-blend-mode`
+// inside an isolated black backdrop; export runs the real v3 filter graph (`split`/`blend`/`overlay`).
+// Both render the same scene at 540x540 and are compared per pixel. Pictures are solid colour clips
+// and a still PNG (an image over the picture is the case that forces FFmpeg compositing); no video
+// decoder is needed, so this runs on machines without an H.264 encoder.
+// ---------------------------------------------------------------------------------------------
+async function paintBlendScene(window, layers, composition, marker, call = `window.renderBlendScene(${JSON.stringify(layers)}, ${JSON.stringify(composition)}, ${marker})`) {
+  const wc = window.webContents
+  let committed = false
+  let latest = null
+  const listener = (_event, _dirty, image) => {
+    if (!committed) return
+    const size = image.getSize()
+    if (size.width !== composition.width || size.height !== composition.height) return
+    const bitmap = image.toBitmap()
+    const at = bitmap.length - 4
+    // nativeImage bitmaps are BGRA; the harness paints rgb(marker) in the corner.
+    if (bitmap[at] === (marker & 255) && bitmap[at + 1] === (marker >> 8 & 255) && bitmap[at + 2] === (marker >> 16 & 255)) latest = bitmap
+  }
+  wc.on('paint', listener)
+  try {
+    await wc.executeJavaScript(call)
+    committed = true
+    // Raster of a freshly decoded image can trail the marker by a frame or two: keep the last committed paint.
+    for (let attempt = 0; attempt < 8; attempt++) { wc.invalidate(); await new Promise((resolve) => setTimeout(resolve, 100)) }
+    if (!latest) throw new Error('Blend scene never painted its marker')
+    return latest
+  } finally { wc.removeListener('paint', listener) }
+}
+
+async function layerBlendParity(workDir, windows, cases) {
+  const size = 540, composition = { width: size, height: size }, output = composition
+  const harnessPath = join(workDir, 'blend-parity-harness.js')
+  await build({ entryPoints: ['scripts/blend-parity-harness.tsx'], outfile: harnessPath, bundle: true, platform: 'browser', format: 'esm', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } })
+  await writeFile(join(workDir, 'blend-parity.html'), '<!doctype html><meta charset="utf-8"><body><div id="root"></div><script type="module" src="./blend-parity-harness.js"></script></body>')
+  const still = join(workDir, 'blend-still.png')
+  await ffmpeg(['-f', 'lavfi', '-i', 'smptebars=size=270x270:rate=1:duration=1', '-frames:v', '1', still])
+  const backdrop = join(workDir, 'blend-backdrop.png')
+  await ffmpeg(['-f', 'lavfi', '-i', `smptebars=size=${size}x${size}:rate=1:duration=1`, '-frames:v', '1', backdrop])
+
+  const window = createWindow(composition, true)
+  windows.add(window)
+  window.webContents.setFrameRate(60)
+  await window.loadFile(join(workDir, 'blend-parity.html'))
+  const solid = (color) => ({ type: 'solid', color })
+  const scenes = [
+    { name: 'multiply picture-in-picture', pictures: [{ color: '#c8a060', rect: null }, { color: '#4080c0', rect: { x: 270, y: 270, width: 540, height: 540 }, blend: 'multiply' }] },
+    { name: 'screen image over the picture', pictures: [{ color: '#604020', rect: null }, { image: still, rect: { x: 270, y: 270, width: 540, height: 540 }, blend: 'screen' }] },
+    { name: 'overlay colour clip at 60 %', pictures: [{ image: backdrop, rect: null }, { color: '#ff8040', rect: null, opacity: 0.6, blend: 'overlay' }] },
+    { name: 'hard light, difference and exclusion tiles', pictures: [{ image: backdrop, rect: null },
+      { color: '#8090a0', rect: { x: 0, y: 0, width: 360, height: 1080 }, blend: 'hard-light' }, { color: '#a08060', rect: { x: 360, y: 0, width: 360, height: 1080 }, blend: 'difference' },
+      { color: '#60a0c0', rect: { x: 720, y: 0, width: 360, height: 1080 }, blend: 'exclusion' }] },
+  ]
+  let marker = 0xb00000
+  for (const scene of scenes) {
+    const layers = scene.pictures.map((picture, index) => picture.image
+      ? { kind: 'image', id: `p${index}`, url: pathToFileURL(picture.image).href, label: 'image', rect: picture.rect, opacity: picture.opacity ?? 1, fit: 'stretch', ...(picture.blend ? { blendMode: picture.blend } : {}) }
+      : { kind: 'color', id: `p${index}`, paint: paintAt({ kind: 'color', fill: solid(picture.color) }, 0), rect: picture.rect, opacity: picture.opacity ?? 1, ...(picture.blend ? { blendMode: picture.blend } : {}) })
+    const preview = await paintBlendScene(window, layers, composition, ++marker)
+
+    const images = scene.pictures.flatMap((picture) => picture.image ? [picture.image] : [])
+    let imageIndex = 0
+    const clips = scene.pictures.map((picture, index) => {
+      const base = { id: `p${index}`, trackIndex: index, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 1_000_000, opacity: picture.opacity ?? 1,
+        ...(picture.rect ? { rect: compositionToPixels(picture.rect, output) } : {}), ...(picture.blend ? { blendMode: picture.blend } : {}) }
+      return picture.image
+        ? { ...base, kind: 'image', inputIndex: imageIndex++, assetId: `image${imageIndex}`, fit: 'stretch', gain: 0 }
+        : { ...base, kind: 'color', fill: solid(picture.color), fit: 'contain', gain: 0 }
+    })
+    const manifest = exportManifestV3Schema.parse({ version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { ...output, frameRate: { numerator: 30, denominator: 1 } },
+      sequenceDurationUs: 1_000_000, inputs: images.map((path) => ({ path, kind: 'image' })), overlays: [], blurRegions: [], clips })
+    const graph = exportFilterGraphV3(manifest, []).filterComplex.replace('format=yuv420p[outv]', 'format=rgb24[outv]')
+    const { stdout } = await run(tools.ffmpegPath, ['-v', 'error', '-nostdin',
+      ...images.flatMap((path) => ['-loop', '1', '-framerate', '30', '-t', '1', '-i', path]),
+      '-f', 'lavfi', '-i', `color=c=black@0:s=${size}x${size}:r=30:d=1,format=rgba`,
+      '-filter_complex', graph, '-map', '[outv]', '-frames:v', '1', '-f', 'rawvideo', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 })
+
+    let max = 0, total = 0, over = 0, count = 0
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      if (x === size - 1 && y === size - 1) continue // the marker pixel
+      for (let channel = 0; channel < 3; channel++) {
+        const delta = Math.abs(preview[(y * size + x) * 4 + (2 - channel)] - stdout[(y * size + x) * 3 + channel])
+        max = Math.max(max, delta); total += delta; count++
+        if (delta > 3) over++
+      }
+    }
+    cases.push({ scene: scene.name, composition, path: images.length ? 'ffmpeg blend (image input)' : 'ffmpeg blend', maxChannelDelta: max, meanAbsoluteChannelDelta: total / count, channelsOverTolerance: over, tolerance: 3 })
+    assert.ok(over === 0, `Blend parity: ${scene.name} has ${over} channels off by more than 3 (max ${max})`)
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shape blend (docs/EDITING.md "Shapes"): a Multiply box and a Screen highlighter above a title, over a picture.
+// Preview: the live stage's structure with CSS `mix-blend-mode` on the shapes. Export: the real per-band frame
+// requests (`frameRequestAtSequence`, K = 5) painted by the offscreen host, piped through the real v3 filter graph.
+// ---------------------------------------------------------------------------------------------
+async function shapeBlendParity(workDir, bundleDir, windows, cases) {
+  const size = 540, composition = { width: size, height: size }, frameRate = { numerator: 30, denominator: 1 }, frame = 30, timestampUs = 1_000_000
+  const harnessPath = join(workDir, 'blend-parity-harness.js')
+  await build({ entryPoints: ['scripts/blend-parity-harness.tsx'], outfile: harnessPath, bundle: true, platform: 'browser', format: 'esm', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } })
+  await writeFile(join(workDir, 'blend-parity.html'), '<!doctype html><meta charset="utf-8"><body><div id="root"></div><script type="module" src="./blend-parity-harness.js"></script></body>')
+  const backdrop = join(workDir, 'shape-blend-backdrop.png')
+  await ffmpeg(['-f', 'lavfi', '-i', `smptebars=size=${size}x${size}:rate=1:duration=1`, '-frames:v', '1', backdrop])
+
+  const title = { ...defaultTextOverlay('title', 0, 2_000_000, 'Blend മലയാളം'), id: 'blend-title', layerOrder: -3 }
+  const box = { ...defaultShape('box', 'blend-box', 0, 2_000_000, 1080), layerOrder: -2, stroke: null, fill: { color: '#4080c0', opacity: 1 }, blendMode: 'multiply' }
+  const highlighter = { ...defaultShape('highlight', 'blend-highlighter', 0, 2_000_000, 1080), layerOrder: -1, blendMode: 'screen' }
+  const withoutBlend = ({ blendMode: _blendMode, ...shape }) => shape
+
+  const previewWindow = createWindow(composition, true)
+  const exportWindow = createWindow(composition, true)
+  windows.add(previewWindow); windows.add(exportWindow)
+  previewWindow.webContents.setFrameRate(60)
+  exportWindow.webContents.setFrameRate(240)
+  await previewWindow.loadFile(join(workDir, 'blend-parity.html'))
+  await exportWindow.loadFile(join(bundleDir, 'index.html'))
+
+  const layers = [{ kind: 'image', id: 'backdrop', url: pathToFileURL(backdrop).href, label: 'image', rect: null, opacity: 1, fit: 'stretch' }]
+  const scene = (shapes, marker) => `window.renderShapeBlendScene(${JSON.stringify(layers)}, ${JSON.stringify([title])}, ${JSON.stringify(shapes)}, ${timestampUs}, ${JSON.stringify(composition)}, ${marker})`
+  const preview = await paintBlendScene(previewWindow, layers, composition, 0xd00001, scene([box, highlighter], 0xd00001))
+  const plainPreview = await paintBlendScene(previewWindow, layers, composition, 0xd00002, scene([withoutBlend(box), withoutBlend(highlighter)], 0xd00002))
+
+  const manifestFor = (shapes) => exportManifestV3Schema.parse({ version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { ...composition, frameRate },
+    sequenceDurationUs: 2_000_000, inputs: [{ path: backdrop, kind: 'image' }], overlays: [], blurRegions: [], textOverlays: [title], shapes,
+    clips: [{ id: 'backdrop', kind: 'image', inputIndex: 0, assetId: 'image1', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 2_000_000, opacity: 1, fit: 'stretch', gain: 0 }] })
+  let marker = 0xd10000
+  const exportFrame = async (manifest) => {
+    const passes = graphicsPasses(manifest.shapes).count
+    const sub = []
+    for (let pass = 0; pass < passes; pass++) {
+      const { request } = frameRequestAtSequence(manifest, frame, null, pass)
+      sub.push((await renderOffscreen(exportWindow, request, ++marker)).bitmap)
+    }
+    const graph = exportFilterGraphV3(manifest, [false], undefined, 'png').filterComplex.replace('format=yuv420p[outv]', 'format=rgb24[outv]')
+    const rate = `${frameRate.numerator * passes}/${frameRate.denominator}`
+    const child = spawn(tools.ffmpegPath, ['-v', 'error', '-nostdin', '-loop', '1', '-framerate', '30', '-t', '1', '-i', backdrop,
+      '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0',
+      '-filter_complex', graph, '-map', '[outv]', '-frames:v', '1', '-f', 'rawvideo', '-'])
+    const output = new Promise((resolvePromise, reject) => {
+      const chunks = []; let stderr = ''
+      child.stdout.on('data', (chunk) => chunks.push(chunk)); child.stderr.on('data', (chunk) => { stderr += chunk })
+      child.on('close', (code) => code === 0 ? resolvePromise(Buffer.concat(chunks)) : reject(new Error(`ffmpeg exit ${code}: ${stderr}`)))
+    })
+    child.stdin.on('error', () => {})
+    child.stdin.end(Buffer.concat(sub.map((bitmap) => toPng(bitmap, composition))))
+    return { rgb: await output, passes }
+  }
+  const blended = await exportFrame(manifestFor([box, highlighter]))
+  const plain = await exportFrame(manifestFor([withoutBlend(box), withoutBlend(highlighter)]))
+  assert.equal(blended.passes, 5, 'Two blending shapes must plan five bands')
+  assert.equal(plain.passes, 1, 'Shapes without a blend mode must stay a single band')
+
+  // Flat regions only: a pixel whose four neighbours match it in the preview. Glyph and shape edges antialias differently
+  // in the two rasterisers (and do not blend identically at partial coverage), so they are reported but not asserted.
+  const at = (bitmap, x, y, channel) => bitmap[(y * size + x) * 4 + (2 - channel)]
+  let max = 0, total = 0, count = 0, flatMax = 0, flatTotal = 0, flatCount = 0, flatOver = 0
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    if (x === size - 1 && y === size - 1) continue // the marker pixel
+    const flat = x > 0 && y > 0 && x < size - 1 && y < size - 1 && [0, 1, 2].every((channel) => {
+      const value = at(preview, x, y, channel)
+      return at(preview, x - 1, y, channel) === value && at(preview, x + 1, y, channel) === value && at(preview, x, y - 1, channel) === value && at(preview, x, y + 1, channel) === value
+    })
+    for (let channel = 0; channel < 3; channel++) {
+      const delta = Math.abs(at(preview, x, y, channel) - blended.rgb[(y * size + x) * 3 + channel])
+      max = Math.max(max, delta); total += delta; count++
+      if (flat) { flatMax = Math.max(flatMax, delta); flatTotal += delta; flatCount++; if (delta > 3) flatOver++ }
+    }
+  }
+  // The blend must be visible: the same scene with Normal shapes differs from it by many bytes, in both renderers.
+  let previewDiffers = 0, exportDiffers = 0
+  for (let index = 0; index < preview.length - 4; index++) if (preview[index] !== plainPreview[index]) previewDiffers++
+  for (let index = 0; index < blended.rgb.length; index++) if (blended.rgb[index] !== plain.rgb[index]) exportDiffers++
+  cases.push({ scene: 'multiply box and screen highlighter above a title', composition, passes: blended.passes, maxChannelDelta: max, meanAbsoluteChannelDelta: total / count,
+    flatMaxChannelDelta: flatMax, flatMeanAbsoluteChannelDelta: flatTotal / flatCount, flatChannels: flatCount, flatChannelsOverTolerance: flatOver, tolerance: 3,
+    previewBytesDifferingFromNormal: previewDiffers, exportBytesDifferingFromNormal: exportDiffers })
+  assert.ok(flatCount > 50_000, `Shape blend parity: only ${flatCount} flat channels to compare`)
+  assert.ok(previewDiffers > 2000 && exportDiffers > 2000, `Blend is not visible against Normal (preview ${previewDiffers}, export ${exportDiffers} bytes)`)
+  assert.ok(flatOver === 0, `Shape blend parity: ${flatOver} flat channels off by more than 3 (max ${flatMax})`)
+}
+
+// ---------------------------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------------------------
 async function main() {
@@ -543,7 +834,7 @@ async function main() {
   }
   const evidenceDir = 'docs/decisions/evidence'
   await mkdir(evidenceDir, { recursive: true })
-  const evidencePath = join(evidenceDir, `x3-parity-${only?.size === 1 && only.has('keynote') ? 'keynote-' : ''}${new Date().toISOString().slice(0, 10)}.json`)
+  const evidencePath = join(evidenceDir, `x3-parity-${only?.size === 1 && (only.has('keynote') || only.has('shapes') || only.has('layer-blend') || only.has('shape-blend')) ? `${[...only][0]}-` : ''}${new Date().toISOString().slice(0, 10)}.json`)
   // Written after every stage below, not only at the end, so a run that is interrupted (killed,
   // crashed) still leaves the evidence file showing everything completed up to that point instead
   // of an empty or missing file.
@@ -606,12 +897,16 @@ async function main() {
       await captionLayerParity(preview, exported, approxPlan, job.manifest, report.captionLayer)
     }
     if (include('keynote')) await keynoteLayerParity(preview, exported, report.keynoteLayer)
+    if (include('shapes')) { report.shapeLayer = []; await shapeLayerParity(bundleDir, windows, report.shapeLayer) }
     if (include('frame-effects')) {
       report.frameEffects = []
       // The windows' own creation size: a fresh offscreen resize can still paint at the old size.
       const composition = { width: 1920, height: 1920 }
       await frameEffectsPaint(preview, exported, composition, report.frameEffects)
     }
+    if (include('layer-opacity')) { report.captionOpacity = []; await captionOpacityParity(preview, exported, report.captionOpacity) }
+    if (include('layer-blend')) { report.layerBlend = []; await layerBlendParity(workDir, windows, report.layerBlend) }
+    if (include('shape-blend')) { report.shapeBlend = []; await shapeBlendParity(workDir, bundleDir, windows, report.shapeBlend) }
     if (include('layer-masks')) {
       report.layerMasks = []
       await layerMaskParity(preview, exported, { width: 1920, height: 1920 }, report.layerMasks)

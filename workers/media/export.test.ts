@@ -11,6 +11,7 @@ import { exportHostCount, exportSupport, mostInformativeFailure, resetExportSupp
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 import { exportManifestV3Schema, frameSourceUs, type ExportManifest } from '../../src/export/plan'
 import { encodeCubeData, parseCube } from '../../src/color/cube'
+import { defaultShape } from '../../src/core/shapeCommands'
 
 const PINNED_VERSION = 'ffmpeg version 9.0.1\nconfiguration: --disable-gpl --disable-version3 --disable-nonfree --disable-autodetect --disable-network --enable-zlib --enable-videotoolbox\n'
 const SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
@@ -618,6 +619,47 @@ describe('renderVideo', () => {
     const parsed = parseCube(cubeFileContentAtSpawnTime)
     expect(parsed.size).toBe(2)
     expect(Array.from(parsed.data)).toEqual(Array.from(identity))
+  })
+})
+
+describe('renderVideo shape-blend export passes (docs/plans/shape-blend/02-export-passes.md)', () => {
+  it('writes K sub-frames per output frame in pass order, reuses an unchanged band, and skips the host for an empty one', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'export-test-'))
+    directories.push(root)
+    // One blend shape, active only during frame 0 (endUs lands exactly on frame 1's timestamp, so
+    // the half-open range excludes it there): K = 3 bands. Band 0 always has a pinned vignette (so
+    // it never counts as empty); band 2 (the last band) never gets anything, so it is always empty.
+    const manifest = exportManifestV3Schema.parse({
+      version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, format: { width: 64, height: 64, frameRate: { numerator: 10, denominator: 1 } },
+      sequenceDurationUs: 200_000, inputs: [], overlays: [], blurRegions: [], clips: [],
+      effects: [{ id: 'e1', kind: 'vignette', startUs: 0, endUs: 10_000_000, enabled: true, amount: .5, softness: .5 }],
+      shapes: [{ ...defaultShape('box', 'blend-1', 0, 100_000), layerOrder: 1, blendMode: 'multiply' }],
+    })
+    const renderManifestPath = path.join(root, 'frames.json')
+    await writeFile(renderManifestPath, JSON.stringify(manifest))
+    let hostHandle!: ReturnType<typeof fakeHost>, encoderHandle!: ReturnType<typeof fakeEncoder>
+    // PINNED = band 0 (the pinned vignette), BLEND = band 1 (the blend shape, only requested while
+    // active), BLANK = the one shared blank request the worker renders once for every empty pass.
+    const PINNED = 1, BLEND = 2, BLANK = 3
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) {
+        return hostHandle = fakeHost(s, (request) => pngFrame(request.shapeActors?.length ? BLEND : request.frameEffects?.vignette ? PINNED : BLANK)) as any
+      }
+      return encoderHandle = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(64, 64, 200_000, false) : inputProbe(1_000_000, false))
+    const result = await renderVideo({
+      operation: 'export', inputPaths: [], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 200_000 }, frameRate: { numerator: 10, denominator: 1 }, width: 64, height: 64, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    // Frame count stays in output frames (2), never K x 2 — the pass split is invisible here.
+    expect(result.frameCount).toBe(2)
+    // 2 output frames x 3 passes = 6 writes to the encoder, in pass order each time.
+    const markers = encoderHandle.received.map((chunk) => chunk[8])
+    expect(markers).toEqual([PINNED, BLEND, BLANK, PINNED, BLANK, BLANK])
+    // Band 0 rendered once and was reused for frame 1 (same signature both frames); band 1 rendered
+    // once while the shape was active; the shared blank buffer was rendered once for every other slot.
+    expect(hostHandle.requestCount()).toBe(3)
   })
 })
 

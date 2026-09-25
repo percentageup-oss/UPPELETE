@@ -734,6 +734,15 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .overlays-shapes .overlay-tile { cursor: pointer; color: #b3b8c2; }
 .overlays-shapes .overlay-tile:hover { color: #e8eaf0; }
 .overlays-shapes .overlay-tile svg { object-fit: contain; }
+.overlays-templates .overlay-tile { cursor: pointer; }
+.overlays-templates .overlay-tile svg { height: auto; aspect-ratio: 3 / 2; }
+.overlays-templates .overlay-tile { position: relative; }
+.overlay-tile-tag { position: absolute; top: 9px; right: 9px; padding: 1px 6px; border-radius: 999px; font-size: 9px; font-style: normal; color: #e8eaf0; background: rgba(23, 26, 33, .78); border: 1px solid rgba(255, 255, 255, .25); }
+.overlays-templates-head { display: flex; align-items: center; justify-content: space-between; padding-right: 10px; }
+.overlays-glass { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #b3b8c2; cursor: pointer; }
+.overlays-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 10px; }
+.overlays-tabs button { padding: 3px 10px; font-size: 11px; border-radius: 999px; color: #b3b8c2; background: #171a21; }
+.overlays-tabs button.active { color: #fff; background: var(--accent); }
 .layer-mask-actions { grid-template-columns: 1fr 1fr; }
 .layer-mask-actions .active { background: var(--accent); color: #0d0f13; border-color: var(--accent); }
 .mask-stage-editor { pointer-events: none; }

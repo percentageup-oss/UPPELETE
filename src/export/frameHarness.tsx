@@ -11,6 +11,8 @@ import { isFragmentedLine } from './shaping'
 import { emphasisRuns, sliceEmphasis } from '../core/emphasis'
 import { captionFixtures } from '../captions/fixtures'
 import { TextOverlayActor } from '../captions/TextOverlayActor'
+import { GlassMapActor, ShapeActor } from '../captions/ShapeActor'
+import { belowCaptions, compareLayered } from '../core/graphicsOrder'
 
 let setRequest: (request: FrameRequest) => void
 let evaluated: CaptionFrame | null = null
@@ -56,13 +58,23 @@ function Harness() {
   const textActors = request.version === 4 ? request.textActors : []
   const actorNode = (actor: (typeof textActors)[number]) => <TextOverlayActor key={actor.item.id} item={actor.item} timestampUs={actor.timestampUs} composition={request.composition}
     onFrame={(frame) => evaluatedTexts.set(actor.item.id, frame)} />
-  const belowText = textActors.filter((actor) => actor.item.layerOrder < 0).map(actorNode)
-  const aboveText = textActors.filter((actor) => actor.item.layerOrder >= 0).map(actorNode)
+  // A glass map request paints only the opaque refraction map (docs/plans/liquid-glass/04-glass-export-pass.md), never the shape.
+  const glassMap = request.version === 4 && request.glassMap === true
+  const shapeActors = request.version === 4 && !glassMap ? request.shapeActors ?? [] : []
+  // Text and shapes interleave by `layerOrder`, in the same order the live preview sorts them.
+  const graphics = [
+    ...textActors.map((actor) => ({ order: actor.item, node: actorNode(actor) })),
+    // `blend={false}`: this harness is the export host, which composites any blending shape itself
+    // through FFmpeg passes (docs/plans/shape-blend/02-export-passes.md) — a shape here never CSS-blends.
+    ...shapeActors.map((actor) => ({ order: actor.shape, node: <ShapeActor key={actor.shape.id} shape={actor.shape} timestampUs={actor.timestampUs} composition={request.composition} blend={false} glass={false} /> })),
+  ].sort((a, b) => compareLayered(a.order, b.order))
+  const belowText = graphics.filter((entry) => belowCaptions(entry.order)).map((entry) => entry.node)
+  const aboveText = graphics.filter((entry) => !belowCaptions(entry.order)).map((entry) => entry.node)
   return <>
     <div style={{ position: 'relative', ...request.composition }}>
-      <CaptionPreview {...request} inputs={inputs} motion={request.style.motion} onFrame={observe} diagnostics={false} captionMask={request.captionMask}
+      <CaptionPreview {...request} inputs={inputs} motion={request.style.motion} onFrame={observe} diagnostics={false} captionMask={request.captionMask} captionOpacity={request.captionOpacity}
         layers={<>{<CompositionLayers layers={pinnedLayers} composition={request.composition} />}{belowText}</>}
-        overCaption={<>{aboveText}{fadeLayers.length ? <CompositionLayers layers={fadeLayers} composition={request.composition} /> : null}</>} />
+        overCaption={<>{aboveText}{glassMap && request.version === 4 ? request.shapeActors?.map((actor) => <GlassMapActor key={actor.shape.id} shape={actor.shape} timestampUs={actor.timestampUs} composition={request.composition} />) : null}{fadeLayers.length ? <CompositionLayers layers={fadeLayers} composition={request.composition} /> : null}</>} />
     </div>
     {interactive && <div style={{ position: 'fixed', top: 0, left: 0 }}>
       <label>Primary color <input id="parity-color" type="color" value={request.style.appearance.primaryColor}
@@ -98,7 +110,7 @@ async function ready() {
   }
   if (evaluated.layout.status !== 'ready') throw new Error('Caption font failed; refusing frame')
   if (current.version === 4 && current.textActors.some((actor) => evaluatedTexts.get(actor.item.id)?.layout.status !== 'ready')) throw new Error('Text font failed; refusing frame')
-  const overlayImages = [...document.querySelectorAll<HTMLImageElement>('[data-overlay-id]')]
+  const overlayImages = [...document.querySelectorAll<HTMLImageElement>('[data-overlay-id], [data-glass-map]')]
   await Promise.all(overlayImages.map((img) => img.decode().catch(() => {
     throw new Error(`Overlay asset failed to load: ${img.src}`)
   })))

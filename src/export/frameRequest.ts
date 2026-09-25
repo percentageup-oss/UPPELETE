@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { cueSchema, wordSchema } from '../core/model'
 import { captionStyleSchema } from '../captions/style'
 import { compositionRectSchema, layerMaskSchema } from '../core/edit'
-import { textOverlaySchema } from '../core/edit'
+import { textOverlaySchema, shapeSchema } from '../core/edit'
 import type { CaptionFrame } from '../captions/renderer'
 
 const sourceUs = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
@@ -15,6 +15,12 @@ const frameRequestBaseShape = {
   timestampUs: sourceUs,
   /** Schema 12: the active caption track's mask (the whole caption plane). Optional, so no version bump. */
   captionMask: layerMaskSchema.optional(),
+  /** Schema 18: the active caption track's opacity, only sent when below 1. */
+  captionOpacity: z.number().finite().min(0).max(1).optional(),
+  /** Shape blend export passes (docs/plans/shape-blend/02-export-passes.md): the caption is still
+   * evaluated as normal (so its readiness/motion state is unaffected), but not painted — a pass
+   * whose band is not the one the caption plane lands in. Optional, so older requests still parse. */
+  hideCaption: z.literal(true).optional(),
 }
 /** Prototype-only data contract. No paths, CSS or executable arguments; `overlays[].assetUrl` (v2)
  * is a `media://` URL the export host itself resolves against its own `--asset` allow-list. */
@@ -56,8 +62,14 @@ const textActorSchema = z.strictObject({
   opacity: z.number().finite().min(0).max(1), scale: z.number().finite().positive().max(3),
   x: z.number().finite(), y: z.number().finite(),
 })
+/** A shape at this frame's sequence time; `ShapeActor` evaluates its motion from `timestampUs` itself. */
+const shapeActorSchema = z.strictObject({ shape: shapeSchema, timestampUs: sourceUs })
+/** `shapeActors` (schema 17) is optional, so a request without shapes is unchanged and needs no new version. */
 export const frameRequestV4Schema = z.strictObject({ version: z.literal(4), ...frameRequestBaseShape, overlays: overlaysShape,
-  frameEffects: frameEffectsShape, textActors: z.array(textActorSchema).max(1000) })
+  frameEffects: frameEffectsShape, textActors: z.array(textActorSchema).max(1000), shapeActors: z.array(shapeActorSchema).max(1000).optional(),
+  /** Liquid glass export pass (docs/plans/liquid-glass/04-glass-export-pass.md): paint the one shape actor as an
+   * OPAQUE refraction map (R/G displacement, B coverage) instead of a shape. Optional, so older requests still parse. */
+  glassMap: z.literal(true).optional() })
 /** Not a video frame: asks the host to paint one layer mask as an opaque white fill through that mask
  * (schema 12), so the PNG's alpha channel *is* the mask. The export worker turns each into an image
  * FFmpeg multiplies onto a video clip or blur region — the same SVG the preview masks with. */

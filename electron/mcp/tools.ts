@@ -10,6 +10,7 @@ import { CAPTION_TEMPLATES, titleTemplateChanges } from '../../src/captions/temp
 import { listCreativeOptions } from '../../src/core/creativeOptions'
 import { compositionRectSchema } from '../../src/core/edit'
 import { defaultTextOverlay } from '../../src/core/textCommands'
+import { defaultShape, SHAPE_PRESETS } from '../../src/core/shapeCommands'
 import { resolveWordAnchor, type WordAnchor } from '../../src/core/wordAnchor'
 import type { InspectedFile } from '../../src/core/assetImport'
 import type { ReferenceMime } from './referenceImage'
@@ -78,12 +79,14 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('get_project', {
     title: 'Get project',
     description: 'Overview of the open KathaCut project: title, output format, assets, tracks, clips, blur regions, frame-paint effects (vignette/letterbox/fade), caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'get-state' }, stateOf))
 
   server.registerTool('get_captions', {
     title: 'Get captions',
     description: "Lists captions (cues). Units are microseconds. Each cue's startUs/endUs are in the SOURCE time of the video it names (mediaAssetId) — not sequence time; `range` filters by a cue's own stored time. Pass `words: true` to include per-word timing for placing word-anchored edits or fillers.",
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {
       range: cueTarget.describe('Only cues overlapping this source-time range, in the range\'s own video.'),
       cueIds: z.array(z.string().min(1)).max(500).optional().describe('Only these cue ids.'),
@@ -96,12 +99,14 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('edit', {
     title: 'Edit',
     description: 'Applies one or more editing commands as a SINGLE undo step — nothing commits if any command fails, and the failing index is returned so you can fix and retry. This is the same command set the UI itself uses (captions, assets, tracks, clips, blur regions, frame-paint effects, markers): see `get_project`/`get_captions` for current ids, and `list_style_options` for style fields. Composition is 1080 units wide by 1080/aspect tall. `clip-update` `changes.speed` sets a video/audio clip\'s speed as {points:[{sourceUs,rate}]} (rate 0.1–10, points in increasing asset source time; one point = constant speed, several = a ramp that is silent; null clears). A speed change ripples later clips on that track. `clip-add` with `clip.kind: "adjustment"` places a DaVinci-style adjustment layer (a video-track clip with no asset) that grades every video/image clip on the tracks below it, for its own time range — never a `color` (generated background) clip; `changes.grade` (clip-update, adjustment clips only) sets its input (none/a built-in camera log profile/a `lut`-kind asset id), primaries (exposure/white-balance/contrast/highlights-shadows/lift-gamma-gain/saturation), an optional built-in look by id, and intensity (0 bakes to no effect). `get_project`\'s `clips[].grade` reports the current grade of any adjustment clip.',
+    annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false, idempotentHint: false },
     inputSchema: { commands: z.array(editCommandSchema).min(1).max(200) },
   }, async ({ commands }) => relay(deps, { id: randomUUID(), kind: 'run-commands', commands }, outcomesOf))
 
   server.registerTool('get_transcript', {
     title: 'Get transcript',
     description: 'The spoken transcript in SEQUENCE time (the timeline you see, after cuts and speed changes), so it lines up directly with clips, zoom regions, effects and titles. Cues in removed ranges are left out (see `omitted`). Pass `words: true` for word timing, `range` to filter by sequence time. Prefer this over get_captions when planning edits.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {
       range: cueTarget.describe('Only cues overlapping this sequence-time range.'),
       words: z.boolean().optional().describe("Include each cue's word-level timing (default false)."),
@@ -116,6 +121,7 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('list_creative_options', {
     title: 'List creative options',
     description: 'Looks (color grades), background presets, title treatments, effect and zoom guidance, style recipes, and JSON schemas for zoom regions, effects, titles, backgrounds and grades. Each look, background, title and effect says when to use it (mood/useWhen/avoidWhen) so you can choose without being told; pick one styleRecipe and stay consistent. Read once before planning zooms, titles, backgrounds, effects or color.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {},
   }, async () => text(listCreativeOptions()))
 
@@ -123,6 +129,7 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('add_title', {
     title: 'Add title',
     description: `Adds one animated title (text layer) using a built-in treatment, as a single undo step. Times are SEQUENCE microseconds. templateId: ${titleTemplates.map((template) => template.id).join(', ')} (default ${titleTemplates[0]?.id}). \`vertical\` is the title's vertical position, 0 (top) to 1 (bottom); default 0.5. Use \`edit\` text-update for finer changes afterwards.`,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: {
       text: z.string().trim().min(1).max(2000),
       startUs: z.number().int().nonnegative(),
@@ -140,6 +147,27 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
     return relay(deps, { id: randomUUID(), kind: 'run-commands', commands: [{ type: 'text-add', overlay }] }, outcomesOf)
   })
 
+  server.registerTool('add_shape', {
+    title: 'Add shape',
+    description: `Adds one vector graphic (box, circle, arrow, dotted arrow, underline or highlighter) as a single undo step. Times are SEQUENCE microseconds. preset: ${SHAPE_PRESETS.join(', ')}. \`color\` is a #RRGGBB hex that recolours the line (or the fill for highlight). The shape appears centred; place and reshape it afterwards with \`edit\` shape-update (geometry) and time it with shape-move / shape-trim. Lists of presets and the shape schema come from list_creative_options.`,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
+    inputSchema: {
+      preset: z.enum(SHAPE_PRESETS),
+      startUs: z.number().int().nonnegative(),
+      endUs: z.number().int().positive(),
+      color: z.string().regex(/^#[\da-fA-F]{6}$/).optional(),
+      compositionHeight: z.number().int().min(16).max(3840).optional().describe('Output frame height in composition units (1080 / aspect); default 608 (16:9). Only used to centre the shape.'),
+    },
+  }, async ({ preset, startUs, endUs, color, compositionHeight }) => {
+    if (endUs <= startUs) return errorText('endUs must be after startUs.')
+    const shape = defaultShape(preset, randomUUID(), startUs, endUs, compositionHeight)
+    if (color) {
+      if (shape.stroke) shape.stroke = { ...shape.stroke, color }
+      else if (shape.fill) shape.fill = { ...shape.fill, color }
+    }
+    return relay(deps, { id: randomUUID(), kind: 'run-commands', commands: [{ type: 'shape-add', shape }] }, outcomesOf)
+  })
+
   const placementFields = {
     durationUs: z.number().int().positive().max(3_600_000_000).optional().describe('How long the picture stays (default 3 s).'),
     rect: compositionRectSchema.optional().describe('Position and size in composition units (1080 wide); default: the standard overlay size for that picture, centred.'),
@@ -148,6 +176,7 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('import_media', {
     title: 'Import media',
     description: 'Brings an image (or audio/video file) into the project so you can use it. Give exactly one source: `path` (absolute path to an image/audio/video file - e.g. one you downloaded or generated), `fromClipboard: true` (the user just copied an image), `imageBase64` (a small image, up to 5 MB), or `url` (a public https image url, up to 25 MB - the user is responsible for the image\'s licence, so say where it came from). Images are identified by their content, not their name. The same picture imported twice reuses one asset. With `placement`, an IMAGE is also put on the timeline at `sequenceUs` in the SAME undo step (audio/video cannot be placed on import). To put an image on a spoken word, import it without placement and call place_at_word. Never overwrites the user\'s files: bytes you pass are saved to the app\'s own agent-media folder.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true, idempotentHint: false },
     inputSchema: {
       path: z.string().min(1).max(1024).optional(),
       fromClipboard: z.boolean().optional(),
@@ -174,6 +203,7 @@ export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('place_at_word', {
     title: 'Place image at a spoken word',
     description: 'Puts an image that is already in the project (see import_media / get_project asset ids) on the timeline at a spoken word or phrase, as ONE undo step - e.g. show the company logo when the speaker says its name. Anchor it with `text` (the spoken word or phrase; use `occurrence` when it is said more than once) or with `cueId` + `wordIndex` (+ `wordCount`) from get_transcript. Times are SEQUENCE microseconds, matching get_transcript. `offsetUs` shifts the start (negative = earlier); `durationUs` defaults to the phrase length, at least 1.5 s. If the word\'s timing is only ESTIMATED (not aligned to the audio) the result says so - tell the user it may be off. Fails when the word falls in a removed range.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: {
       assetId: z.string().min(1).max(128),
       text: z.string().trim().min(1).max(200).optional(),
@@ -217,6 +247,7 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('render_frame', {
     title: 'Render frame',
     description: 'Shows you the preview exactly as the user sees it (video, zooms, titles, effects, look and captions) at one or more SEQUENCE times, as images. Use it to check your own edits - "did the zoom land on the face?", "is the title readable?", "does the grade match the reference?" - then fix and re-check. Seeks the playhead (visible to the user). The KathaCut window must be visible. Up to 6 times per call; images are downscaled JPEG.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: { sequenceUs: z.array(z.number().int().nonnegative()).min(1).max(6).describe('Sequence-time positions in microseconds.') },
   }, async ({ sequenceUs }) => {
     if (!deps.captureRect) return errorText('Frame capture is not available in this build.')
@@ -234,6 +265,7 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('match_color_to_reference', {
     title: 'Match color to a reference image',
     description: 'Color-grades the video to look like a reference picture. Derives a tone and color transfer (a .cube LUT) from the frame at `sequenceUs` (default: under the playhead) toward the reference, and adds it as ONE adjustment layer over the range (default: the whole program) - one undo step. Give exactly one image source: `imagePath` (absolute path to a png/jpg/webp/gif/bmp), `fromClipboard: true` (the user copied the image just now), or `imageBase64` + `mimeType` (small images only). A statistical match: best when subject and lighting are alike; lower `strength` to soften it. Afterwards call render_frame to check the result and adjust with `edit` (the adjustment clip\'s grade) if needed. If you cannot get the image bytes (e.g. it is only attached in chat), look at it yourself and grade by hand with `edit` instead.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: {
       imagePath: z.string().min(1).max(1024).optional(),
       fromClipboard: z.boolean().optional(),
@@ -267,14 +299,16 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('seek', {
     title: 'Seek',
     description: 'Moves the playhead to a sequence-time position (microseconds) so the user sees what you are looking at.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: { sequenceUs: z.number().int().nonnegative() },
   }, async ({ sequenceUs }) => relay(deps, { id: randomUUID(), kind: 'seek', sequenceUs }, stateOf))
 
   server.registerTool('select', {
     title: 'Select',
     description: 'Selects a caption, clip, blur region, frame-paint effect or marker (or clears the selection with a null id), highlighting it in the editor.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {
-      kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'marker']).nullable(),
+      kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'shape', 'marker']).nullable(),
       id: z.string().min(1).nullable(),
     },
   }, async ({ kind, id }) => relay(deps, { id: randomUUID(), kind: 'select', selection: kind && id ? { kind, id } : null }, stateOf))
@@ -282,17 +316,20 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('undo', {
     title: 'Undo',
     description: 'Undoes the most recent project edit (yours or the user\'s) — the same history every ⌘/Ctrl+Z in the app uses.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'undo' }, stateOf))
 
   server.registerTool('redo', {
     title: 'Redo',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'redo' }, stateOf))
 
   server.registerTool('list_style_options', {
     title: 'List style options',
     description: 'Motion presets, installed font choices, built-in caption templates, and every caption-appearance field with its valid range/options — read this before calling set_caption_style to build a valid value instead of guessing.',
+    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {},
   }, async () => text(listStyleOptions()))
 
@@ -304,6 +341,7 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('set_caption_style', {
     title: 'Set caption style',
     description: 'Patches the project\'s caption style (motion preset and/or appearance fields) and applies it to every caption, same as the Style panel. Only the fields you pass are changed; call get_project first to see the current style, and list_style_options for valid field ranges. If the motion needs word timing that some captions lack, missing timing is filled with review-required estimates.',
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: stylePatchShape,
   }, async (patch) => {
     const current = await deps.askRenderer({ id: randomUUID(), kind: 'get-state' })
@@ -320,6 +358,7 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
   server.registerTool('apply_template', {
     title: 'Apply caption template',
     description: `Applies one of the built-in caption templates by id to every caption. Available ids: ${CAPTION_TEMPLATES.map((template) => template.id).join(', ')} (see list_style_options for names/descriptions).`,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: { templateId: z.enum(CAPTION_TEMPLATES.map((template) => template.id) as [string, ...string[]]) },
   }, async ({ templateId }) => {
     const template = CAPTION_TEMPLATES.find((candidate) => candidate.id === templateId)

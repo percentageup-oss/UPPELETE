@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { exportArgumentsV3, exportFilterGraphV3, maskTargets, v3Route } from './exportArguments'
+import { captionPipeRate, exportArgumentsV3, exportFilterGraphV3, maskTargets, v3Route } from './exportArguments'
 import { exportManifestV3Schema, type ExportManifestV3, type ManifestClip } from '../../src/export/plan'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
+import { defaultShape } from '../../src/core/shapeCommands'
+import type { Shape } from '../../src/core/edit'
 
 const US = 1_000_000
 const clip = (id: string, inputIndex: number, extra: Partial<ManifestClip> = {}): ManifestClip => ({
@@ -254,5 +256,54 @@ describe('manifest v3 raw transport', () => {
       expect(raw).toContain('[caption]overlay=0:0:alpha=straight:')
       expect(exportFilterGraphV3(route, [true, true, true, false, true]).filterComplex).not.toContain('unpremultiply')
     }
+  })
+})
+
+describe('shape-blend export passes (docs/plans/shape-blend/02-export-passes.md)', () => {
+  const blending: Shape = { ...defaultShape('box', 'blend-1', 0, 2 * US), layerOrder: 1, blendMode: 'multiply' }
+  const withShape = (route: ExportManifestV3): ExportManifestV3 => ({ ...route, shapes: [blending] })
+
+  it('leaves a shape-free (or blend-free) manifest byte-identical: no split, select or blend chain', () => {
+    for (const route of [backToBack, stacked]) {
+      const graph = exportFilterGraphV3(route, [true, true, true, false, true]).filterComplex
+      expect(graph).not.toMatch(/split|select=|blendChains|blend=c0_mode/)
+      const normalShape: ExportManifestV3 = { ...route, shapes: [{ ...blending, blendMode: undefined }] }
+      expect(exportFilterGraphV3(normalShape, [true, true, true, false, true]).filterComplex).toBe(graph)
+    }
+  })
+
+  it('multiplies the pipe framerate by K passes and leaves the output rate alone', () => {
+    expect(captionPipeRate(backToBack)).toBe('25/1')
+    expect(captionPipeRate(withShape(backToBack))).toBe('75/1')
+    const args = exportArgumentsV3(withShape(backToBack), '/out/x.mp4.tmp', [true, false])
+    expect(args.slice(args.indexOf('-thread_queue_size'), args.indexOf('pipe:0') + 1)).toEqual(['-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', '75/1', '-c:v', 'png', '-i', 'pipe:0'])
+    // The output side (encoded frame rate and count) stays in output frames, unaffected by K.
+    expect(args.slice(args.indexOf('-r'), args.indexOf('-r') + 2)).toEqual(['-r', '25/1'])
+    expect(args[args.indexOf('-frames:v') + 1]).toBe('125')
+  })
+
+  it('splits the caption pipe into K=3 bands: a normal overlay, the blend chain, then the final overlay', () => {
+    const chains = exportFilterGraphV3(withShape(backToBack), [true, false]).filterComplex.split(';')
+    const layer = '[2:v:0]'
+    expect(chains).toContain(`${layer}split=3[gp0][gp1][gp2]`)
+    expect(chains).toContain("[gp0]select='eq(mod(n\\,3)\\,0)',setpts=N/(25/1)/TB[gs0]")
+    expect(chains).toContain("[gp1]select='eq(mod(n\\,3)\\,1)',setpts=N/(25/1)/TB[gs1]")
+    expect(chains).toContain("[gp2]select='eq(mod(n\\,3)\\,2)',setpts=N/(25/1)/TB[gs2]")
+    // Band 0 (normal) composites first, straight onto the picture.
+    const band0 = chains.find((chain) => chain.startsWith('[v]') && chain.includes('[gs0]'))
+    expect(band0).toBe('[v][gs0]overlay=0:0:alpha=straight:format=auto:eof_action=pass:repeatlast=0[gb0]')
+    // Band 1 (the blend shape) uses the same `blend` chain a blending picture clip does.
+    expect(chains.some((chain) => chain === '[gs1]format=gbrap[ct100001]')).toBe(true)
+    expect(chains.some((chain) => chain.includes('blend=c0_mode=multiply:c1_mode=multiply:c2_mode=multiply:c3_mode=normal:shortest=1[bl100001]'))).toBe(true)
+    // The final band (2) ends the graph exactly like the untouched single-pass case did.
+    const final = chains.find((chain) => chain.includes('[gs2]overlay'))
+    expect(final).toContain('overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]')
+    expect(chains.some((chain) => chain.startsWith(`${layer}format=gbrap`))).toBe(false) // png transport: no unpremultiply
+  })
+
+  it('works identically on the stacked route, after picture compositing', () => {
+    const chains = exportFilterGraphV3(withShape(stacked), [true, true, true, false, true]).filterComplex.split(';')
+    expect(chains.some((chain) => chain.includes('split=3'))).toBe(true)
+    expect(chains.some((chain) => chain.includes('eof_action=endall:shortest=1,format=yuv420p[outv]'))).toBe(true)
   })
 })

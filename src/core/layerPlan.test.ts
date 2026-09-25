@@ -3,6 +3,7 @@ import { createLayerPlan, sequenceFrameUs } from './layerPlan'
 import { frameSourceUs } from '../export/plan'
 import { DEFAULT_CAPTION_STYLE } from '../captions/style'
 import type { Segment } from './edit'
+import { defaultShape } from './shapeCommands'
 import type { Cue } from './model'
 
 const NTSC = { numerator: 30000, denominator: 1001 }
@@ -136,6 +137,17 @@ describe('frame signatures', () => {
     expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
     expect(signatureAt(900_000)).toBe(signatureAt(1_000_000))
     expect(signatureAt(900_000)).not.toBe(signatureAt(2_500_000))
+  })
+
+  it('changes signature while a shape draws on, and settles once it is drawn', () => {
+    const shapes = [defaultShape('dotted-arrow', 'a1', 0, 3_000_000)]
+    const plan = createLayerPlan({ cues: [], frameRate: { numerator: 100, denominator: 1 }, shapes, output })
+    const signatureAt = (us: number) => plan.frameAt(Math.round(us / 10_000)).signature
+    expect(signatureAt(10_000)).not.toBe(signatureAt(20_000))
+    expect(signatureAt(900_000)).toBe(signatureAt(1_500_000))
+    // The exit fade changes it again, and outside the shape it differs from being at rest.
+    expect(signatureAt(1_500_000)).not.toBe(signatureAt(2_900_000))
+    expect(signatureAt(1_500_000)).not.toBe(signatureAt(3_500_000))
   })
 
   it('changes signature through a title entrance even when enter/exit are none', () => {

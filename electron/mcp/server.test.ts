@@ -34,9 +34,22 @@ describe('MCP server', () => {
     expect(handle!.port).toBeGreaterThan(0)
     const { tools } = await client.listTools()
     expect(tools.map((tool) => tool.name).sort()).toEqual([
-      'add_title', 'apply_template', 'edit', 'get_captions', 'get_project', 'get_transcript', 'import_media',
+      'add_shape', 'add_title', 'apply_template', 'edit', 'get_captions', 'get_project', 'get_transcript', 'import_media',
       'list_creative_options', 'list_style_options', 'match_color_to_reference', 'place_at_word', 'redo', 'render_frame', 'seek', 'select', 'set_caption_style', 'undo',
     ])
+    for (const tool of tools) {
+      expect(tool.annotations, `${tool.name} must declare ChatGPT safety annotations`).toMatchObject({
+        readOnlyHint: expect.any(Boolean),
+        destructiveHint: expect.any(Boolean),
+        openWorldHint: expect.any(Boolean),
+        idempotentHint: expect.any(Boolean),
+      })
+    }
+    const annotationsOf = (name: string) => tools.find((tool) => tool.name === name)!.annotations
+    expect(annotationsOf('get_project')).toMatchObject({ readOnlyHint: true, destructiveHint: false, openWorldHint: false })
+    expect(annotationsOf('edit')).toMatchObject({ readOnlyHint: false, destructiveHint: true, openWorldHint: false })
+    expect(annotationsOf('import_media')).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: true })
+    expect(annotationsOf('seek')).toMatchObject({ readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: true })
   })
 
   it('rejects a request with a missing or wrong Bearer token before it reaches MCP handling', async () => {
@@ -49,6 +62,38 @@ describe('MCP server', () => {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }, body: '{}',
     })
     expect(noToken.status).toBe(401)
+  })
+
+  it('keeps concurrent and abandoned client sessions from blocking each other', async () => {
+    const connectionCounts: number[] = []
+    handle = await startMcpServer({ token: 't', onStatus: ({ connections }) => connectionCounts.push(connections) }, { askRenderer: async (request) => okState(request) })
+    const connectClient = async (name: string) => {
+      const client = new Client({ name, version: '1' })
+      const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${handle!.port}/mcp`), { requestInit: { headers: { Authorization: 'Bearer t' } } })
+      await client.connect(transport)
+      return { client, transport }
+    }
+    const first = await connectClient('first')
+    const second = await connectClient('second')
+    expect(connectionCounts).toEqual([1, 2])
+    expect((await first.client.listTools()).tools).not.toHaveLength(0)
+    expect((await second.client.listTools()).tools).not.toHaveLength(0)
+
+    // A crashed/abruptly closed HTTP client cannot send DELETE, so its old session remains until
+    // app shutdown. It must not block another session from continuing or a third from connecting.
+    await first.client.close()
+    expect(connectionCounts.at(-1)).toBe(2)
+    expect((await second.client.listTools()).tools).not.toHaveLength(0)
+    await second.transport.terminateSession()
+    expect(connectionCounts.at(-1)).toBe(1)
+    await second.client.close()
+
+    const third = await connectClient('third')
+    expect(connectionCounts.at(-1)).toBe(2)
+    expect((await third.client.listTools()).tools).not.toHaveLength(0)
+    await third.transport.terminateSession()
+    await third.client.close()
+    expect(connectionCounts.at(-1)).toBe(1)
   })
 
   it('get_project issues a get-state request and returns the project summary as tool content', async () => {
@@ -186,6 +231,28 @@ describe('MCP server', () => {
     if (command.type !== 'text-add') throw new Error('expected text-add')
     expect(command.overlay).toMatchObject({ text: 'Hello', startUs: 1_000_000, endUs: 3_000_000, titleMotion: { kind: 'cascade' } })
     expect(command.overlay.style.appearance.vertical).toBe(0.2)
+  })
+
+  it('add_shape builds one shape-add command from a preset and recolours it', async () => {
+    const calls: AgentRequest[] = []
+    const client = await connect('t', async (request) => {
+      calls.push(request)
+      return { id: request.id, ok: true, outcomes: [{ ok: true, warnings: [] }], failedIndex: null, state: { title: 'x' } as never }
+    })
+    await client.callTool({ name: 'add_shape', arguments: { preset: 'dotted-arrow', startUs: 1_000_000, endUs: 3_000_000, color: '#00AAFF' } })
+    const request = calls[0]
+    if (request.kind !== 'run-commands') throw new Error('expected run-commands')
+    const command = request.commands[0]
+    if (command.type !== 'shape-add') throw new Error('expected shape-add')
+    expect(command.shape).toMatchObject({ startUs: 1_000_000, endUs: 3_000_000, geometry: { kind: 'line' }, arrowEnd: 'open', stroke: { color: '#00AAFF', dash: 'dotted' } })
+  })
+
+  it('add_shape rejects an end before its start without asking the renderer', async () => {
+    let called = false
+    const client = await connect('t', async (request) => { called = true; return okState(request) })
+    const result = await client.callTool({ name: 'add_shape', arguments: { preset: 'box', startUs: 5, endUs: 3 } })
+    expect(result.isError).toBe(true)
+    expect(called).toBe(false)
   })
 
   it('add_title rejects an end before its start without asking the renderer', async () => {

@@ -124,7 +124,8 @@ import { EffectInspector } from './EffectInspector'
 import { TextInspector } from './TextInspector'
 import { TextOverlayActor } from './captions/TextOverlayActor'
 import { ShapeActor } from './captions/ShapeActor'
-import { fitShapesToTitle } from './captions/fitMeasure'
+import { fitShapesToTitle, measureTitleBlock } from './captions/fitMeasure'
+import { getTemplate } from './core/overlayTemplateCatalog'
 import { isFittableGeometry } from './core/fitToText'
 import { ShapeInspector } from './ShapeInspector'
 import { defaultShape, type ShapePreset } from './core/shapeCommands'
@@ -1752,6 +1753,23 @@ export default function App() {
     setInspectorTab('edit')
     runCommand({ type: 'shape-add', shape: defaultShape(preset, crypto.randomUUID(), startUs, endUs, captionComposition.height) })
   }
+  const addTemplateAtPlayhead = async (templateId: string, glass: boolean) => {
+    const builder = getTemplate(templateId)
+    if (!builder) return
+    if (durationUs <= 0) { setNotice({ tone: 'warning', text: 'Add a video or caption with duration before adding a template.' }); return }
+    const startUs = Math.min(currentUs, Math.max(0, durationUs - 1))
+    const endUs = Math.min(durationUs, startUs + 4 * US_PER_SECOND)
+    const measured: Record<string, { width: number; height: number }> = {}
+    for (const text of builder.texts) {
+      const block = await measureTitleBlock(text.text, text.style, captionComposition)
+      if (!block) { setNotice({ tone: 'warning', text: `The “${builder.name}” template could not measure its text.` }); return }
+      measured[text.key] = { width: block.width, height: block.height }
+    }
+    if (startUs !== currentUs) playback.seek(startUs)
+    setInspectorTab('edit')
+    runCommand({ type: 'template-insert', templateId, startUs, endUs, at: { x: captionComposition.width / 2, y: captionComposition.height / 2 }, measured,
+      ids: { group: crypto.randomUUID(), items: Object.fromEntries(builder.memberKeys.map((key) => [key, crypto.randomUUID()])) }, ...(glass ? { glass: true } : {}) })
+  }
   const addTextFromPreview = (event: ReactMouseEvent<HTMLDivElement>) => {
     const target = event.target
     if (target instanceof Element && target.closest('.caption-overlay-hit, .text-overlay-hit, .overlay-handle, .zoom-hit, .blur-hit, button, input, textarea')) return
@@ -2189,7 +2207,7 @@ export default function App() {
           videos={videoAssets(project)} pickedVideo={pickedVideo} onPickVideo={setPickedVideoId} mediaReady={pickedReady} onApplyTranscript={applyTranscript}
           geminiKeyConfigured={Boolean(geminiKey?.configured)} onNeedGeminiKey={() => setSettingsTab('gemini')} onImportSrt={() => void importSrt()} />}
         {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
-          onImportAndAdd={() => void importImageOverlay()} mediaReady onAddShape={addShapeAtPlayhead} />}
+          onImportAndAdd={() => void importImageOverlay()} mediaReady onAddShape={addShapeAtPlayhead} onAddTemplate={(id, glass) => void addTemplateAtPlayhead(id, glass)} />}
         {railTab === 'titles' && <TitlesPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []} selectedText={selectedText} target={selectedText ? 'text' : 'captions'}
           onApplyTemplate={applyTemplate} onCommitMotion={(motion) => commitStyle({ ...effectiveStyle, motion, titleMotion: undefined })}
           onSavePreset={savePreset} onApplyPreset={applyPreset} onDeletePreset={deletePreset}

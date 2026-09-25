@@ -17,9 +17,9 @@ const video = (id: string, start: number, from: number, to: number, extra: Parti
 const cue = (id: string, startUs: number, endUs: number, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs, endUs, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 16, id: 'p', title: 'T', cues: [], assets: [asset('x', 'video'), asset('img', 'image')],
+  schemaVersion: 21, id: 'p', title: 'T', cues: [], assets: [asset('x', 'video'), asset('img', 'image')],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 20 * US)],
-  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
+  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [],
   format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } }, ...dates, ...extra,
 } as CaptionProject)
 const range = { startUs: 4 * US, endUs: 10 * US }
@@ -109,7 +109,7 @@ describe('projectInRange', () => {
   // Guard: a project field that carries times must be handled by projectInRange. When the schema
   // gains an array, decide here whether it needs cropping and add it to one of the two lists.
   it('accounts for every array field of the project schema', () => {
-    const handled = ['cues', 'clips', 'blurRegions', 'zoomRegions', 'effects', 'textOverlays', 'markers']
+    const handled = ['cues', 'clips', 'blurRegions', 'zoomRegions', 'effects', 'textOverlays', 'shapes', 'markers']
     const timeless = ['assets', 'tracks', 'captionTracks', 'transcriptionRuns', 'alignmentRuns', 'presets', 'stylePresets', 'savedPresets']
     const arrays = Object.entries(projectSchema.shape).filter(([, schema]) => /ZodArray/.test(schema.constructor.name) || /ZodDefault/.test(schema.constructor.name) && /ZodArray/.test((schema as { _def: { innerType: { constructor: { name: string } } } })._def.innerType.constructor.name)).map(([key]) => key)
     expect(arrays.filter((key) => !handled.includes(key) && !timeless.includes(key))).toEqual([])

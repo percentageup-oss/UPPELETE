@@ -4,6 +4,7 @@ import { Timeline } from './Timeline'
 import type { Cue } from './core/model'
 import type { CaptionTrack, Clip, Marker, ProjectAsset, Track } from './core/edit'
 import { defaultTextOverlay } from './core/textCommands'
+import { defaultShape } from './core/shapeCommands'
 
 const US = 1_000_000
 const cue = (extra: Partial<Cue> & Pick<Cue, 'id' | 'startUs' | 'endUs'>): Cue => ({
@@ -39,6 +40,19 @@ describe('authored text lane', () => {
     const html = render({ onAddText: () => {}, textOverlays: [defaultTextOverlay('title', 0, 3 * US)] })
     expect(html).toMatch(/aria-label="Add text at playhead"/)
     expect(html).toContain('class="track text-lane"')
+  })
+})
+
+describe('graphics lane', () => {
+  it('shows no lane without shapes and a labelled, selectable one with them', () => {
+    expect(render()).not.toContain('Graphics timeline')
+    const html = render({ shapes: [defaultShape('arrow', 'a1', 0, 3 * US), defaultShape('box', 'b1', US, 2 * US)], selection: { kind: 'shape', id: 'a1' } })
+    expect(html).toContain('aria-label="Graphics timeline"')
+    expect(html).toContain('data-item-kind="shape"')
+    expect(html).toMatch(/aria-pressed="true"[^>]*aria-label="Shape Arrow/)
+    // The two overlap in time, so they stack on separate rows.
+    expect(html).toContain('top:2px')
+    expect(html).toContain('top:20px')
   })
 })
 

@@ -260,6 +260,7 @@ const templateInsert = z.strictObject({
   ids: z.strictObject({ group: itemId, items: z.record(z.string().min(1).max(100), itemId) }),
   at: z.strictObject({ x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000) }),
   measured: z.record(z.string().min(1).max(100), z.strictObject({ width: z.number().finite().positive().max(40000), height: z.number().finite().positive().max(40000) })),
+  glass: z.boolean().optional(),
 })
 
 const maskTarget = z.discriminatedUnion('kind', [
