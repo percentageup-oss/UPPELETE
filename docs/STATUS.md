@@ -1,5 +1,12 @@
 # Status
 
+## 2026-09-25 — Export speed 06: taskbar progress, keep awake, quit guard
+- `electron/exportIpc.ts`: `export:start` sets the window's progress bar (`setProgressBar`: fraction when measured, indeterminate otherwise), holds a `powerSaveBlocker('prevent-app-suspension')` for the job, clears the bar on success/cancel and shows an error bar for ~4 s on failure. New `hasRunningExports()`.
+- `electron/main.ts` `before-quit`: while an export runs, asks "Keep exporting" / "Cancel export and quit" before shutting down; smoke modes never register the export IPC so they skip it.
+- Verified: `npm run typecheck` clean; `npm test -- electron` 223 pass, 1 fail (`electron/mcp/config` file mode, baseline on Windows), on Windows.
+- Limitations: not run in the app by hand (bar, dialog buttons, sleep prevention unwatched); no unit test for `hasRunningExports` (needs electron's `ipcMain`); macOS untested.
+- Next: 07.
+
 ## 2026-09-25 — Export speed 05: honest export progress
 - New `src/export/progressRate.ts`: EWMA frames/s, ETA and `describeExport`; wired into the topbar pill and inspector footer in `App.tsx` (renderer only, no IPC/schema change).
 - Label reads "Preparing…" until FFmpeg reports frames, then "Exporting 42% · about 1:12 left · 38 fps". ETA and fps stay hidden until ≥3 s of samples and ≥2 % progress.

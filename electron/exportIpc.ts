@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker } from 'electron'
 import { readFileSync } from 'node:fs'
 import { readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -26,6 +26,11 @@ import { getMediaWorker, configuredToolchain } from './mediaWorker'
 let service: ExportService | undefined
 let supportCache: Promise<ExportSupport> | undefined
 const activeRequests = new Map<string, { cancel(): void }>()
+
+/** True while an interactive export is running; the quit guard in main.ts asks before cancelling it. */
+export function hasRunningExports(): boolean {
+  return activeRequests.size > 0
+}
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : 'The export failed.'
@@ -131,8 +136,16 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
       overlayCount: built.manifest.overlays.length,
       plan: built.plan, settings: request.settings, videoBitrateKbps,
     })
+    const win = BrowserWindow.fromWebContents(event.sender)
+    const setBar = (...args: Parameters<BrowserWindow['setProgressBar']>) => { if (win && !win.isDestroyed()) win.setProgressBar(...args) }
+    const blocker = powerSaveBlocker.start('prevent-app-suspension')
     const handle = getService().start({ inputPaths: built.inputPaths, plan: built.plan, manifest: built.manifest, destinationPath, ...(videoBitrateKbps ? { encoding: { videoBitrateKbps } } : {}) },
-      (job) => { if (!event.sender.isDestroyed()) event.sender.send('export:progress', { requestId: request.requestId, job }) })
+      (job) => {
+        const progress = job.progress
+        if (progress?.kind === 'measured' && progress.total > 0) setBar(Math.min(1, progress.completed / progress.total))
+        else setBar(2)
+        if (!event.sender.isDestroyed()) event.sender.send('export:progress', { requestId: request.requestId, job })
+      })
     activeRequests.set(key, handle)
     // A destroyed renderer deliberately does *not* cancel the job. The user already chose a
     // destination, so the export's product is a file on disk, not a live window: losing a
@@ -141,8 +154,10 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
     // cancels every job through `closeJobs()`.
     const noteDestroyedRenderer = () => logExport('renderer-destroyed', { requestId: request.requestId })
     event.sender.once('destroyed', noteDestroyedRenderer)
+    let outcomeState: string | undefined
     try {
       const outcome = await handle.outcome
+      outcomeState = outcome.state
       logExport('outcome', { requestId: request.requestId, state: outcome.state, ...(outcome.state === 'failed' ? { error: outcome.error } : {}),
         ...(outcome.state === 'succeeded' ? { path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount, timings: outcome.value.timings } : {}) })
       if (outcome.state === 'succeeded') return { state: 'succeeded', path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount }
@@ -150,6 +165,11 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
     } finally {
       activeRequests.delete(key)
       event.sender.removeListener('destroyed', noteDestroyedRenderer)
+      powerSaveBlocker.stop(blocker)
+      if (outcomeState === 'failed') {
+        setBar(1, { mode: 'error' })
+        setTimeout(() => setBar(-1), 4000).unref()
+      } else setBar(-1)
     }
   })
 

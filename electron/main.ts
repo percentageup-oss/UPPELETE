@@ -27,7 +27,7 @@ import { readThumbnailCache, writeThumbnailCache } from './thumbnailCache'
 import { PlaybackProxyService } from './playbackProxyService'
 import { registerTranscriptionIpc, runTranscriptionSmoke } from './transcriptionIpc'
 import { modelIdSchema } from '../src/core/modelCatalog'
-import { registerExportIpc, runExportSmoke } from './exportIpc'
+import { hasRunningExports, registerExportIpc, runExportSmoke } from './exportIpc'
 import { exportSettingsSchema } from '../src/export/settings'
 import { logExport } from './exportLog'
 import { closeJobs, getJobScheduler } from './jobs'
@@ -719,9 +719,24 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+let quitConfirmed = false
+
 app.on('before-quit', (event) => {
   event.preventDefault()
   if (shuttingDown) return
+  if (hasRunningExports() && !quitConfirmed) {
+    // Asked first: quitting cancels the export and no file is saved. Smoke modes never register
+    // the export IPC, so they never reach this prompt.
+    void dialog.showMessageBox({
+      type: 'warning', buttons: ['Keep exporting', 'Cancel export and quit'], defaultId: 0, cancelId: 0,
+      message: 'An export is still running.', detail: 'Quitting now cancels it and no file is saved.',
+    }).then(({ response }) => {
+      if (response !== 1) return
+      quitConfirmed = true
+      app.quit()
+    })
+    return
+  }
   shuttingDown = true
   // All owned work is settled before exit; re-entering app.quit after prevention can
   // leave a windowless macOS process with a closed model manager.
