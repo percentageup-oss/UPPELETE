@@ -1,5 +1,5 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { availableParallelism, tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   exportManifestSchema, exportPlanSchema, exportFrameCountFor, exportOutputDurationUs, frameRequestAt, frameRequestAtSequence, manifestTimeline, maskFrameRequest, normalizeManifest,
@@ -13,7 +13,7 @@ import { failure, MediaWorkerError, type MediaTask, type MediaResult, type Progr
 import { runExecutable } from './process'
 import { probeMedia } from './probe'
 import { exportArguments, exportArgumentsV3, exportFilterGraph, exportFilterGraphV3, maskTargets, type MaskTarget } from './exportArguments'
-import { ownedProcess, FrameReader, writeBounded } from './exportProcesses'
+import { ownedProcess, RenderHost, writeBounded } from './exportProcesses'
 import { selectFrameTransport, type FrameTransport } from './exportTransport'
 import { decodeCubeData, writeCube } from '../../src/color/cube'
 
@@ -79,7 +79,16 @@ type MediaProber = typeof probeMedia
  * exercise the real orchestration logic — cancellation, progress parsing, gap-frame reuse,
  * cleanup and output validation — against fake processes instead of a real FFmpeg/export host,
  * mirroring the `{ runTool, temporaryRoot }` injection already used by `waveform.ts`/`thumbnails.ts`. */
-export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number; transport?: FrameTransport }
+export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number; transport?: FrameTransport; hosts?: number }
+
+/** Each host is ~300 MB and a raw 1080p frame 8 MB, so the pool stays small. */
+const MAX_EXPORT_HOSTS = 3
+/** Export hosts to run: a quarter of the cores, 1-3, unless `CAPTION_STUDIO_EXPORT_HOSTS` sets it. */
+export function exportHostCount(env: NodeJS.ProcessEnv = process.env, parallelism = availableParallelism()): number {
+  const requested = Number(env.CAPTION_STUDIO_EXPORT_HOSTS)
+  const count = Number.isInteger(requested) && requested >= 1 ? requested : Math.floor(parallelism / 4)
+  return Math.min(MAX_EXPORT_HOSTS, Math.max(1, count))
+}
 
 /** Successful support checks for the session, so each export job skips the `-version` runs. Only
  * `supported: true` is cached: a fixed install is re-checked on the next job. */
@@ -145,7 +154,9 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
   // concurrent or crashed export hosts never collide on Local State/GPU cache. Baked LUT files
   // (Color: adjustment layers) also land here, next to `filtergraph.txt`.
   const hostProfileDirectory = await mkdtemp(path.join(dependencies.temporaryRoot ?? tmpdir(), 'caption-studio-export-host-'))
-  let host: ReturnType<ProcessSpawner> | undefined, encoder: ReturnType<ProcessSpawner> | undefined
+  const extraProfileDirectories: string[] = []
+  const hosts: RenderHost[] = []
+  let encoder: ReturnType<ProcessSpawner> | undefined
   try {
     // `prepareV3` writes any baked LUT files into `hostProfileDirectory` before building the
     // filtergraph, since the graph embeds their on-disk paths as literal `lut3d=file=…` text.
@@ -163,11 +174,18 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // The host allow-lists exactly these URLs (scripts/export-host.mjs) — never an arbitrary
     // renderer- or project-supplied path — so an overlay asset this job did not resolve can never load.
     const assetArgs = [...new Set(job.overlayUrls)].flatMap((url) => ['--asset', url])
-    host = spawn(tools.exportHost!.executable, [...(tools.exportHost!.args ?? [tools.exportHost!.scriptPath]), '--user-data', hostProfileDirectory, '--transport', transport, ...assetArgs], controller.signal, env)
-    const reader = new FrameReader(host.child.stdout)
+    const hostArgs = (profileDirectory: string) => [...(tools.exportHost!.args ?? [tools.exportHost!.scriptPath]), '--user-data', profileDirectory, '--transport', transport, ...assetArgs]
     const frameExpectation = transport === 'raw' ? { rawBytes: job.width * job.height * 4 } : 'png' as const
+    // Frames are painted by up to N hosts in parallel but still go to the one encoder in index order.
+    const hostCount = Math.max(1, Math.min(dependencies.hosts ?? exportHostCount(), job.frameCount))
+    for (let n = 0; n < hostCount; n++) {
+      // Host 0 shares the job directory (LUT files, filter script); the others get their own profile.
+      const profileDirectory = n === 0 ? hostProfileDirectory : await mkdtemp(path.join(dependencies.temporaryRoot ?? tmpdir(), 'caption-studio-export-host-'))
+      if (n > 0) extraProfileDirectories.push(profileDirectory)
+      hosts.push(new RenderHost(spawn(tools.exportHost!.executable, hostArgs(profileDirectory), controller.signal, env), frameExpectation))
+    }
     // Layer masks FFmpeg applies (video clips, blur) are images the host rasterizes from the same SVG
-    // the preview masks with. They must exist before the encoder opens them as inputs, so the host
+    // the preview masks with. They must exist before the encoder opens them as inputs, so host 0
     // runs first; identical masks share one file.
     const maskFiles: string[] = []
     const rasterized = new Map<string, string>()
@@ -176,15 +194,15 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       let file = rasterized.get(key)
       if (!file) {
         file = path.join(hostProfileDirectory, `mask-${rasterized.size}.png`)
-        await writeBounded(host.child.stdin, JSON.stringify(maskFrameRequest(target.mask, job.width, job.height)) + '\n')
-        await writeFile(file, await reader.frame())
+        await writeFile(file, await hosts[0].render(maskFrameRequest(target.mask, job.width, job.height), 'png'))
         rasterized.set(key, file)
       }
       maskFiles.push(file)
     }
     encoder = spawn(tools.ffmpegPath, job.args(transport, filterComplexScriptPath, maskFiles), controller.signal)
     // Either process failure interrupts a blocked frame read/write in its peer.
-    host.closed.catch(cancel); encoder.closed.catch(cancel)
+    for (const host of hosts) host.closed.catch(cancel)
+    encoder.closed.catch(cancel)
     const total = job.frameCount
     let progressText = '', lastFrame = 0
     encoder.child.stdout.on('data', (chunk: Buffer) => {
@@ -210,7 +228,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     type RenderedFrame = { signature: string; png: Buffer }
     const stallMs = dependencies.stallMs ?? FRAME_STALL_MS
     const seconds = Math.round(stallMs / 1000)
-    const encoderHandle = encoder, hostHandle = host
+    const encoderHandle = encoder
     let hostWaitMs = 0, encoderWaitMs = 0, paintedFrames = 0, reusedFrames = 0
     const toEncoder = async (index: number, png: Buffer) => {
       const waitStart = performance.now()
@@ -221,48 +239,60 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
         }))
       } finally { encoderWaitMs += performance.now() - waitStart }
     }
-    const fromHost = async (index: number, request: unknown) => {
-      const waitStart = performance.now()
-      try {
-        await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
-        return await withinStallDeadline(reader.frame(frameExpectation), stallMs, () => ({
-          message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
-          diagnostic: hostHandle.diagnostic?.() ?? '',
-        }))
-      } finally { hostWaitMs += performance.now() - waitStart }
-    }
+    const fromHost = (host: RenderHost, index: number, request: unknown) => withinStallDeadline(host.render(request), stallMs, () => ({
+      message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
+      diagnostic: host.diagnostic(),
+    }))
     let previous: RenderedFrame | null = null
     let gap: RenderedFrame | null = null
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
-    // Two stages with a one-slot hand-off: once frame N's PNG arrives, the host is already asked for
-    // the next frame that needs painting while FFmpeg ingests N. The host still has one request in
-    // flight; at most one extra PNG is buffered. Which indices need painting is decided from layer
-    // signatures alone (the same rule as the byte-side reuse below), so no bytes are needed to plan ahead.
+    // Render pool: which indices need painting is decided from layer signatures alone (the same rule
+    // as the byte-side reuse below), so the scheduler can plan ahead without any bytes. Each painted
+    // index goes to the next idle host; results are consumed strictly in index order. At most 2N
+    // painted frames are outstanding (in flight or waiting to be consumed), which bounds memory.
     const frames = new Map<number, LayerFrame>()
     let plannedTo = 0, plannedPrevious: string | null = null, plannedGap: string | null = null
-    const nextPainted = (from: number): number => {
+    const nextPainted = (): number => {
       for (; plannedTo < total; plannedTo++) {
         const frame = job.layer.frameAt(plannedTo)
-        if (plannedTo >= from) frames.set(plannedTo, frame)
+        frames.set(plannedTo, frame)
         const reused = frame.signature === plannedPrevious || frame.signature === plannedGap
         plannedPrevious = frame.signature
         if (!reused && frame.activeCueId === null) plannedGap ??= frame.signature
-        if (!reused && plannedTo >= from) return plannedTo++
+        if (!reused) return plannedTo++
       }
       return total
     }
-    let pending: { index: number; promise: Promise<Buffer> } | null = null
-    const prefetchAfter = (index: number) => {
-      const next = nextPainted(index + 1)
-      if (next >= total) return
-      const promise = fromHost(next, job.request(next, frames.get(next)!).request)
-      // Bookkeeping only: the real rejection is observed when the loop awaits this promise, and a
-      // prefetch abandoned by an earlier failure must not surface as an unhandled rejection.
+    const idleHosts = [...hosts]
+    const hostWaiters: ((host: RenderHost) => void)[] = []
+    const acquireHost = () => new Promise<RenderHost>((resolve, reject) => {
+      if (controller.signal.aborted) return reject(failure('CANCELLED', 'Export interrupted'))
+      const host = idleHosts.shift()
+      if (host) resolve(host); else hostWaiters.push(resolve)
+    })
+    const releaseHost = (host: RenderHost) => { const waiter = hostWaiters.shift(); if (waiter) waiter(host); else idleHosts.push(host) }
+    const renders = new Map<number, Promise<Buffer>>()
+    const dispatch = (index: number, frame: LayerFrame) => {
+      const request = job.request(index, frame).request
+      const promise = acquireHost().then(async (host) => {
+        try { return await fromHost(host, index, request) } finally { releaseHost(host) }
+      })
+      // Bookkeeping only: the real rejection is observed when the loop awaits this render, and one
+      // abandoned by an earlier failure must not surface as an unhandled rejection.
       promise.catch(() => {})
-      pending = { index: next, promise }
+      return promise
+    }
+    const window = 2 * hosts.length
+    const fill = () => {
+      while (renders.size < window) {
+        const next = nextPainted()
+        if (next >= total) return
+        renders.set(next, dispatch(next, frames.get(next)!))
+      }
     }
     const loopStartedAt = performance.now()
     const startupMs = loopStartedAt - startedAt
+    fill()
     for (let index = 0; index < total; index++) {
       if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
       const frame = frames.get(index) ?? job.layer.frameAt(index)
@@ -274,22 +304,25 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
         await toEncoder(index, cached)
         continue
       }
-      const inFlight = pending as { index: number; promise: Promise<Buffer> } | null
-      pending = null
-      const png = await (inFlight?.index === index ? inFlight.promise : fromHost(index, job.request(index, frame).request))
+      const render = renders.get(index) ?? dispatch(index, frame)
+      const waitStart = performance.now()
+      let png: Buffer
+      try { png = await render } finally { hostWaitMs += performance.now() - waitStart }
+      renders.delete(index)
       paintedFrames++
       previous = { signature: frame.signature, png }
       if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
-      prefetchAfter(index)
+      fill()
       await toEncoder(index, png)
     }
     const loopEndedAt = performance.now()
-    host.child.stdin.end(); encoder.child.stdin.end()
+    for (const host of hosts) host.end()
+    encoder.child.stdin.end()
     await encoder.closed
     // Every frame is already encoded; the host is only asked to exit. It is given a moment and then
     // reaped by `finally`, so a host that misses stdin EOF (seen with Electron on Windows) cannot
     // hold a finished export open.
-    await settledWithin([host.closed], PEER_SETTLE_MS)
+    await settledWithin(hosts.map((host) => host.closed), PEER_SETTLE_MS)
     if (signal.aborted) throw failure('CANCELLED', 'Export cancelled')
     // Independent output validation precedes finalization by main's commit gate.
     const output = await probe(tools.ffprobePath, task.outputPath, signal)
@@ -299,7 +332,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     const finishedAt = performance.now()
     const loopSeconds = (loopEndedAt - loopStartedAt) / 1000
     const timings = {
-      startupMs, hostWaitMs, encoderWaitMs, paintedFrames, reusedFrames,
+      startupMs, hostWaitMs, encoderWaitMs, hosts: hosts.length, paintedFrames, reusedFrames,
       finalizeMs: finishedAt - loopEndedAt, totalMs: finishedAt - startedAt, fps: loopSeconds > 0 ? total / loopSeconds : 0,
     }
     return { operation: 'export', path: task.outputPath, durationUs: output.metadata.durationUs, frameCount: total, frameRate: job.frameRate, timings }
@@ -308,16 +341,17 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // is already dying on its own (the host writing its error and exiting, say) is given a moment
     // to report why *before* our own teardown: once `cancel()` runs, every process that closes
     // afterwards rejects `CANCELLED`, and the real reason is indistinguishable from our SIGTERM.
-    if (!signal.aborted) await settledWithin([encoder?.closed, host?.closed], PEER_SETTLE_MS)
+    if (!signal.aborted) await settledWithin([encoder?.closed, ...hosts.map((host) => host.closed)], PEER_SETTLE_MS)
     cancel()
-    const outcomes = await Promise.allSettled([encoder?.closed, host?.closed])
+    const outcomes = await Promise.allSettled([encoder?.closed, ...hosts.map((host) => host.closed)])
     if (signal.aborted) throw failure('CANCELLED', 'Export cancelled')
     throw mostInformativeFailure(error, outcomes.flatMap((outcome) => outcome.status === 'rejected' ? [outcome.reason] : []))
   } finally {
     signal.removeEventListener('abort', cancel)
-    host?.stop(); encoder?.stop()
-    await Promise.allSettled([host?.closed, encoder?.closed])
-    await rm(hostProfileDirectory, { recursive: true, force: true })
+    for (const host of hosts) host.stop()
+    encoder?.stop()
+    await Promise.allSettled([...hosts.map((host) => host.closed), encoder?.closed])
+    await Promise.all([hostProfileDirectory, ...extraProfileDirectories].map((directory) => rm(directory, { recursive: true, force: true })))
   }
 }
 

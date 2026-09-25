@@ -91,3 +91,23 @@ export class FrameReader {
 }
 /** The PNG-only name the export loop and tests grew up with. */
 export const PngReader = FrameReader
+
+/**
+ * One export host as the frame scheduler sees it: a request goes in as a JSON line, one frame comes
+ * back. A host answers one request at a time, so callers keep at most one render in flight per host.
+ */
+export class RenderHost {
+  readonly reader: FrameReader
+  constructor(readonly process: ReturnType<typeof ownedProcess>, private readonly expectation: FrameExpectation) {
+    this.reader = new FrameReader(process.child.stdout)
+  }
+  get closed() { return this.process.closed }
+  diagnostic() { return this.process.diagnostic?.() ?? '' }
+  async render(request: unknown, expectation: FrameExpectation = this.expectation): Promise<Buffer> {
+    await writeBounded(this.process.child.stdin, JSON.stringify(request) + '\n')
+    return this.reader.frame(expectation)
+  }
+  /** Asks the host to exit; `stop` reaps it if it ignores stdin EOF. */
+  end() { this.process.child.stdin.end() }
+  stop() { this.process.stop() }
+}

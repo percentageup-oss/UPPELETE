@@ -10,6 +10,28 @@
 
 **Next.** Run the app and click through: add each preset, drag the ends of a curved arrow, undo, save and reload, export an MP4 and watch a draw-on animate. Then slice 2 (hand-drawn look).
 
+## 2026-09-25 — Export speed 04: parallel render pool
+
+`renderVideo` now runs N export hosts feeding the one FFmpeg encoder in frame order (`workers/media/export.ts`, new `RenderHost` wrapper in `exportProcesses.ts`). N = `clamp(floor(availableParallelism / 4), 1, 3)`, overridable with `CAPTION_STUDIO_EXPORT_HOSTS`, and never more than the frame count. Each host has its own `--user-data` profile and the same `--asset` list and `--transport`; host 0 also rasterizes the masks before the encoder starts. The painted indices are still planned from layer signatures, so the previous/gap reuse rule is unchanged. Each painted index goes to the next idle host, results are consumed strictly in index order, and at most 2N painted frames are outstanding. Any host dying, a stall or cancellation fails the export through `mostInformativeFailure`, and every host is stopped and its profile directory removed in `finally`. `timings` gains `hosts`. `hostWaitMs` now means time the frame loop spent waiting on painted frames (per-host waits overlap, so they can no longer be summed).
+
+**Measured** (Windows 11, 12 logical cores, my synthetic 1080p/30 fps 15 s source, real `--export-smoke`, PNG transport, 450 frames):
+
+| Workload | Hosts | fps | hostWaitMs | encoderWaitMs |
+|---|---|---|---|---|
+| 290 cues of 50 ms (291 painted / 159 reused) | 1 | 22.9 | 19071 | 535 |
+| same | 2 | 37.7 | 11250 | 603 |
+| same | 3 (default) | 48.2 | 8436 | 802 |
+| 30 cues, 500 ms (31 painted / 419 reused) | 1 | 131.8 | 2110 | 1284 |
+| same | 3 | 142.2 | 609 | 2518 |
+
+The gate from brief 03 held (hostWaitMs well above encoderWaitMs on the dense run). Output is identical: `ffmpeg -f framemd5` of the decoded video matches between 1, 2 and 3 hosts on both workloads (450 frames each).
+
+**Verification.** `tsc --noEmit` clean. `workers/media/export.test.ts` passes 48/48 with `process.platform` spoofed to darwin, including new tests for in-order delivery under random per-host delays, the 2N cap, reuse pattern with 3 hosts, a host dying, cancellation and `exportHostCount`. On real Windows the pool tests fail like the other `renderVideo` tests (they assume VideoToolbox), so 5 more failures on top of the existing baseline. The test file now pins `CAPTION_STUDIO_EXPORT_HOSTS=1` so the older tests do not depend on core count.
+
+**Limitations.** Windows only, 1080p only; no macOS run, no 4K run, peak memory not measured. Static-caption exports gain little (encoder-bound after reuse). The source video was mpeg4 because the bundled LGPL FFmpeg has no libx264.
+
+**Next.** Brief 05 (UX progress).
+
 ## 2026-09-25 — Export speed 03: raw caption transport (opt-in, not the default)
 
 Added a raw transport: the host writes `[4-byte length][premultiplied BGRA bitmap]` and FFmpeg reads it as `rawvideo`. `FrameReader` (was `PngReader`, alias kept) takes `frame('png' | { rawBytes })` and rejects any other size before allocating; worker env `CAPTION_STUDIO_EXPORT_TRANSPORT=raw` selects it and passes `--transport` to the host. The PNG arguments are byte-identical to before, and masks stay PNG. **PNG remains the default**, because raw failed the ±1 parity bar.

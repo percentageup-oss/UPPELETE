@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { failure, type Toolchain } from './protocol'
 import { FrameReader, PngReader } from './exportProcesses'
 import { selectFrameTransport } from './exportTransport'
-import { exportSupport, mostInformativeFailure, resetExportSupportCacheForTests, renderVideo, type ExportDependencies } from './export'
+import { exportHostCount, exportSupport, mostInformativeFailure, resetExportSupportCacheForTests, renderVideo, type ExportDependencies } from './export'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 import { exportManifestV3Schema, frameSourceUs, type ExportManifest } from '../../src/export/plan'
 import { encodeCubeData, parseCube } from '../../src/color/cube'
@@ -103,7 +103,7 @@ function inputProbe(durationUs: number, hasAudio: boolean) { return outputProbe(
 
 const directories: string[] = []
 // The fake hosts below emit PNGs; the worker's default transport is raw.
-beforeEach(() => { vi.stubEnv('CAPTION_STUDIO_EXPORT_TRANSPORT', 'png') })
+beforeEach(() => { vi.stubEnv('CAPTION_STUDIO_EXPORT_TRANSPORT', 'png'); vi.stubEnv('CAPTION_STUDIO_EXPORT_HOSTS', '1') })
 afterEach(async () => { vi.unstubAllEnvs(); resetExportSupportCacheForTests(); await Promise.all(directories.splice(0).map((d) => rm(d, { recursive: true, force: true }))) })
 
 /**
@@ -687,5 +687,126 @@ describe('renderVideo raw transport', () => {
   it('fails a raw frame of the wrong size instead of feeding FFmpeg a misaligned stream', async () => {
     const { outcome } = await run(() => Buffer.alloc(1080 * 1920 * 4 - 4), 'raw')
     await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED' } })
+  })
+})
+
+describe('renderVideo host pool', () => {
+  const frameOf = (request: { timestampUs: number }) => Math.round(request.timestampUs * 30 / 1_000_000)
+  const task = (renderManifestPath: string, endUs = 1_000_000) => ({
+    operation: 'export' as const, inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+    range: { startUs: 0, endUs }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1' as const,
+  })
+  const probeFor = (outputDurationUs: number) => vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, outputDurationUs, false) : inputProbe(1_000_000, false))
+  const runTool = () => vi.fn().mockResolvedValue(PINNED_VERSION)
+  const lastByte = (chunks: Buffer[]) => chunks.map((chunk) => chunk[chunk.length - 1])
+
+  /** Hosts that answer after a random delay, tracking concurrency per host and across the pool. */
+  function delayedHosts(seed = 7) {
+    let state = seed
+    const random = () => (state = (state * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff
+    const hosts: ReturnType<typeof fakeHost>[] = []
+    const stats = { requested: 0, maxInFlightPerHost: 0, encoderFrames: 0, maxAhead: 0 }
+    let encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable !== tools.exportHost!.executable) {
+        encoderHandle = fakeEncoder(s)
+        ;(encoderHandle.child.stdin as PassThrough).on('data', () => { stats.encoderFrames++ })
+        return encoderHandle as any
+      }
+      let inFlight = 0
+      const host: ReturnType<typeof fakeHost> = fakeHost(s, (request) => {
+        stats.requested++; inFlight++
+        stats.maxInFlightPerHost = Math.max(stats.maxInFlightPerHost, inFlight)
+        stats.maxAhead = Math.max(stats.maxAhead, stats.requested - stats.encoderFrames)
+        setTimeout(() => { inFlight--; (host.child.stdout as PassThrough).write(framed(pngFrame(frameOf(request)))) }, random() * 15)
+        return null
+      })
+      hosts.push(host)
+      return host as any
+    }) as ExportDependencies['spawn']
+    return { spawn, hosts, stats, encoder: () => encoderHandle }
+  }
+
+  it('sends frames to the encoder in index order when hosts answer out of order, using every host and never running ahead more than 2N', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    const pool = delayedHosts()
+    const result = await renderVideo(task(renderManifestPath), tools, new AbortController().signal, () => {}, { spawn: pool.spawn, probe: probeFor(1_000_000), runTool: runTool(), temporaryRoot: root, hosts: 3 })
+    expect(result.timings!.hosts).toBe(3)
+    expect(pool.hosts).toHaveLength(3)
+    expect(lastByte(pool.encoder().received)).toEqual(Array.from({ length: 30 }, (_, index) => index))
+    expect(pool.hosts.every((host) => host.requestCount() > 0)).toBe(true)
+    expect(pool.stats.maxInFlightPerHost).toBe(1)
+    // 2N renders outstanding, plus the frame currently being handed to the encoder.
+    expect(pool.stats.maxAhead).toBeLessThanOrEqual(2 * 3 + 1)
+    pool.hosts.forEach((host) => expect(host.stop).toHaveBeenCalled())
+    expect(await readdir(root)).toEqual(['frames.json'])
+  })
+
+  it('keeps the gap and repeat reuse pattern unchanged with several hosts', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: [
+      { id: 'a', startUs: 0, endUs: 33_333, text: 'a', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] },
+      { id: 'b', startUs: 100_000, endUs: 133_333, text: 'b', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] },
+    ] })
+    let painted = 0
+    const hosts: ReturnType<typeof fakeHost>[] = []
+    let encoder!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) { const host = fakeHost(s, () => pngFrame(++painted)); hosts.push(host); return host as any }
+      return encoder = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const result = await renderVideo(task(renderManifestPath, 200_000), tools, new AbortController().signal, () => {}, { spawn, probe: probeFor(200_000), runTool: runTool(), temporaryRoot: root, hosts: 3 })
+    expect(result.frameCount).toBe(6)
+    expect(hosts.reduce((sum, host) => sum + host.requestCount(), 0)).toBe(3)
+    expect(lastByte(encoder.received)).toEqual([1, 2, 2, 3, 2, 2])
+  })
+
+  it("fails the export with the dying host's diagnostic and reaps every host and the encoder", async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    const pool = delayedHosts()
+    const outcome = renderVideo(task(renderManifestPath), tools, new AbortController().signal, () => {}, { spawn: pool.spawn, probe: probeFor(1_000_000), runTool: runTool(), temporaryRoot: root, hosts: 3 })
+    outcome.catch(() => {})
+    await vi.waitFor(() => expect(pool.stats.requested).toBeGreaterThan(4))
+    pool.hosts[1].fail(failure('TOOL_FAILED', 'Export process failed', { exitCode: 1, diagnostic: 'gpu process crashed' }))
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED', diagnostic: 'gpu process crashed' } })
+    pool.hosts.forEach((host) => expect(host.stop).toHaveBeenCalled())
+    expect(pool.encoder().stop).toHaveBeenCalled()
+    expect(await readdir(root)).toEqual(['frames.json'])
+  })
+
+  it('reaps every host on cancellation', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    const pool = delayedHosts()
+    const controller = new AbortController()
+    const outcome = renderVideo(task(renderManifestPath), tools, controller.signal, () => {}, { spawn: pool.spawn, probe: probeFor(1_000_000), runTool: runTool(), temporaryRoot: root, hosts: 3 })
+    outcome.catch(() => {})
+    await vi.waitFor(() => expect(pool.stats.requested).toBeGreaterThan(4))
+    controller.abort()
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'CANCELLED' } })
+    pool.hosts.forEach((host) => expect(host.stop).toHaveBeenCalled())
+    expect(await readdir(root)).toEqual(['frames.json'])
+  })
+
+  it('never starts more hosts than frames', async () => {
+    const { root, renderManifestPath } = await jobFixture()
+    const pool = delayedHosts()
+    const result = await renderVideo(task(renderManifestPath, 33_333), tools, new AbortController().signal, () => {}, { spawn: pool.spawn, probe: probeFor(33_333), runTool: runTool(), temporaryRoot: root, hosts: 3 })
+    expect(result.frameCount).toBe(1)
+    expect(pool.hosts).toHaveLength(1)
+  })
+})
+
+describe('exportHostCount', () => {
+  it('is a quarter of the cores, clamped to 1-3', () => {
+    expect(exportHostCount({}, 2)).toBe(1)
+    expect(exportHostCount({}, 8)).toBe(2)
+    expect(exportHostCount({}, 12)).toBe(3)
+    expect(exportHostCount({}, 64)).toBe(3)
+  })
+  it('honours CAPTION_STUDIO_EXPORT_HOSTS within the clamp and ignores junk', () => {
+    expect(exportHostCount({ CAPTION_STUDIO_EXPORT_HOSTS: '1' }, 64)).toBe(1)
+    expect(exportHostCount({ CAPTION_STUDIO_EXPORT_HOSTS: '2' }, 4)).toBe(2)
+    expect(exportHostCount({ CAPTION_STUDIO_EXPORT_HOSTS: '9' }, 4)).toBe(3)
+    expect(exportHostCount({ CAPTION_STUDIO_EXPORT_HOSTS: 'many' }, 8)).toBe(2)
+    expect(exportHostCount({ CAPTION_STUDIO_EXPORT_HOSTS: '0' }, 8)).toBe(2)
   })
 })

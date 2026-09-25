@@ -63,6 +63,7 @@ const toolReport = z.strictObject({ versionOutput: z.string().min(1).max(65536),
 /** Local-only export stage timings (milliseconds and frame counts, never content). */
 const exportTimingsSchema = z.strictObject({
   startupMs: z.number().nonnegative(), hostWaitMs: z.number().nonnegative(), encoderWaitMs: z.number().nonnegative(),
+  hosts: z.number().int().positive(),
   paintedFrames: z.number().int().nonnegative(), reusedFrames: z.number().int().nonnegative(),
   finalizeMs: z.number().nonnegative(), totalMs: z.number().nonnegative(), fps: z.number().nonnegative(),
 })
