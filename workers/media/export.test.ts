@@ -3,9 +3,10 @@ import { PassThrough } from 'node:stream'
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { failure, type Toolchain } from './protocol'
-import { PngReader } from './exportProcesses'
+import { FrameReader, PngReader } from './exportProcesses'
+import { selectFrameTransport } from './exportTransport'
 import { exportSupport, mostInformativeFailure, resetExportSupportCacheForTests, renderVideo, type ExportDependencies } from './export'
 import { DEFAULT_CAPTION_STYLE } from '../../src/captions/style'
 import { exportManifestV3Schema, frameSourceUs, type ExportManifest } from '../../src/export/plan'
@@ -101,7 +102,9 @@ function outputProbe(width: number, height: number, durationUs: number, hasAudio
 function inputProbe(durationUs: number, hasAudio: boolean) { return outputProbe(1080, 1920, durationUs, hasAudio) }
 
 const directories: string[] = []
-afterEach(async () => { resetExportSupportCacheForTests(); await Promise.all(directories.splice(0).map((d) => rm(d, { recursive: true, force: true }))) })
+// The fake hosts below emit PNGs; the worker's default transport is raw.
+beforeEach(() => { vi.stubEnv('CAPTION_STUDIO_EXPORT_TRANSPORT', 'png') })
+afterEach(async () => { vi.unstubAllEnvs(); resetExportSupportCacheForTests(); await Promise.all(directories.splice(0).map((d) => rm(d, { recursive: true, force: true }))) })
 
 /**
  * One distinct cue per output frame, so every frame has its own layer signature and therefore its
@@ -162,6 +165,32 @@ describe('PngReader', () => {
   it('fails closed instead of hanging when the stream ends mid-frame', async () => {
     async function* chunks() { yield Buffer.from([0, 0, 0, 20]); yield Buffer.from([1, 2, 3]) }
     await expect(new PngReader(chunks()).frame()).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED' } })
+  })
+})
+
+describe('FrameReader raw frames', () => {
+  const bitmap = (bytes: number) => Buffer.alloc(bytes, 7)
+  it('round-trips a frame of exactly the expected size, across small chunks', async () => {
+    const frame = bitmap(4 * 3 * 4), bytes = framed(frame)
+    async function* chunks() { for (let i = 0; i < bytes.length; i += 5) yield bytes.subarray(i, i + 5) }
+    expect(await new FrameReader(chunks()).frame({ rawBytes: frame.length })).toEqual(frame)
+  })
+  it('rejects a frame of any other size', async () => {
+    async function* chunks() { yield framed(bitmap(47)) }
+    await expect(new FrameReader(chunks()).frame({ rawBytes: 48 })).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED' } })
+  })
+  it('rejects a corrupt header before allocating for it', async () => {
+    async function* chunks() { const header = Buffer.alloc(4); header.writeUInt32BE(0xffffff00); yield header }
+    await expect(new FrameReader(chunks()).frame({ rawBytes: 48 })).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED' } })
+  })
+  it('refuses an expected size above the frame limit', async () => {
+    async function* chunks() { yield Buffer.alloc(4) }
+    await expect(new FrameReader(chunks()).frame({ rawBytes: 65 * 1024 * 1024 })).rejects.toMatchObject({ detail: { code: 'OUTPUT_LIMIT' } })
+  })
+  it('still drops the Windows CRLF before the first raw frame', async () => {
+    const frame = bitmap(16)
+    async function* chunks() { yield Buffer.from([0x0d, 0x0a]); yield framed(frame) }
+    expect(await new FrameReader(chunks()).frame({ rawBytes: 16 })).toEqual(frame)
   })
 })
 
@@ -610,5 +639,53 @@ describe('mostInformativeFailure', () => {
     expect(mostInformativeFailure(cancelled(), [first])).toBe(first)
     const loop = new Error('unexpected')
     expect(mostInformativeFailure(loop, [])).toBe(loop)
+  })
+})
+
+describe('renderVideo raw transport', () => {
+  const task = (renderManifestPath: string) => ({
+    operation: 'export' as const, inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+    range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1' as const,
+  })
+  const run = async (respond: () => Buffer, env: string | undefined) => {
+    vi.stubEnv('CAPTION_STUDIO_EXPORT_TRANSPORT', env ?? '')
+    const { root, renderManifestPath } = await jobFixture()
+    const argv: Record<string, string[]> = {}
+    let encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, args, s) => {
+      if (executable === tools.exportHost!.executable) { argv.host = args; return fakeHost(s, respond) as any }
+      argv.encoder = args
+      return encoderHandle = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 1_000_000, false) : inputProbe(1_000_000, false))
+    const outcome = renderVideo(task(renderManifestPath), tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    return { outcome, argv, encoder: () => encoderHandle }
+  }
+  it('when raw: the host gets --transport raw, FFmpeg reads bgra, and each frame is one full bitmap write', async () => {
+    const { outcome, argv, encoder } = await run(() => Buffer.alloc(1080 * 1920 * 4, 3), 'raw')
+    expect((await outcome).frameCount).toBe(30)
+    expect(argv.host[argv.host.indexOf('--transport') + 1]).toBe('raw')
+    expect(argv.encoder.slice(argv.encoder.indexOf('-f'), argv.encoder.indexOf('pipe:0') + 1)).toContain('bgra')
+    expect(encoder().received.length).toBe(30)
+  })
+  it('defaults to PNG', async () => {
+    const { outcome, argv } = await run(() => pngFrame(1), undefined)
+    await outcome
+    expect(argv.host[argv.host.indexOf('--transport') + 1]).toBe('png')
+  })
+  it('selectFrameTransport: raw only when explicitly requested', () => {
+    expect(selectFrameTransport({})).toBe('png')
+    expect(selectFrameTransport({ CAPTION_STUDIO_EXPORT_TRANSPORT: 'raw' })).toBe('raw')
+    expect(selectFrameTransport({ CAPTION_STUDIO_EXPORT_TRANSPORT: 'bogus' })).toBe('png')
+  })
+  it('CAPTION_STUDIO_EXPORT_TRANSPORT=png keeps the PNG path', async () => {
+    const { outcome, argv } = await run(() => pngFrame(1), 'png')
+    await outcome
+    expect(argv.host[argv.host.indexOf('--transport') + 1]).toBe('png')
+    expect(argv.encoder).toContain('image2pipe')
+  })
+  it('fails a raw frame of the wrong size instead of feeding FFmpeg a misaligned stream', async () => {
+    const { outcome } = await run(() => Buffer.alloc(1080 * 1920 * 4 - 4), 'raw')
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'TOOL_FAILED' } })
   })
 })

@@ -1,5 +1,38 @@
 # Status
 
+## 2026-09-25 — Vox graphics 01: shapes and arrows (schema 17)
+
+**Changes.** New `project.shapes` (schema 16→17, empty by default): rectangles, ellipses, lines, arrows and highlighter bars with solid/dashed/dotted strokes, arrowheads, fills and draw-on / sweep / fade / pop / slide animation. Commands `shape-*` (undoable, MCP `edit`), a Graphics timeline lane, on-video handles (rectangle gizmo; `LineStageEditor` for ends, bend and move), `ShapeInspector`, six presets under Overlays → Shapes, and an MCP `add_shape` tool with presets in `list_creative_options`. Shapes share `layerOrder` with titles (`graphicsOrder.ts`) and appear in the Layers panel. Export: manifest v3 `shapes`, optional `shapeActors` on frame request v4, the same `ShapeActor` in the host, and shape motion in the layer-plan signature so animating shapes are never frozen. Full description: EDITING.md "Shapes (schema 17)". Roadmap slices 2–5 are in ROADMAP.md 4c.
+
+**Verification (Windows 11).** `tsc --noEmit` clean. New and touched unit tests pass: shape motion, path geometry, commands and undo, v16→v17 migration and round-trip, duplicate ID across shapes and text, layer-plan signature during draw-on, manifest and frame request, timeline lane, line dragging, MCP `add_shape`. `npm run parity:export -- --only shapes` (new): 48 cases (six presets × four times × 4:5 and 16:9) agree between the visible preview window and the export host to within 1 level per channel, and the host draws the shape (evidence `docs/decisions/evidence/x3-parity-shapes-2026-09-25.json`). Building that check also led me to bound the draw-on mask and size each shape's SVG to the shape instead of the whole frame; I first suspected those (a 40000-unit mask region) of a memory error, but the error was the test's own bitmap diff, so treat them as cheap precautions, not proven bug fixes. The visible preview window's screen capture adds a few levels of noise to flat colours once a shape is on screen (which breaks an exact marker match), so that check compares with a small tolerance; the offscreen export path was run separately with consecutive markers, all 48 frames, with no stalls.
+
+**Limitations.** The app was not driven by hand: the Overlays tab, dragging handles, the inspector and the lane are covered by unit/render tests but not clicked through. No real H.264 export with shapes was run (no encoder on this machine; the same 17 export tests fail on a clean checkout). macOS untested. No editor for `path` geometry, roughness or boil, and shapes are pinned to the screen (slices 2 and 4). I also had to repair `node_modules` (`npm ci`) after a scratch worktree removal deleted files through a junction; the lockfile is unchanged. `scripts/export-parity.mjs` had a Windows-only bug (importing a raw `C:\` path as a module), fixed here.
+
+**Next.** Run the app and click through: add each preset, drag the ends of a curved arrow, undo, save and reload, export an MP4 and watch a draw-on animate. Then slice 2 (hand-drawn look).
+
+## 2026-09-25 — Export speed 03: raw caption transport (opt-in, not the default)
+
+Added a raw transport: the host writes `[4-byte length][premultiplied BGRA bitmap]` and FFmpeg reads it as `rawvideo`. `FrameReader` (was `PngReader`, alias kept) takes `frame('png' | { rawBytes })` and rejects any other size before allocating; worker env `CAPTION_STUDIO_EXPORT_TRANSPORT=raw` selects it and passes `--transport` to the host. The PNG arguments are byte-identical to before, and masks stay PNG. **PNG remains the default**, because raw failed the ±1 parity bar.
+
+Measured on Windows 11, my synthetic 1080p/30 fps 15 s source, real `--export-smoke`:
+
+| Workload | Transport | fps | hostWaitMs | encoderWaitMs | painted/reused |
+|---|---|---|---|---|---|
+| 30 cues (static) | PNG | 117–131 | 2997–3226 | 940–2087 | 31 / 419 |
+| 30 cues (static) | raw | 70 | 2972 | 5906 | 31 / 419 |
+| one cue per frame | PNG | 22–23 | 19.2–20.2k | ~550 | 300 / 150 |
+| one cue per frame | raw | 28–29 | 15.0–15.7k | 1.3–1.5k | 300 / 150 |
+
+Raw saves about 4.5 s of host time on the dense run but is slower when most frames are re-sent. **hostWaitMs is still larger than encoderWaitMs in both workloads with PNG and raw**, so brief 04 (render pool) applies.
+
+Parity. `npm run parity:export` cannot complete on Windows: its composite stage encodes with `h264_videotoolbox`; the earlier stages ran. I compared the two transports directly instead (real host bitmap, FFmpeg composite over smptebars, 4 Malayalam/English fixtures) against an ideal composite: with `overlay=alpha=premultiplied` the mean error near text is 11.6 levels vs 1.7 for PNG (FFmpeg blends premultiplied YUV without the black offset), so the graph un-premultiplies instead (`format=gbrap,unpremultiply=inplace=1` into the straight overlay). That is bit-identical to PNG away from the caption but opaque white becomes 253 and error near text averages 2.7 vs 1.7 (max delta ≈60 at glyph edges). Not within ±1, so raw stays opt-in.
+
+Verified: `tsc --noEmit` clean; new tests for the reader, both argument builders and the worker; `workers/media/export.test.ts` 41/41 with `process.platform` spoofed to darwin. On real Windows the same 21 pre-existing tests fail plus 4 new `renderVideo` raw/default tests that share their VideoToolbox assumption. Output probes as 1920×1080, 450 frames, H.264 for all runs.
+
+Limitations: Windows only, 1080p only; no 2160p or macOS run. I did not investigate the 253 offset further (possibly swscale's gbrap→yuva420p path). My parity runs overwrote/created `docs/decisions/evidence/x3-parity-2026-09-25.json` and `x3-parity-shapes-2026-09-25.json` (untracked, not committed).
+
+Next: brief 04 (render pool), since the host is still the bottleneck.
+
 ## 2026-09-25 — Export speed 02: overlap caption rendering with encoding
 
 The frame loop now asks the host for the next frame that needs painting as soon as the current PNG arrives, while FFmpeg ingests it (`workers/media/export.ts`). Still one host request in flight and at most one extra PNG buffered; which indices need painting is planned from layer signatures alone, with the same previous/gap reuse rule, so bytes reach the encoder in identical order. A prefetch rejection is swallowed for bookkeeping and observed when the loop awaits it. The caption pipe's `-thread_queue_size` is 8 (both builders, snapshots updated), and the export host adds `disable-renderer-backgrounding`, `disable-background-timer-throttling` and `disable-backgrounding-occluded-windows`.

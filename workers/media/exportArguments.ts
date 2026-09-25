@@ -7,6 +7,7 @@ import { zoomScaleCropExpressions } from '../../src/core/zoomRegion'
 import { activeMask } from '../../src/core/layerMask'
 import type { Fill, LayerMask } from '../../src/core/edit'
 import { angleVector, DRIFT_OVERSIZE, DRIFT_TRAVEL, easedPhaseExpression, gradientLine, motionApplies } from '../../src/core/fill'
+import { captionLayerLabel, captionPipeInputArguments, type FrameTransport } from './exportTransport'
 import { COMPOSITION_WIDTH } from '../../src/core/composition'
 import { constantRate, isConstantSpeed, speedPieces, timelineLengthUs } from '../../src/core/clipTime'
 import {
@@ -145,7 +146,7 @@ function pictureEffectChain(input: string, manifest: ExportManifestV3, chains: s
  * The identity edit (no segments, or a single segment covering the whole range) skips both entirely,
  * so its filtergraph string is unchanged from before cuts existed.
  */
-export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2): ExportFilterGraph {
+export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, transport: FrameTransport = 'png'): ExportFilterGraph {
   // No manifest means the caller has nothing to encode beyond captions — the identity edit.
   const edits = manifest ? normalizeManifest(manifest) : undefined
   const cuts = edits && !isIdentityEdit(edits, plan) ? edits.segments! : null
@@ -172,7 +173,7 @@ export function exportFilterGraph(plan: ExportPlan, hasAudio: boolean, manifest?
   const normalizeLabel = blurRegions.length ? 'vbase' : 'v'
   chains.push(`${videoInput}fps=fps=${rate}:start_time=0,scale=${plan.width}:${plan.height}:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,pad=${plan.width}:${plan.height}:(ow-iw)/2:(oh-ih)/2,setsar=1${blurRegions.length ? ',format=rgba' : ''}[${normalizeLabel}]`)
   const picture = blurPictureChain(`[${normalizeLabel}]`, blurRegions, chains)
-  chains.push(`${picture}[1:v:0]overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+  chains.push(`${picture}${captionLayerLabel(transport, '[1:v:0]', chains)}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   const maps = ['-map', '[outv]']
   const clips = edits ? sortedAudioClips(edits) : []
   const hasAudioOut = hasAudio || clips.length > 0
@@ -216,18 +217,18 @@ function videoBitrate(width: number, height: number, encoding?: ExportEncoding):
  * prefix (FFmpeg 7+, the export minimum) reads an option's value from a file; FFmpeg 8 removed the
  * older `-filter_complex_script` spelling, which fails there as an unrecognized option.
  */
-export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string, encoding?: ExportEncoding, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
+export function exportArguments(inputPath: string, outputPath: string, plan: ExportPlan, hasAudio: boolean, manifest?: ExportManifestV1 | ExportManifestV2, filterComplexScriptPath?: string, encoding?: ExportEncoding, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER, transport: FrameTransport = 'png'): string[] {
   const rate = `${plan.frameRate.numerator}/${plan.frameRate.denominator}`
   const edits = manifest ? normalizeManifest(manifest) : undefined
   const outputDurationUs = exportOutputDurationUs(plan, edits)
   const duration = usDecimal(outputDurationUs)
-  const graph = exportFilterGraph(plan, hasAudio, manifest)
+  const graph = exportFilterGraph(plan, hasAudio, manifest, transport)
   // Sound-effect inputs start at index 2 (0 is the source, 1 is the caption/overlay layer pipe),
   // in the same sorted order `exportFilterGraph` used to assign their `[N:a:0]` labels.
   const clipInputs = (edits ? sortedAudioClips(edits) : []).flatMap((clip) => ['-i', clip.path])
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', '-ss', usDecimal(plan.range.startUs),
     // FFmpeg autorotates on decode, so `[0:v]` is already display-oriented; `-noautorotate` is never emitted.
-    '-autorotate', '-i', inputPath, '-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...clipInputs,
+    '-autorotate', '-i', inputPath, '-thread_queue_size', '8', ...captionPipeInputArguments(transport, rate, plan.width, plan.height), '-i', 'pipe:0', ...clipInputs,
     ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
     ...videoEncoderArguments(videoEncoder, videoBitrate(plan.width, plan.height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),
@@ -520,7 +521,7 @@ function scrollingGridChains(
  * clip, or a picture-in-picture of the same file, can never make one consumer buffer another's
  * decoded frames. `hasAudioByInput[i]` is whether input `i` has an audio stream (probed by the worker).
  */
-export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput: readonly boolean[], lutPaths: ReadonlyMap<string, string> = new Map()): ExportFilterGraph {
+export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput: readonly boolean[], lutPaths: ReadonlyMap<string, string> = new Map(), transport: FrameTransport = 'png'): ExportFilterGraph {
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
   const duration = usDecimal(manifest.sequenceDurationUs)
@@ -542,7 +543,7 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
     chains.push(`${ordered.map((_, index) => `[v${index}]`).join('')}concat=n=${ordered.length}:v=1:a=0,fps=fps=${rate}:start_time=0${hasBlur ? ',format=rgba' : ''}[${vLabel}]`)
     const blurred = blurPictureChain(`[${vLabel}]`, manifest.blurRegions, chains, maskInputs.blur)
     const picture = pictureEffectChain(zoomPictureChain(blurred, manifest, 'vz', chains), manifest, chains)
-    chains.push(`${picture}${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    chains.push(`${picture}${captionLayerLabel(transport, layer, chains)}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   } else {
     // A black RGBA canvas as long as the sequence; each visual clip, back to front, is padded at its
     // start with transparent frames (`tpad`) so the overlay never stalls waiting for it, and ends
@@ -577,7 +578,7 @@ export function exportFilterGraphV3(manifest: ExportManifestV3, hasAudioByInput:
     // rgba too), so blur needs no extra format conversion here.
     const blurred = blurPictureChain(previous, manifest.blurRegions, chains, maskInputs.blur)
     const picture = pictureEffectChain(zoomPictureChain(blurred, manifest, 'vz', chains), manifest, chains)
-    chains.push(`${picture}${layer}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
+    chains.push(`${picture}${captionLayerLabel(transport, layer, chains)}overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv]`)
   }
   const maps = ['-map', '[outv]']
   // Sound: every video clip's own audio (on an unmuted track, with an audio stream) and every audio
@@ -612,17 +613,17 @@ function inputArguments(manifest: ExportManifestV3, rate: string): string[] {
   })
 }
 
-export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = [], preparedGraph?: ExportFilterGraph, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER): string[] {
+export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string, hasAudioByInput: readonly boolean[], filterComplexScriptPath?: string, encoding?: ExportEncoding, maskFiles: readonly string[] = [], preparedGraph?: ExportFilterGraph, videoEncoder: VideoEncoderId = DEFAULT_VIDEO_ENCODER, transport: FrameTransport = 'png'): string[] {
   const { width, height, frameRate } = manifest.format
   const rate = `${frameRate.numerator}/${frameRate.denominator}`
-  const graph = preparedGraph ?? exportFilterGraphV3(manifest, hasAudioByInput)
+  const graph = preparedGraph ?? exportFilterGraphV3(manifest, hasAudioByInput, undefined, transport)
   const targets = maskTargets(manifest)
   if (maskFiles.length !== targets.length) throw new Error(`Export needs ${targets.length} rasterized mask images, got ${maskFiles.length}.`)
   // One looping still per masked layer, as long as that layer, so no decoder or frame is shared.
   const maskInputArguments = targets.flatMap((target, index) => ['-loop', '1', '-framerate', rate, '-t', usDecimal(target.lengthUs), '-i', maskFiles[index]])
   const plan: ExportPlan = { width, height, frameRate, range: { startUs: 0, endUs: manifest.sequenceDurationUs } }
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', ...inputArguments(manifest, rate),
-    '-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...maskInputArguments,
+    '-thread_queue_size', '8', ...captionPipeInputArguments(transport, rate, width, height), '-i', 'pipe:0', ...maskInputArguments,
     ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
     ...videoEncoderArguments(videoEncoder, videoBitrate(width, height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),

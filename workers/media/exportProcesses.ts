@@ -45,8 +45,11 @@ export function ownedProcess(executable: string, args: string[], signal: AbortSi
 export async function writeBounded(stream: Writable, bytes: Buffer | string): Promise<void> {
   await new Promise<void>((resolve, reject) => stream.write(bytes, (error) => error ? reject(error) : resolve()))
 }
-/** Pull-based reader bounds each PNG and retains at most one frame plus a pipe chunk. */
-export class PngReader {
+/** What the next frame must be: a PNG, or a raw bitmap of exactly this many bytes. */
+export type FrameExpectation = 'png' | { rawBytes: number }
+const FRAME_LIMIT_BYTES = 64 * 1024 * 1024
+/** Pull-based reader bounds each frame and retains at most one frame plus a pipe chunk. */
+export class FrameReader {
   private pending: Buffer<ArrayBufferLike> = Buffer.alloc(0)
   private readonly iterator: AsyncIterator<Buffer<ArrayBufferLike>>
   constructor(stream: AsyncIterable<Buffer<ArrayBufferLike>>) { this.iterator = stream[Symbol.asyncIterator]() }
@@ -66,16 +69,25 @@ export class PngReader {
     return output
   }
   private started = false
-  async frame(): Promise<Buffer> {
+  async frame(expect: FrameExpectation = 'png'): Promise<Buffer> {
     let header = await this.read(4)
     // Electron.exe on Windows writes a stray "\r\n" to stdout at startup. As a length it would be
     // >200 MiB, above the frame limit, so it is unambiguous: drop it once, before the first frame.
     if (!this.started && header[0] === 0x0d && header[1] === 0x0a) header = Buffer.concat([header.subarray(2), await this.read(2)])
     this.started = true
     const size = header.readUInt32BE()
-    if (size < 8 || size > 64 * 1024 * 1024) throw failure('OUTPUT_LIMIT', 'Caption PNG exceeded its limit')
-    const bytes = await this.read(size)
-    if (!bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw failure('TOOL_FAILED', 'Invalid caption PNG')
-    return bytes
+    if (expect === 'png') {
+      if (size < 8 || size > FRAME_LIMIT_BYTES) throw failure('OUTPUT_LIMIT', 'Caption PNG exceeded its limit')
+      const bytes = await this.read(size)
+      if (!bytes.subarray(0, 8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) throw failure('TOOL_FAILED', 'Invalid caption PNG')
+      return bytes
+    }
+    // The frame size is fixed by the composition, so any other length is a protocol error — checked
+    // before allocating, which keeps a corrupt header from asking for an unbounded buffer.
+    if (expect.rawBytes > FRAME_LIMIT_BYTES) throw failure('OUTPUT_LIMIT', 'Caption frame exceeded its limit')
+    if (size !== expect.rawBytes) throw failure('TOOL_FAILED', `Caption frame was ${size} bytes, expected ${expect.rawBytes}`)
+    return this.read(size)
   }
 }
+/** The PNG-only name the export loop and tests grew up with. */
+export const PngReader = FrameReader

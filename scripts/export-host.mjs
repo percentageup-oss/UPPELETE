@@ -26,6 +26,10 @@ const allowedAssetUrls = new Set()
 for (let i = 0; i < process.argv.length; i++) {
   if (process.argv[i] === '--asset' && typeof process.argv[i + 1] === 'string') allowedAssetUrls.add(process.argv[i + 1])
 }
+// `raw` sends the premultiplied BGRA paint bitmap as-is, skipping the PNG encode; `png` is the fallback.
+// Mask requests (version 5) are written to disk by the worker and are always PNG.
+const transportIndex = process.argv.indexOf('--transport')
+const rawTransport = transportIndex >= 0 && process.argv[transportIndex + 1] === 'raw'
 let window, marker = 0, busy = false, framesRendered = 0
 const decoder = new MessageDecoder()
 const stop = () => { window?.destroy(); app.exit(0) }
@@ -64,9 +68,9 @@ async function render(value) {
     await window.loadFile(join(__dirname, 'index.html'))
   }
   const frame = await renderOffscreen(window, request, marker = marker % 0xfffffe + 1)
-  const png = toPng(frame.bitmap, request.composition)
-  const header = Buffer.alloc(4); header.writeUInt32BE(png.length)
-  await new Promise((resolve, reject) => process.stdout.write(Buffer.concat([header, png]), (error) => error ? reject(error) : resolve()))
+  const payload = rawTransport && request.version !== 5 ? frame.bitmap : toPng(frame.bitmap, request.composition)
+  const header = Buffer.alloc(4); header.writeUInt32BE(payload.length)
+  await new Promise((resolve, reject) => process.stdout.write(Buffer.concat([header, payload]), (error) => error ? reject(error) : resolve()))
   framesRendered++
 }
 /** One stderr line that locates the stop — the parent reports it verbatim as the export's diagnostic.

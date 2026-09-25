@@ -230,3 +230,8 @@ and atomic new-file output, and rerun alpha/sync/parity fixtures on macOS and Wi
 pixel/state fixtures to actual encoded-video frames, long pauses, rotation and VFR. D1/D2 pin and
 ship font/runtime/tool notices and artifacts. Keep the final Export Video control absent until the
 real X2 pipeline is functional.
+
+
+## Follow-up: raw transport
+
+The host can send the premultiplied BGRA paint bitmap instead of a PNG (`--transport raw`, worker env `CAPTION_STUDIO_EXPORT_TRANSPORT=raw`; masks always stay PNG), which removes the 11–16 ms PNG encode per painted frame. It is **opt-in, not the default**: FFmpeg's `overlay=alpha=premultiplied` blends premultiplied YUV without the limited-range black offset (semi-transparent caption pixels shift; mean error against an ideal composite 11.6 vs 1.7 levels for PNG), and the workable alternative, `format=gbrap,unpremultiply` before the straight overlay, is exact away from the caption but renders opaque white as 253 and still averages 2.7 levels near text. Neither meets the ±1 acceptance bar. Raw only pays off when most frames are painted (+26 % fps with 300 of 450 frames painted, −32 % with 31 of 450, because every reused frame then costs 8 MB of pipe traffic). Windows 11, 1080p only; not measured at 2160p or on macOS.

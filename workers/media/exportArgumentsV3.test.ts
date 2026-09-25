@@ -241,3 +241,18 @@ describe('background (color) clips', () => {
     expect(graph).toContain('[b0][c1]overlay')
   })
 })
+
+describe('manifest v3 raw transport', () => {
+  it('feeds premultiplied BGRA after the clip inputs and un-premultiplies it on both routes', () => {
+    const png = exportArgumentsV3(stacked, '/out/x.mp4.tmp', [true, true, true, false, true])
+    const raw = exportArgumentsV3(stacked, '/out/x.mp4.tmp', [true, true, true, false, true], undefined, undefined, [], undefined, undefined, 'raw')
+    expect(raw.slice(raw.indexOf('-thread_queue_size'), raw.indexOf('pipe:0') + 1)).toEqual(['-thread_queue_size', '8', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', '1280x720', '-framerate', '25/1', '-i', 'pipe:0'])
+    expect(raw[raw.indexOf('-filter_complex') + 1]).toBe(png[png.indexOf('-filter_complex') + 1].replace('[b3][5:v:0]overlay=', '[5:v:0]format=gbrap,unpremultiply=inplace=1[caption];[b3][caption]overlay='))
+    for (const route of [backToBack, stacked]) {
+      const raw = exportFilterGraphV3(route, [true, true, true, false, true], undefined, 'raw').filterComplex
+      expect(raw).toContain('format=gbrap,unpremultiply=inplace=1[caption];')
+      expect(raw).toContain('[caption]overlay=0:0:alpha=straight:')
+      expect(exportFilterGraphV3(route, [true, true, true, false, true]).filterComplex).not.toContain('unpremultiply')
+    }
+  })
+})

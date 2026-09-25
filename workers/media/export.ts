@@ -13,7 +13,8 @@ import { failure, MediaWorkerError, type MediaTask, type MediaResult, type Progr
 import { runExecutable } from './process'
 import { probeMedia } from './probe'
 import { exportArguments, exportArgumentsV3, exportFilterGraph, exportFilterGraphV3, maskTargets, type MaskTarget } from './exportArguments'
-import { ownedProcess, PngReader, writeBounded } from './exportProcesses'
+import { ownedProcess, FrameReader, writeBounded } from './exportProcesses'
+import { selectFrameTransport, type FrameTransport } from './exportTransport'
 import { decodeCubeData, writeCube } from '../../src/color/cube'
 
 /** The Windows argv limit `docs/EDITING.md` calls out — past this the graph moves to a script file. */
@@ -78,7 +79,7 @@ type MediaProber = typeof probeMedia
  * exercise the real orchestration logic — cancellation, progress parsing, gap-frame reuse,
  * cleanup and output validation — against fake processes instead of a real FFmpeg/export host,
  * mirroring the `{ runTool, temporaryRoot }` injection already used by `waveform.ts`/`thumbnails.ts`. */
-export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number }
+export type ExportDependencies = { spawn?: ProcessSpawner; probe?: MediaProber; runTool?: ToolRunner; temporaryRoot?: string; stallMs?: number; transport?: FrameTransport }
 
 /** Successful support checks for the session, so each export job skips the `-version` runs. Only
  * `supported: true` is cached: a fixed install is re-checked on the next job. */
@@ -149,9 +150,11 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // `prepareV3` writes any baked LUT files into `hostProfileDirectory` before building the
     // filtergraph, since the graph embeds their on-disk paths as literal `lut3d=file=…` text.
     const job = manifest.version === 3 ? await prepareV3(manifest, task, tools, signal, probe, hostProfileDirectory, videoEncoder) : await prepareV2(manifest, task, tools, signal, probe, plan, videoEncoder)
+    // Fixed for the whole job: it is FFmpeg's input format.
+    const transport = dependencies.transport ?? selectFrameTransport()
     // Cuts can chain hundreds of trim/concat filters; past the Windows argv limit the graph moves
     // to a file passed with `-/filter_complex <file>` instead of being inlined (docs/EDITING.md).
-    const graph = job.graph
+    const graph = job.graph(transport)
     let filterComplexScriptPath: string | undefined
     if (Buffer.byteLength(graph.filterComplex, 'utf8') > FILTER_COMPLEX_ARGV_LIMIT_BYTES) {
       filterComplexScriptPath = path.join(hostProfileDirectory, 'filtergraph.txt')
@@ -160,8 +163,9 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     // The host allow-lists exactly these URLs (scripts/export-host.mjs) — never an arbitrary
     // renderer- or project-supplied path — so an overlay asset this job did not resolve can never load.
     const assetArgs = [...new Set(job.overlayUrls)].flatMap((url) => ['--asset', url])
-    host = spawn(tools.exportHost!.executable, [...(tools.exportHost!.args ?? [tools.exportHost!.scriptPath]), '--user-data', hostProfileDirectory, ...assetArgs], controller.signal, env)
-    const reader = new PngReader(host.child.stdout)
+    host = spawn(tools.exportHost!.executable, [...(tools.exportHost!.args ?? [tools.exportHost!.scriptPath]), '--user-data', hostProfileDirectory, '--transport', transport, ...assetArgs], controller.signal, env)
+    const reader = new FrameReader(host.child.stdout)
+    const frameExpectation = transport === 'raw' ? { rawBytes: job.width * job.height * 4 } : 'png' as const
     // Layer masks FFmpeg applies (video clips, blur) are images the host rasterizes from the same SVG
     // the preview masks with. They must exist before the encoder opens them as inputs, so the host
     // runs first; identical masks share one file.
@@ -178,7 +182,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       }
       maskFiles.push(file)
     }
-    encoder = spawn(tools.ffmpegPath, job.args(filterComplexScriptPath, maskFiles), controller.signal)
+    encoder = spawn(tools.ffmpegPath, job.args(transport, filterComplexScriptPath, maskFiles), controller.signal)
     // Either process failure interrupts a blocked frame read/write in its peer.
     host.closed.catch(cancel); encoder.closed.catch(cancel)
     const total = job.frameCount
@@ -221,7 +225,7 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
       const waitStart = performance.now()
       try {
         await writeBounded(hostHandle.child.stdin, JSON.stringify(request) + '\n')
-        return await withinStallDeadline(reader.frame(), stallMs, () => ({
+        return await withinStallDeadline(reader.frame(frameExpectation), stallMs, () => ({
           message: `Export stalled at frame ${index + 1} of ${total}: the caption renderer returned no frame for ${seconds} s`,
           diagnostic: hostHandle.diagnostic?.() ?? '',
         }))
@@ -322,8 +326,8 @@ type LayerFrame = ReturnType<ReturnType<typeof createLayerPlan>['frameAt']>
 type PreparedExport = {
   layer: ReturnType<typeof createLayerPlan>
   request: (index: number, frame: LayerFrame) => PlannedFrame
-  graph: { filterComplex: string; hasAudioOut: boolean }
-  args: (filterComplexScriptPath?: string, maskFiles?: readonly string[]) => string[]
+  graph: (transport: FrameTransport) => { filterComplex: string; hasAudioOut: boolean }
+  args: (transport: FrameTransport, filterComplexScriptPath?: string, maskFiles?: readonly string[]) => string[]
   overlayUrls: string[]
   /** FFmpeg-composited layers with a mask; their images are rasterized by the host before encoding starts. */
   masks: MaskTarget[]
@@ -358,8 +362,8 @@ async function prepareV2(manifest: Exclude<ReturnType<typeof exportManifestSchem
   return {
     layer,
     request: (index, frame) => frameRequestAt(manifest, plan, index, frame.sourceUs),
-    graph: exportFilterGraph(plan, hasAudio, manifest),
-    args: (script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script, task.encoding, videoEncoder),
+    graph: (transport) => exportFilterGraph(plan, hasAudio, manifest, transport),
+    args: (transport, script) => exportArguments(inputPath, task.outputPath, plan, hasAudio, manifest, script, task.encoding, videoEncoder, transport),
     overlayUrls: edits.overlays.map((overlay) => overlay.assetUrl),
     masks: [],
     frameCount: exportFrameCountFor(exportOutputDurationUs(plan, edits), plan.frameRate),
@@ -407,12 +411,14 @@ async function prepareV3(manifest: ExportManifestV3, task: ExportTask, tools: To
     cues: manifest.cues, style: manifest.style, display: manifest.display, frameRate, overlays: manifest.overlays, effects: manifest.effects, textOverlays: manifest.textOverlays, shapes: manifest.shapes,
     timeline: manifestTimeline(manifest), output: { width, height },
   })
-  const graph = exportFilterGraphV3(manifest, hasAudioByInput, lutPaths)
+  // Built per transport, but the LUT files above are written once.
+  const graphs = new Map<FrameTransport, ReturnType<typeof exportFilterGraphV3>>()
+  const graphFor = (transport: FrameTransport) => graphs.get(transport) ?? (graphs.set(transport, exportFilterGraphV3(manifest, hasAudioByInput, lutPaths, transport)), graphs.get(transport)!)
   return {
     layer,
     request: (index, frame) => frameRequestAtSequence(manifest, index, frame.active),
-    graph,
-    args: (script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graph, videoEncoder),
+    graph: graphFor,
+    args: (transport, script, maskFiles) => exportArgumentsV3(manifest, task.outputPath, hasAudioByInput, script, task.encoding, maskFiles, graphFor(transport), videoEncoder, transport),
     overlayUrls: manifest.overlays.map((overlay) => overlay.assetUrl),
     masks: maskTargets(manifest),
     frameCount: exportFrameCountFor(manifest.sequenceDurationUs, frameRate),

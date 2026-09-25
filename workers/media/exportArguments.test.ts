@@ -185,3 +185,18 @@ describe('v3 zoom filter placement', () => {
     expect(graph.indexOf('[b0]scale=')).toBeLessThan(graph.indexOf('[vz][1:v:0]overlay='))
   })
 })
+
+describe('exportArguments raw transport', () => {
+  it('feeds premultiplied BGRA, un-premultiplies it in the graph, and keeps the straight overlay; png stays the historical arguments', () => {
+    const png = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true)
+    expect(exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, undefined, undefined, undefined, undefined, 'png')).toEqual(png)
+    const raw = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true, undefined, undefined, undefined, undefined, 'raw')
+    expect(raw.slice(raw.indexOf('-thread_queue_size'), raw.indexOf('pipe:0') + 1)).toEqual(['-thread_queue_size', '8', '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s', '1080x1920', '-framerate', '30000/1001', '-i', 'pipe:0'])
+    expect(raw[raw.indexOf('-filter_complex') + 1]).toBe(png[png.indexOf('-filter_complex') + 1].replace('[v][1:v:0]overlay=', '[1:v:0]format=gbrap,unpremultiply=inplace=1[caption];[v][caption]overlay='))
+    expect(raw).not.toContain('png')
+  })
+  it('the v2 graph builder adds only the un-premultiply step for raw', () => {
+    expect(exportFilterGraph(plan, true, undefined, 'raw').filterComplex).toContain('[1:v:0]format=gbrap,unpremultiply=inplace=1[caption];[v][caption]overlay=0:0:alpha=straight:')
+    expect(exportFilterGraph(plan, true).filterComplex).toContain('[v][1:v:0]overlay=0:0:alpha=straight:')
+  })
+})
