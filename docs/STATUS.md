@@ -1,5 +1,12 @@
 # Status
 
+## 2026-09-25 — Export speed 07: "Show in folder" + completion notification
+- `electron/exportIpc.ts`: successful exports are remembered per session (`completedExports`, last 20, keyed `senderId:requestId`). New `export:reveal` handler takes only a validated request id, `stat`s the file, then `shell.showItemInFolder`; returns `{ ok } | { ok: false, message }`. When the window is not focused, a local OS `Notification` announces "Export finished" (click focuses the window and reveals the file) or "Export failed".
+- `preload.ts` / `env.d.ts`: `revealExport(requestId)`. `App.tsx`: `Notice` gains an optional `action`, rendered as a button that does not dismiss the notice; the success notice offers "Show in folder" and a failed reveal shows an error notice.
+- Verified: `npm run typecheck` clean; `npx vitest run src electron` 1499 pass, 5 fail (all baseline on Windows: EffectsPanel, TemplatesPanel, keynoteTemplates x2, mcp/config), Windows.
+- Limitations: not run by hand (Explorer selection and the background notification unwatched); no unit test (needs electron `ipcMain`/`shell`); macOS untested. `App.tsx` and `styles.css` edits are left uncommitted because they sit alongside unrelated in-progress changes.
+- Next: none in this plan.
+
 ## 2026-09-25 — Export speed 06: taskbar progress, keep awake, quit guard
 - `electron/exportIpc.ts`: `export:start` sets the window's progress bar (`setProgressBar`: fraction when measured, indeterminate otherwise), holds a `powerSaveBlocker('prevent-app-suspension')` for the job, clears the bar on success/cancel and shows an error bar for ~4 s on failure. New `hasRunningExports()`.
 - `electron/main.ts` `before-quit`: while an export runs, asks "Keep exporting" / "Cancel export and quit" before shutting down; smoke modes never register the export IPC so they skip it.

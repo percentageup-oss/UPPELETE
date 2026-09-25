@@ -135,6 +135,7 @@ contextBridge.exposeInMainWorld('captionStudio', {
   checkExportSupport: (): Promise<ExportSupport> => ipcRenderer.invoke('export:support'),
   startExport: (request: ExportStartRequest): Promise<ExportOutcome | null> => ipcRenderer.invoke('export:start', request),
   cancelExport: (requestId: string): Promise<void> => ipcRenderer.invoke('export:cancel', requestId),
+  revealExport: (requestId: string): Promise<{ ok: true } | { ok: false; message: string }> => ipcRenderer.invoke('export:reveal', requestId),
   onExportProgress: (callback: (message: ExportProgressEvent) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
       const parsed = exportProgressSchema.safeParse(value)

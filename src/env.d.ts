@@ -77,6 +77,7 @@ declare global {
       checkExportSupport(): Promise<ExportSupport>
       startExport(request: ExportStartRequest): Promise<ExportOutcome | null>
       cancelExport(requestId: string): Promise<void>
+      revealExport(requestId: string): Promise<{ ok: true } | { ok: false; message: string }>
       onExportProgress(callback: (message: ExportProgressEvent) => void): () => void
       onAgentRequest(callback: (request: AgentRequest) => void): () => void
       respondAgentRequest(response: AgentResponse): void

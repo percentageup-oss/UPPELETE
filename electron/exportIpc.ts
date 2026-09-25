@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, powerSaveBlocker } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerSaveBlocker, shell } from 'electron'
 import { readFileSync } from 'node:fs'
 import { readFile, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -26,6 +26,38 @@ import { getMediaWorker, configuredToolchain } from './mediaWorker'
 let service: ExportService | undefined
 let supportCache: Promise<ExportSupport> | undefined
 const activeRequests = new Map<string, { cancel(): void }>()
+
+/** Exports that succeeded in this session, keyed like `activeRequests`. The renderer reveals one by
+ * request id and never supplies a path. Capped at the most recent entries. */
+const completedExports = new Map<string, string>()
+const MAX_COMPLETED_EXPORTS = 20
+
+function rememberCompletedExport(key: string, filePath: string) {
+  completedExports.delete(key)
+  completedExports.set(key, filePath)
+  while (completedExports.size > MAX_COMPLETED_EXPORTS) completedExports.delete(completedExports.keys().next().value as string)
+}
+
+async function revealCompletedExport(key: string): Promise<{ ok: true } | { ok: false; message: string }> {
+  const filePath = completedExports.get(key)
+  if (!filePath) return { ok: false, message: 'That export is no longer known to this session.' }
+  try { await stat(filePath) } catch { return { ok: false, message: `The exported file was moved or deleted: ${filePath}` } }
+  shell.showItemInFolder(filePath)
+  return { ok: true }
+}
+
+/** Local OS notification, only while the window is in the background. Clicking focuses the window. */
+function notifyFinished(win: BrowserWindow | null, title: string, body: string, onClick?: () => void) {
+  if (!win || win.isDestroyed() || win.isFocused() || !Notification.isSupported()) return
+  const notification = new Notification({ title, body })
+  notification.on('click', () => {
+    if (win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.focus()
+    onClick?.()
+  })
+  notification.show()
+}
 
 /** True while an interactive export is running; the quit guard in main.ts asks before cancelling it. */
 export function hasRunningExports(): boolean {
@@ -160,7 +192,12 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
       outcomeState = outcome.state
       logExport('outcome', { requestId: request.requestId, state: outcome.state, ...(outcome.state === 'failed' ? { error: outcome.error } : {}),
         ...(outcome.state === 'succeeded' ? { path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount, timings: outcome.value.timings } : {}) })
-      if (outcome.state === 'succeeded') return { state: 'succeeded', path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount }
+      if (outcome.state === 'succeeded') {
+        rememberCompletedExport(key, outcome.value.path)
+        notifyFinished(win, 'Export finished', path.basename(outcome.value.path), () => void revealCompletedExport(key))
+        return { state: 'succeeded', path: outcome.value.path, durationUs: outcome.value.durationUs, frameCount: outcome.value.frameCount }
+      }
+      if (outcome.state === 'failed') notifyFinished(win, 'Export failed', outcome.error.message)
       return outcome.state === 'failed' ? { state: 'failed', error: outcome.error } : { state: 'cancelled' }
     } finally {
       activeRequests.delete(key)
@@ -171,6 +208,11 @@ export function registerExportIpc(lookupMedia: LookupMedia) {
         setTimeout(() => setBar(-1), 4000).unref()
       } else setBar(-1)
     }
+  })
+
+  ipcMain.handle('export:reveal', (event, value: unknown) => {
+    const requestId = exportStartRequestSchema.shape.requestId.parse(value)
+    return revealCompletedExport(`${event.sender.id}:${requestId}`)
   })
 
   ipcMain.handle('export:cancel', (event, value: unknown) => {
