@@ -1,5 +1,12 @@
 # Status
 
+## 2026-09-25 — Export speed 08: time estimate in the Export dialog
+- New `src/export/exportHistory.ts`: `recordExportSpeed` / `estimateExportMs` keep an EWMA of measured frames per second per output-size bucket (480/720/1080/1440/2160) in `localStorage` key `caption-studio.export-speed` (injectable storage, try/catch, never in the project). No history or corrupt data gives null.
+- `App.tsx` records frames ÷ wall time after a successful export; `ExportDialog.tsx` appends "· about N min on this machine (estimate)" to the summary only when there is history.
+- Verified: `npx vitest run src/export src/ExportDialog.test.tsx` 93 pass; `npm run typecheck` clean; Windows. Not checked by hand in `npm run dev`; macOS untested.
+- Limitations: speed varies with content and captions, so it is a rough estimate; the App.tsx edit is left uncommitted alongside unrelated in-progress changes.
+- Next: none in this plan.
+
 ## 2026-09-25 — Export speed 07: "Show in folder" + completion notification
 - `electron/exportIpc.ts`: successful exports are remembered per session (`completedExports`, last 20, keyed `senderId:requestId`). New `export:reveal` handler takes only a validated request id, `stat`s the file, then `shell.showItemInFolder`; returns `{ ok } | { ok: false, message }`. When the window is not focused, a local OS `Notification` announces "Export finished" (click focuses the window and reveals the file) or "Export failed".
 - `preload.ts` / `env.d.ts`: `revealExport(requestId)`. `App.tsx`: `Notice` gains an optional `action`, rendered as a button that does not dismiss the notice; the success notice offers "Show in folder" and a failed reveal shows an error notice.

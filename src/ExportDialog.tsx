@@ -3,6 +3,7 @@ import { formatClock } from './core/time'
 import { RangeInput } from './style/controls'
 import type { SequenceFormat } from './core/edit'
 import { exportBitrate } from './export/plan'
+import { estimateExportMs, formatEstimate } from './export/exportHistory'
 import {
   DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, estimateSizeBytes, exportSettingsSchema, exportWarnings, resolveExportFormat, resolveVideoBitrateKbps,
   settingsForPreset, type ExportFrameRate, type ExportResolution, type ExportSettings,
@@ -91,6 +92,8 @@ export function ExportDialog({ open, source, durationUs, range, onClose, onExpor
   const autoKbps = output ? Number.parseInt(exportBitrate(output.width, output.height), 10) * 1000 : 0
   const kbps = explicitKbps ?? autoKbps
   const warnings = source ? exportWarnings(source, settings) : []
+  const spanUs = useRange && range ? range.endUs - range.startUs : durationUs
+  const timeMs = output && open ? estimateExportMs({ width: output.width, height: output.height, frameCount: Math.round(spanUs / 1e6 * output.frameRate.numerator / output.frameRate.denominator) }) : null
   const change = (patch: Partial<ExportSettings>) => setSettings((current) => ({ ...current, preset: 'custom', ...patch }))
 
   // A chip fills the sliders, including the bitrate it implies for its own output rate, so what the
@@ -126,7 +129,7 @@ export function ExportDialog({ open, source, durationUs, range, onClose, onExpor
       {range ? ` Only the In–Out range (${formatClock(range.startUs)} – ${formatClock(range.endUs)})` : ' Only the In–Out range (mark In and Out with I / O first)'}</label>
     {warnings.map((warning) => <p key={warning} className="export-warning" role="alert">{warning}</p>)}
     <div className="export-footer">
-      {output ? <p className="export-summary" role="status">About {formatSize(estimateSizeBytes(useRange && range ? range.endUs - range.startUs : durationUs, kbps))} (estimate)</p>
+      {output ? <p className="export-summary" role="status">About {formatSize(estimateSizeBytes(spanUs, kbps))} (estimate){timeMs === null ? '' : ` · ${formatEstimate(timeMs)} on this machine (estimate)`}</p>
         : <p className="export-summary">The output size is decided when the first video is probed.</p>}
       <button onClick={onClose}>Cancel</button>
       <button className="accent" onClick={start}>Export…</button>
