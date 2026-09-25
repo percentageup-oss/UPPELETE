@@ -46,7 +46,7 @@ describe('manifest v3 routes', () => {
       '-ss', '0.000000', '-t', '4.000000', '-i', '/m/bed.wav',
     ])
     // The caption/overlay layer comes last, after every clip input.
-    expect(args.slice(args.indexOf('-thread_queue_size'), args.indexOf('pipe:0') + 1)).toEqual(['-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', '25/1', '-c:v', 'png', '-i', 'pipe:0'])
+    expect(args.slice(args.indexOf('-thread_queue_size'), args.indexOf('pipe:0') + 1)).toEqual(['-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', '25/1', '-c:v', 'png', '-i', 'pipe:0'])
     expect(args.slice(args.indexOf('-frames:v'), args.indexOf('-frames:v') + 4)).toEqual(['-frames:v', '250', '-t', '10.000000'])
     expect(args.at(-1)).toBe('/out/x.mp4.tmp')
   })

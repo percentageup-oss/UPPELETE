@@ -14,6 +14,8 @@ protocol.registerSchemesAsPrivileged([
 
 // This is a separate Electron process, with the X1 GPU mode and no renderer filesystem/IPC API.
 app.commandLine.appendSwitch('force-device-scale-factor', '1')
+// Keep the hidden host at full speed: Chromium/Windows otherwise throttle timers and rendering of a window nobody sees.
+for (const flag of ['disable-renderer-backgrounding', 'disable-background-timer-throttling', 'disable-backgrounding-occluded-windows']) app.commandLine.appendSwitch(flag)
 // One job-owned profile directory per export (main creates and removes it) — never the editor's
 // own userData — so concurrent or crashed export hosts never collide on Local State/GPU cache.
 const userDataIndex = process.argv.indexOf('--user-data')

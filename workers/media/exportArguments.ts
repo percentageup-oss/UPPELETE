@@ -227,7 +227,7 @@ export function exportArguments(inputPath: string, outputPath: string, plan: Exp
   const clipInputs = (edits ? sortedAudioClips(edits) : []).flatMap((clip) => ['-i', clip.path])
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', '-ss', usDecimal(plan.range.startUs),
     // FFmpeg autorotates on decode, so `[0:v]` is already display-oriented; `-noautorotate` is never emitted.
-    '-autorotate', '-i', inputPath, '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...clipInputs,
+    '-autorotate', '-i', inputPath, '-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...clipInputs,
     ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
     ...videoEncoderArguments(videoEncoder, videoBitrate(plan.width, plan.height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),
@@ -622,7 +622,7 @@ export function exportArgumentsV3(manifest: ExportManifestV3, outputPath: string
   const maskInputArguments = targets.flatMap((target, index) => ['-loop', '1', '-framerate', rate, '-t', usDecimal(target.lengthUs), '-i', maskFiles[index]])
   const plan: ExportPlan = { width, height, frameRate, range: { startUs: 0, endUs: manifest.sequenceDurationUs } }
   return ['-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', ...inputArguments(manifest, rate),
-    '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...maskInputArguments,
+    '-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', rate, '-c:v', 'png', '-i', 'pipe:0', ...maskInputArguments,
     ...(filterComplexScriptPath ? ['-/filter_complex', filterComplexScriptPath] : ['-filter_complex', graph.filterComplex]), ...graph.maps,
     ...(graph.hasAudioOut ? ['-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2'] : ['-an']),
     ...videoEncoderArguments(videoEncoder, videoBitrate(width, height, encoding)), '-pix_fmt', videoEncoderPixelFormat(videoEncoder),

@@ -14,7 +14,7 @@ exports[`manifest-driven builder > matches the argument array snapshot for an id
   "-i",
   "/in/source.mp4",
   "-thread_queue_size",
-  "1",
+  "8",
   "-f",
   "image2pipe",
   "-framerate",

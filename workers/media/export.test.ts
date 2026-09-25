@@ -276,6 +276,58 @@ describe('renderVideo', () => {
     expect(Buffer.concat(encoded).length).toBe(pngFrame(1).length * 30)
   })
 
+  it('sends frames to the encoder in index order with gap and repeat reuse when the next paint is prefetched', async () => {
+    // Frames: 0 cue A, 1-2 gap, 3 cue B, 4-5 gap again. Painted: 0, 1, 3 (the gap cache serves 4-5).
+    const { root, renderManifestPath } = await jobFixture({ cues: [
+      { id: 'a', startUs: 0, endUs: 33_333, text: 'a', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] },
+      { id: 'b', startUs: 100_000, endUs: 133_333, text: 'b', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] },
+    ] })
+    let painted = 0
+    let hostHandle!: ReturnType<typeof fakeHost>, encoderHandle!: ReturnType<typeof fakeEncoder>
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      if (executable === tools.exportHost!.executable) return hostHandle = fakeHost(s, () => pngFrame(++painted)) as any
+      return encoderHandle = fakeEncoder(s) as any
+    }) as ExportDependencies['spawn']
+    const probe = vi.fn(async (_ffprobe: string, inputPath: string) => inputPath.endsWith('out.mp4') ? outputProbe(1080, 1920, 200_000, false) : inputProbe(1_000_000, false))
+    const result = await renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 200_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, new AbortController().signal, () => {}, { spawn, probe, runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    expect(result.frameCount).toBe(6)
+    expect(hostHandle.requestCount()).toBe(3)
+    expect(encoderHandle.received.map((chunk) => chunk[chunk.length - 1])).toEqual([1, 2, 2, 3, 2, 2])
+  })
+
+  it('asks the host for the next frame while the encoder is still ingesting the current one, and cancels cleanly with a prefetch pending', async () => {
+    const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
+    const controller = new AbortController()
+    const unhandled: unknown[] = []
+    const onUnhandled = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', onUnhandled)
+    let hostHandle!: ReturnType<typeof fakeHost>, blockedStdin!: { destroy: () => void }
+    const spawn: ExportDependencies['spawn'] = ((executable, _args, s) => {
+      // Answers only the first request: the second (the prefetch) stays pending on the host.
+      if (executable === tools.exportHost!.executable) return hostHandle = fakeHost(s, (request) => request.timestampUs === 0 ? pngFrame(1) : null) as any
+      const encoder = fakeEncoder(s) as any
+      // An encoder that never accepts the first frame; destroying it fails the write, as a dead pipe would.
+      let stuck: ((error?: Error | null) => void) | undefined
+      blockedStdin = { destroy: () => stuck?.(new Error('pipe closed')) }
+      encoder.child.stdin = { write: (_bytes: Buffer, done: (error?: Error | null) => void) => { stuck = done; return false }, end() {} }
+      return encoder
+    }) as ExportDependencies['spawn']
+    const outcome = renderVideo({
+      operation: 'export', inputPaths: ['/media/in.mp4'], outputPath: '/media/out.mp4', renderManifestPath,
+      range: { startUs: 0, endUs: 1_000_000 }, frameRate: { numerator: 30, denominator: 1 }, width: 1080, height: 1920, profile: 'mp4-caption-renderer-v1',
+    }, tools, controller.signal, () => {}, { spawn, probe: vi.fn(async () => inputProbe(1_000_000, true)), runTool: vi.fn().mockResolvedValue(PINNED_VERSION), temporaryRoot: root })
+    outcome.catch(() => {})
+    await vi.waitFor(() => expect(hostHandle.requestCount()).toBe(2))
+    controller.abort(); blockedStdin.destroy()
+    await expect(outcome).rejects.toMatchObject({ detail: { code: 'CANCELLED' } })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    process.off('unhandledRejection', onUnhandled)
+    expect(unhandled).toEqual([])
+  })
+
   it('cancels mid-export, stops both processes and cleans its job-owned temp directory without touching the encoder output', async () => {
     const { root, renderManifestPath } = await jobFixture({ cues: perFrameCues(30, { numerator: 30, denominator: 1 }) })
     const controller = new AbortController()

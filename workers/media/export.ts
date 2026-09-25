@@ -230,11 +230,39 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
     let previous: RenderedFrame | null = null
     let gap: RenderedFrame | null = null
     const reuse = (candidate: RenderedFrame | null, signature: string) => candidate && candidate.signature === signature ? candidate.png : null
+    // Two stages with a one-slot hand-off: once frame N's PNG arrives, the host is already asked for
+    // the next frame that needs painting while FFmpeg ingests N. The host still has one request in
+    // flight; at most one extra PNG is buffered. Which indices need painting is decided from layer
+    // signatures alone (the same rule as the byte-side reuse below), so no bytes are needed to plan ahead.
+    const frames = new Map<number, LayerFrame>()
+    let plannedTo = 0, plannedPrevious: string | null = null, plannedGap: string | null = null
+    const nextPainted = (from: number): number => {
+      for (; plannedTo < total; plannedTo++) {
+        const frame = job.layer.frameAt(plannedTo)
+        if (plannedTo >= from) frames.set(plannedTo, frame)
+        const reused = frame.signature === plannedPrevious || frame.signature === plannedGap
+        plannedPrevious = frame.signature
+        if (!reused && frame.activeCueId === null) plannedGap ??= frame.signature
+        if (!reused && plannedTo >= from) return plannedTo++
+      }
+      return total
+    }
+    let pending: { index: number; promise: Promise<Buffer> } | null = null
+    const prefetchAfter = (index: number) => {
+      const next = nextPainted(index + 1)
+      if (next >= total) return
+      const promise = fromHost(next, job.request(next, frames.get(next)!).request)
+      // Bookkeeping only: the real rejection is observed when the loop awaits this promise, and a
+      // prefetch abandoned by an earlier failure must not surface as an unhandled rejection.
+      promise.catch(() => {})
+      pending = { index: next, promise }
+    }
     const loopStartedAt = performance.now()
     const startupMs = loopStartedAt - startedAt
     for (let index = 0; index < total; index++) {
       if (controller.signal.aborted) throw failure('CANCELLED', 'Export interrupted')
-      const frame = job.layer.frameAt(index)
+      const frame = frames.get(index) ?? job.layer.frameAt(index)
+      frames.delete(index)
       const cached: Buffer | null = reuse(previous, frame.signature) ?? reuse(gap, frame.signature)
       if (cached) {
         previous = { signature: frame.signature, png: cached }
@@ -242,11 +270,13 @@ export async function renderVideo(task: ExportTask, tools: Toolchain, signal: Ab
         await toEncoder(index, cached)
         continue
       }
-      const { request } = job.request(index, frame)
-      const png = await fromHost(index, request)
+      const inFlight = pending as { index: number; promise: Promise<Buffer> } | null
+      pending = null
+      const png = await (inFlight?.index === index ? inFlight.promise : fromHost(index, job.request(index, frame).request))
       paintedFrames++
       previous = { signature: frame.signature, png }
       if (frame.activeCueId === null) gap ??= { signature: frame.signature, png }
+      prefetchAfter(index)
       await toEncoder(index, png)
     }
     const loopEndedAt = performance.now()

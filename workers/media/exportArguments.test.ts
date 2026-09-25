@@ -11,7 +11,7 @@ describe('exportArguments', () => {
     const args = exportArguments('/in/source.mp4', '/out/dest.mp4.tmp', plan, true)
     expect(args).toEqual([
       '-v', 'error', '-nostdin', '-n', '-stats_period', '0.25', '-ss', '0.500000',
-      '-autorotate', '-i', '/in/source.mp4', '-thread_queue_size', '1', '-f', 'image2pipe', '-framerate', '30000/1001', '-c:v', 'png', '-i', 'pipe:0',
+      '-autorotate', '-i', '/in/source.mp4', '-thread_queue_size', '8', '-f', 'image2pipe', '-framerate', '30000/1001', '-c:v', 'png', '-i', 'pipe:0',
       '-filter_complex', '[0:v:0]fps=fps=30000/1001:start_time=0,scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1[v];[v][1:v:0]overlay=0:0:alpha=straight:format=auto:eof_action=endall:shortest=1,format=yuv420p[outv];[0:a:0]aresample=48000:async=1:first_pts=0,apad,atrim=duration=5.000000[outa]',
       '-map', '[outv]', '-map', '[outa]', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-ac', '2',
       '-c:v', 'h264_videotoolbox', '-allow_sw', '1', '-profile:v', 'high', '-b:v', '8M', '-pix_fmt', 'yuv420p',
@@ -168,7 +168,7 @@ describe('v3 zoom filter placement', () => {
     inputs: [{ path: '/in.mp4', kind: 'video' }],
     clips: [{ id: 'c1', inputIndex: 0, assetId: 'v1', kind: 'video', trackIndex: 0, timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: 3_000_000,
       ...(stacked ? { rect: { x: 0, y: 0, width: 320, height: 180 } } : {}), opacity: 1, fit: 'contain', gain: 0 }],
-    overlays: [], blurRegions: [], effects: [], pictureEffects: [], textOverlays: [], captionMasks: {}, luts: [],
+    overlays: [], blurRegions: [], effects: [], pictureEffects: [], textOverlays: [], shapes: [], captionMasks: {}, luts: [],
     zoomRegions: [{ id: 'z1', sequence: { startUs: 500_000, endUs: 2_500_000 }, rect: { x: 80, y: 45, width: 160, height: 90 }, easeInUs: 500_000, easeOutUs: 500_000 }],
   })
 

@@ -1,5 +1,20 @@
 # Status
 
+## 2026-09-25 — Export speed 02: overlap caption rendering with encoding
+
+The frame loop now asks the host for the next frame that needs painting as soon as the current PNG arrives, while FFmpeg ingests it (`workers/media/export.ts`). Still one host request in flight and at most one extra PNG buffered; which indices need painting is planned from layer signatures alone, with the same previous/gap reuse rule, so bytes reach the encoder in identical order. A prefetch rejection is swallowed for bookkeeping and observed when the loop awaits it. The caption pipe's `-thread_queue_size` is 8 (both builders, snapshots updated), and the export host adds `disable-renderer-backgrounding`, `disable-background-timer-throttling` and `disable-backgrounding-occluded-windows`.
+
+Measured on Windows 11 with my own synthetic 1080p/30 fps 15 s source (testsrc2 + sine) and 30 SRT cues (Malayalam + English, one per 0.5 s), real `--export-smoke`. The brief-01 media is not recorded, so this is a before/after on the same input, not a comparison with the table above:
+
+| Build | Frames | fps | hostWaitMs | encoderWaitMs | painted/reused |
+|---|---|---|---|---|---|
+| before (HEAD loop, new args) | 450 | 107.1 | 3054 | 1110 | 31 / 419 |
+| after (3 runs) | 450 | 111.8–112.7 | 3050–3146 | 3030–3154 | 31 / 419 |
+
+Gain is about 5 % here: only 31 of 450 frames are painted, and the run is dominated by host paint time. `hostWaitMs`/`encoderWaitMs` are wall-clock waits per stage and now overlap, so they no longer sum to the loop time; encoder wait rising means the encoder wait absorbs time the host previously spent alone. Both outputs probe as 1920×1080 with 450 frames. The 4K run was not repeated.
+
+Verified: `tsc --noEmit` clean; `workers/media/export.test.ts` 31/31 with `process.platform` spoofed to darwin, including two new tests (frame order with gap reuse under prefetch; host asked for the next frame while the encoder write is blocked, then cancel leaves no unhandled rejection). The stall-deadline tests still pass. On real Windows the file has the same 19 pre-existing failures plus my 2 new ones (fixtures assume VideoToolbox). Limitations: Windows only; macOS untested; the flag effect on throttling was not measured separately. Next: brief 03 (raw transport).
+
 ## 2026-09-25 — Export speed 01: stage timings + cached support check
 
 Every export now records `timings` (startup, host wait, encoder wait, painted/reused frames, finalize, total, fps) in the local export log and the smoke output; `exportSupport()` caches `supported: true` per session. No output changes. Baseline (Windows 11, 30 cues, 1 cue/0.5 s, real `--export-smoke`):
