@@ -235,6 +235,7 @@ const shapeChanges = z.strictObject({
   layerOrder: shapeSchema.shape.layerOrder.optional(),
   /** `null` removes the glass look. */
   glass: glassSchema.nullable().optional(),
+  fitTo: shapeSchema.shape.fitTo, fitPadding: shapeSchema.shape.fitPadding,
 })
 const shapeAdd = z.strictObject({ type: z.literal('shape-add'), shape: shapeSchema })
 const shapeUpdate = z.strictObject({ type: z.literal('shape-update'), shapeId: itemId, changes: shapeChanges })
@@ -252,6 +253,14 @@ const groupTranslate = z.strictObject({ type: z.literal('group-translate'), grou
 const groupScale = z.strictObject({ type: z.literal('group-scale'), groupId: itemId, factor: z.number().finite().min(0.05).max(20), anchor: z.strictObject({ x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000) }) })
 const groupDuplicate = z.strictObject({ type: z.literal('group-duplicate'), groupId: itemId, idMap: z.record(itemId, itemId) })
 const groupDelete = z.strictObject({ type: z.literal('group-delete'), groupId: itemId })
+
+const templateInsert = z.strictObject({
+  type: z.literal('template-insert'), templateId: z.string().min(1).max(100),
+  startUs: z.number().int().nonnegative(), endUs: z.number().int().positive(),
+  ids: z.strictObject({ group: itemId, items: z.record(z.string().min(1).max(100), itemId) }),
+  at: z.strictObject({ x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000) }),
+  measured: z.record(z.string().min(1).max(100), z.strictObject({ width: z.number().finite().positive().max(40000), height: z.number().finite().positive().max(40000) })),
+})
 
 const maskTarget = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('clip'), id: itemId }), z.strictObject({ kind: z.literal('text'), id: itemId }), z.strictObject({ kind: z.literal('shape'), id: itemId }),
@@ -277,7 +286,7 @@ export const itemCommandSchema = z.discriminatedUnion('type', [
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
   textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
-  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, maskSet, layerLookSet,
+  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, templateInsert, maskSet, layerLookSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 
@@ -295,7 +304,7 @@ export const editCommandSchema = z.discriminatedUnion('type', [
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
   textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
-  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, maskSet, layerLookSet,
+  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, templateInsert, maskSet, layerLookSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 

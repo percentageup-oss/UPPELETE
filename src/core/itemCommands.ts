@@ -14,6 +14,7 @@ import { applyEffectCommand, type EffectCommand } from './effectCommands'
 import { applyTextCommand, type TextCommand } from './textCommands'
 import { applyShapeCommand, type ShapeCommand } from './shapeCommands'
 import { applyGroupCommand, type GroupCommand } from './groupCommands'
+import { applyTemplateCommand, type TemplateCommand } from './templateCommands'
 import { applyMaskCommand, type MaskCommand } from './maskCommands'
 import { applyLayerLookCommand, type LayerLookCommand } from './layerLookCommands'
 
@@ -25,8 +26,8 @@ import { applyLayerLookCommand, type LayerLookCommand } from './layerLookCommand
  * `zoomRegionCommands.ts`; this module owns the union, the shared validation and the one epilogue
  * every item command runs through.
  */
-export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand | ShapeCommand | GroupCommand | MaskCommand | LayerLookCommand
-export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, ShapeCommand, GroupCommand, MaskCommand, LayerLookCommand, ClipEdge, EditMode }
+export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand | ShapeCommand | GroupCommand | TemplateCommand | MaskCommand | LayerLookCommand
+export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, ShapeCommand, GroupCommand, TemplateCommand, MaskCommand, LayerLookCommand, ClipEdge, EditMode }
 export type { BlurRegion, Clip, ClipKind, ProjectAsset, SequenceFormat, TimeRange, Track }
 
 export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<ItemCommand['type']>([
@@ -40,6 +41,7 @@ export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<Item
   'text-add', 'text-update', 'text-move', 'text-trim', 'text-duplicate', 'text-delete', 'text-reorder',
   'shape-add', 'shape-update', 'shape-move', 'shape-trim', 'shape-duplicate', 'shape-delete', 'shape-reorder',
   'group-create', 'group-ungroup', 'group-rename', 'group-move', 'group-translate', 'group-scale', 'group-duplicate', 'group-delete',
+  'template-insert',
   'mask-set', 'layer-look-set',
   'marker-add', 'marker-update', 'marker-delete',
 ])
@@ -125,6 +127,7 @@ export function validateItems(project: CaptionProject, context: CommandContext =
 
 export function applyItemCommand(project: CaptionProject, command: ItemCommand, context: CommandContext = {}): CommandResult {
   const step = command.type === 'layer-look-set' ? applyLayerLookCommand(project, command as LayerLookCommand)
+    : command.type === 'template-insert' ? applyTemplateCommand(project, command as TemplateCommand, context.compositionHeight)
     : command.type.startsWith('group-') ? applyGroupCommand(project, command as GroupCommand, context.compositionHeight)
     : command.type.startsWith('mask-') ? applyMaskCommand(project, command as MaskCommand)
     : command.type.startsWith('text-') ? applyTextCommand(project, command as TextCommand)

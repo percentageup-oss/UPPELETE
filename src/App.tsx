@@ -58,6 +58,7 @@ import { BLEND_BACKDROP_STYLE, CompositionLayers, glowFilterStyle, hasBlendedLay
 import type { Cube3D } from './color/cube'
 import { ClipInspector } from './ClipInspector'
 import { ClipStageEditor } from './ClipStageEditor'
+import { BubbleTailHandle } from './BubbleTailHandle'
 import { RectStageEditor } from './RectStageEditor'
 import { LineStageEditor } from './LineStageEditor'
 import { MaskStageEditor } from './MaskStageEditor'
@@ -123,6 +124,8 @@ import { EffectInspector } from './EffectInspector'
 import { TextInspector } from './TextInspector'
 import { TextOverlayActor } from './captions/TextOverlayActor'
 import { ShapeActor } from './captions/ShapeActor'
+import { fitShapesToTitle } from './captions/fitMeasure'
+import { isFittableGeometry } from './core/fitToText'
 import { ShapeInspector } from './ShapeInspector'
 import { defaultShape, type ShapePreset } from './core/shapeCommands'
 import { belowCaptions, compareLayered } from './core/graphicsOrder'
@@ -670,6 +673,27 @@ export default function App() {
   // `describe` overrides the default notice for commands whose outcome the caller can explain more
   // usefully than the generic overlap warning.
   const runCommand = (command: EditCommand, describe?: (warnings: ValidationIssue[]) => Notice) => {
+    // A title that a shape is fitted to (`fitTo`): measure the new text first, then commit the text and the refitted shapes as ONE undo step.
+    if (command.type === 'text-update' && ('text' in command.changes || 'style' in command.changes)) {
+      const current = projectRef.current.textOverlays.find((item) => item.id === command.textId)
+      const fitted = projectRef.current.shapes.filter((shape) => shape.fitTo === command.textId && isFittableGeometry(shape.geometry))
+      if (current && fitted.length) {
+        const next = { ...current, ...command.changes }
+        void fitShapesToTitle(fitted, next.text, next.style, captionComposition).then((results) => {
+          const updates: EditCommand[] = [...results].map(([shapeId, result]) => ({ type: 'shape-update', shapeId, changes: { geometry: result.geometry } }))
+          if (updates.length === 0) applyCommand(command, describe)
+          else {
+            const outcome = runCommands([command, ...updates], 'Text updated; its shape was refitted.')
+            const failure = outcome.failedIndex === null ? null : outcome.outcomes[outcome.failedIndex]
+            if (failure && !failure.ok) setNotice({ tone: 'error', text: failure.errors.map((issue) => issue.message).join(' ') })
+          }
+        }, () => { applyCommand(command, describe) })
+        return true
+      }
+    }
+    return applyCommand(command, describe)
+  }
+  const applyCommand = (command: EditCommand, describe?: (warnings: ValidationIssue[]) => Notice) => {
     const result = applyEditCommand(projectRef.current, command, commandContext)
     if (!result.ok) {
       setNotice({ tone: 'error', text: result.errors.map((issue) => issue.message).join(' ') })
@@ -694,7 +718,7 @@ export default function App() {
    * `runCommand` call — mirroring its selection handling but without the toast, since the agent
    * (not the mouse) is the caller. Nothing commits if any command fails; the failing index and its
    * errors are returned so the caller knows exactly which command to fix and retry. */
-  const runCommands = (commands: EditCommand[]): { outcomes: CommandOutcome[]; failedIndex: number | null; state: ProjectSummary } => {
+  const runCommands = (commands: EditCommand[], message?: string): { outcomes: CommandOutcome[]; failedIndex: number | null; state: ProjectSummary } => {
     let working = projectRef.current
     let nextSelection = selectionRef.current
     let failedIndex: number | null = null
@@ -716,7 +740,7 @@ export default function App() {
       selectionRef.current = nextSelection
       setHistory((state) => commitHistory(state, { ...working, updatedAt: new Date().toISOString() }))
       setSelection(nextSelection)
-      setNotice({ tone: 'info', text: `Agent applied ${commands.length} edit${commands.length === 1 ? '' : 's'}.` })
+      setNotice({ tone: 'info', text: message ?? `Agent applied ${commands.length} edit${commands.length === 1 ? '' : 's'}.` })
     }
     return { outcomes, failedIndex, state: summarizeAgentState(working, nextSelection) }
   }
@@ -2224,7 +2248,7 @@ export default function App() {
               onSelect={(id) => setSelection({ kind: 'group', id })}
               onDraft={(rect) => draftGroupRect(selectedGroup.id, rect)}
               onCommit={(rect) => commitGroupRect(selectedGroup.id, rect)} />}
-            {stageShape && (stageShape.geometry.kind === 'rect' || stageShape.geometry.kind === 'ellipse' || stageShape.geometry.kind === 'highlight') && (() => {
+            {stageShape && (stageShape.geometry.kind === 'rect' || stageShape.geometry.kind === 'bubble' || stageShape.geometry.kind === 'ellipse' || stageShape.geometry.kind === 'highlight') && (() => {
               const geometry = stageShape.geometry
               return <RectStageEditor label="Shape" hitClassName="shape-hit" keepAspect={false}
                 region={{ id: stageShape.id, rect: geometry.rect }} composition={captionComposition} selected
@@ -2232,6 +2256,9 @@ export default function App() {
                 onDraft={(rect) => setShapeDraft(rect ? { id: stageShape.id, geometry: { ...geometry, rect } } : null)}
                 onCommit={(rect) => { setShapeDraft(null); runCommand({ type: 'shape-update', shapeId: stageShape.id, changes: { geometry: { ...geometry, rect } } }) }} />
             })()}
+            {stageShape?.geometry.kind === 'bubble' && <BubbleTailHandle geometry={stageShape.geometry} composition={captionComposition}
+              onDraft={(geometry) => setShapeDraft(geometry ? { id: stageShape.id, geometry } : null)}
+              onCommit={(geometry) => { setShapeDraft(null); runCommand({ type: 'shape-update', shapeId: stageShape.id, changes: { geometry } }) }} />}
             {stageShape?.geometry.kind === 'line' && (() => {
               const geometry = stageShape.geometry
               void geometry

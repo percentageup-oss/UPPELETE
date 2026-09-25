@@ -16,7 +16,7 @@ const video = (id: string, trackId: string, start: number, s0: number, s1: numbe
 const audio = (id: string, trackId: string, start: number, s0: number, s1: number, linkId?: string, assetId = 'x'): Clip =>
   ({ kind: 'audio', id, trackId, assetId, timelineStartUs: start, sourceStartUs: s0, sourceEndUs: s1, gain: 1, ...(linkId ? { linkId } : {}) }) as Clip
 const base = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 22, id: 'p', title: 'T', cues: [], assets: [asset('x'), asset('y'), asset('mute', false)],
+  schemaVersion: 23, id: 'p', title: 'T', cues: [], assets: [asset('x'), asset('y'), asset('mute', false)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], ...dates, ...extra,
 })
 const run = (project: CaptionProject, command: ItemCommand) => {

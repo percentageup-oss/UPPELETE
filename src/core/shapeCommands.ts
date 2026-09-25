@@ -80,10 +80,10 @@ export function applyShapeCommand(project: CaptionProject, command: ShapeCommand
   if (command.type === 'shape-delete') return { project: pruneGroups({ ...project, shapes: project.shapes.filter((item) => item.id !== current.id) }), selection: null }
   if (command.type === 'shape-duplicate') {
     if (inUse(command.duplicateId)) return failItem('asset-missing', [command.duplicateId], 'That shape ID is already in use.')
-    const { blendMode: _blendMode, glass: _glass, groupId: _groupId, ...plain } = current
+    const { blendMode: _blendMode, glass: _glass, groupId: _groupId, fitTo: _plainFit, fitPadding: _plainPadding, ...plain } = current
     const isPass = current.blendMode !== undefined || current.glass !== undefined
     const keepBlend = !isPass || (current.blendMode === undefined ? true : blendingShapes(project.shapes).length < MAX_BLENDING_SHAPES) && passShapes(project.shapes).length < MAX_PASS_SHAPES
-    const { groupId: _leftGroup, ...ungrouped } = current
+    const { groupId: _leftGroup, fitTo: _fitTo, fitPadding: _fitPadding, ...ungrouped } = current
     const duplicate = clampToDuration({ ...(keepBlend ? ungrouped : plain), id: command.duplicateId, startUs: current.startUs + Math.min(250_000, Math.max(0, durationUs - current.endUs)) }, durationUs)
     if (!duplicate) return failItem('invalid-duration', [current.id], 'There is no room to duplicate this shape.')
     return { project: { ...project, shapes: ordered([...project.shapes, duplicate]) }, selection: { kind: 'shape', id: duplicate.id } }

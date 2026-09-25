@@ -1,4 +1,4 @@
-import type { Arrowhead, CornerRadii, MaskPathPoint, ShapeGeometry } from './edit'
+import type { Arrowhead, BubbleTail, CornerRadii, MaskPathPoint, ShapeGeometry } from './edit'
 
 export type Vec = { x: number; y: number }
 
@@ -6,7 +6,7 @@ export type Vec = { x: number; y: number }
 const n = (value: number) => Number(value.toFixed(3))
 const pt = (p: Vec) => `${n(p.x)} ${n(p.y)}`
 
-type RectGeometry = Extract<ShapeGeometry, { kind: 'rect' }>
+type RectGeometry = Extract<ShapeGeometry, { kind: 'rect' | 'bubble' }>
 
 /** The four radii a rect draws with: `cornerRadii` when set, else `cornerRadius` for every corner. */
 export function resolveCornerRadii(geometry: Pick<RectGeometry, 'cornerRadius' | 'cornerRadii'>): CornerRadii {
@@ -16,7 +16,7 @@ export function resolveCornerRadii(geometry: Pick<RectGeometry, 'cornerRadius' |
 
 /** Canonical storage form: equal radii collapse to `cornerRadius`; distinct radii keep `cornerRadius` as their rounded mean. */
 export function normalizeShapeGeometry<G extends ShapeGeometry>(geometry: G): G {
-  if (geometry.kind !== 'rect') return geometry
+  if (geometry.kind !== 'rect' && geometry.kind !== 'bubble') return geometry
   const { cornerRadii, ...rest } = geometry
   if (!cornerRadii) return geometry
   const { tl, tr, br, bl } = cornerRadii
@@ -31,16 +31,58 @@ export function fitCornerRadii(radii: CornerRadii, width: number, height: number
   return { tl: radii.tl * f, tr: radii.tr * f, br: radii.br * f, bl: radii.bl * f }
 }
 
-function rectPath(rect: { x: number; y: number; width: number; height: number }, radii: CornerRadii | number): string {
+type Box = { x: number; y: number; width: number; height: number }
+
+/** Where the tail's base sits on its side, in the side's own coordinate (x for top/bottom, y for left/right),
+ * clamped to the straight stretch between the corner arcs so the tail never overlaps a corner. Null = no room. */
+function tailBase(box: Box, radii: CornerRadii, tail: BubbleTail): { from: number; to: number; center: number } | null {
+  const horizontal = tail.side === 'top' || tail.side === 'bottom'
+  const start = horizontal ? box.x : box.y
+  const length = horizontal ? box.width : box.height
+  const before = tail.side === 'top' ? radii.tl : tail.side === 'right' ? radii.tr : tail.side === 'bottom' ? radii.bl : radii.tl
+  const after = tail.side === 'top' ? radii.tr : tail.side === 'right' ? radii.br : tail.side === 'bottom' ? radii.br : radii.bl
+  const low = start + before, high = start + length - after
+  const room = high - low
+  const width = Math.min(tail.width, room)
+  if (width < 1 || tail.length <= 0) return null
+  const from = Math.min(Math.max(low + (room - width) * tail.offset, low), high - width)
+  return { from, to: from + width, center: from + width / 2 }
+}
+
+/** The path commands for one tail, travelling from `a` to `b` along the side (either direction). */
+function tailPath(box: Box, side: BubbleTail['side'], a: number, b: number, tail: BubbleTail): string {
+  const outward = side === 'top' ? { x: 0, y: -1 } : side === 'bottom' ? { x: 0, y: 1 } : side === 'left' ? { x: -1, y: 0 } : { x: 1, y: 0 }
+  const horizontal = side === 'top' || side === 'bottom'
+  const edge = horizontal ? (side === 'top' ? box.y : box.y + box.height) : (side === 'left' ? box.x : box.x + box.width)
+  const at = (u: number, v: number): Vec => horizontal ? { x: u, y: edge + outward.y * v } : { x: edge + outward.x * v, y: u }
+  const c = (a + b) / 2
+  const bend = tail.curve * Math.abs(b - a) * 0.3
+  const toward = (from: number) => (c > from ? 1 : -1)
+  const first = at((a + c) / 2 + toward(a) * bend, tail.length / 2)
+  const second = at((c + b) / 2 + toward(b) * bend, tail.length / 2)
+  const tip = at(c, tail.length)
+  const to = at(b, 0)
+  return tail.curve > 0
+    ? ` L ${pt(at(a, 0))} Q ${pt(first)} ${pt(tip)} Q ${pt(second)} ${pt(to)}`
+    : ` L ${pt(at(a, 0))} L ${pt(tip)} L ${pt(to)}`
+}
+
+function rectPath(rect: Box, radii: CornerRadii | number, tail?: BubbleTail): string {
   const { x, y, width: w, height: h } = rect
   const fitted = typeof radii === 'number'
     ? (() => { const r = Math.min(radii, w / 2, h / 2); return { tl: r, tr: r, br: r, bl: r } })()
     : fitCornerRadii(radii, w, h)
   const { tl, tr, br, bl } = fitted
-  if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0) return `M ${n(x)} ${n(y)} H ${n(x + w)} V ${n(y + h)} H ${n(x)} Z`
+  const base = tail ? tailBase(rect, fitted, tail) : null
+  if (tl <= 0 && tr <= 0 && br <= 0 && bl <= 0 && !base) return `M ${n(x)} ${n(y)} H ${n(x + w)} V ${n(y + h)} H ${n(x)} Z`
   const arc = (r: number, toX: number, toY: number) => (r > 0 ? ` A ${n(r)} ${n(r)} 0 0 1 ${n(toX)} ${n(toY)}` : '')
-  return `M ${n(x + tl)} ${n(y)} H ${n(x + w - tr)}${arc(tr, x + w, y + tr)} V ${n(y + h - br)}${arc(br, x + w - br, y + h)} `
-    + `H ${n(x + bl)}${arc(bl, x, y + h - bl)} V ${n(y + tl)}${arc(tl, x + tl, y)} Z`
+  // Travel is clockwise: top and right run toward larger coordinates, bottom and left toward smaller ones.
+  const onSide = (side: BubbleTail['side'], reversed: boolean) => {
+    if (!base || !tail || tail.side !== side) return ''
+    return tailPath(rect, side, reversed ? base.to : base.from, reversed ? base.from : base.to, tail)
+  }
+  return `M ${n(x + tl)} ${n(y)}${onSide('top', false)} H ${n(x + w - tr)}${arc(tr, x + w, y + tr)}${onSide('right', false)} V ${n(y + h - br)}${arc(br, x + w - br, y + h)}${onSide('bottom', true)} `
+    + `H ${n(x + bl)}${arc(bl, x, y + h - bl)}${onSide('left', true)} V ${n(y + tl)}${arc(tl, x + tl, y)} Z`
 }
 
 function ellipsePath(rect: { x: number; y: number; width: number; height: number }): string {
@@ -61,6 +103,7 @@ function pointsPath(points: readonly MaskPathPoint[], closed: boolean): string {
 export function shapePathD(geometry: ShapeGeometry): string {
   switch (geometry.kind) {
     case 'rect': return rectPath(geometry.rect, geometry.cornerRadii ? resolveCornerRadii(geometry) : geometry.cornerRadius)
+    case 'bubble': return rectPath(geometry.rect, geometry.cornerRadii ? resolveCornerRadii(geometry) : geometry.cornerRadius, geometry.tail)
     case 'ellipse': return ellipsePath(geometry.rect)
     case 'highlight': return rectPath(geometry.rect, 0)
     case 'line': return geometry.control
@@ -69,9 +112,24 @@ export function shapePathD(geometry: ShapeGeometry): string {
   }
 }
 
+/** Where a bubble's tail tip sits before the shape's own rotation, or null when the tail has no room to draw. */
+export function bubbleTailTip(geometry: ShapeGeometry): Vec | null {
+  if (geometry.kind !== 'bubble') return null
+  const { rect, tail } = geometry
+  const radii = fitCornerRadii(geometry.cornerRadii ? resolveCornerRadii(geometry) : { tl: geometry.cornerRadius, tr: geometry.cornerRadius, br: geometry.cornerRadius, bl: geometry.cornerRadius }, rect.width, rect.height)
+  const base = tailBase(rect, radii, tail)
+  if (!base) return null
+  switch (tail.side) {
+    case 'top': return { x: base.center, y: rect.y - tail.length }
+    case 'bottom': return { x: base.center, y: rect.y + rect.height + tail.length }
+    case 'left': return { x: rect.x - tail.length, y: base.center }
+    case 'right': return { x: rect.x + rect.width + tail.length, y: base.center }
+  }
+}
+
 /** The rotation a box-shaped geometry carries, about its own centre; lines and paths carry none. */
 export function shapeRotation(geometry: ShapeGeometry): { angle: number; cx: number; cy: number } {
-  if (geometry.kind === 'rect' || geometry.kind === 'ellipse' || geometry.kind === 'highlight') {
+  if (geometry.kind === 'rect' || geometry.kind === 'bubble' || geometry.kind === 'ellipse' || geometry.kind === 'highlight') {
     return { angle: geometry.rotation, cx: geometry.rect.x + geometry.rect.width / 2, cy: geometry.rect.y + geometry.rect.height / 2 }
   }
   return { angle: 0, cx: 0, cy: 0 }
@@ -79,7 +137,7 @@ export function shapeRotation(geometry: ShapeGeometry): { angle: number; cx: num
 
 /** The geometry's axis-aligned box before rotation, used for the left-to-right sweep reveal. */
 export function shapeBox(geometry: ShapeGeometry): { x: number; y: number; width: number; height: number } {
-  if (geometry.kind === 'rect' || geometry.kind === 'ellipse' || geometry.kind === 'highlight') return geometry.rect
+  if (geometry.kind === 'rect' || geometry.kind === 'bubble' || geometry.kind === 'ellipse' || geometry.kind === 'highlight') return geometry.rect
   const points: Vec[] = geometry.kind === 'line'
     ? [geometry.from, geometry.to, ...(geometry.control ? [geometry.control] : [])]
     : geometry.points.flatMap((p) => [p, ...(p.in ? [p.in] : []), ...(p.out ? [p.out] : [])])
@@ -133,7 +191,7 @@ const shiftPathPoint = (p: MaskPathPoint, dx: number, dy: number): MaskPathPoint
 export function translateShapeGeometry<G extends ShapeGeometry>(geometry: G, dx: number, dy: number): G {
   const g = geometry as ShapeGeometry
   switch (g.kind) {
-    case 'rect': case 'ellipse': case 'highlight': return { ...g, rect: { ...g.rect, x: g.rect.x + dx, y: g.rect.y + dy } } as G
+    case 'rect': case 'bubble': case 'ellipse': case 'highlight': return { ...g, rect: { ...g.rect, x: g.rect.x + dx, y: g.rect.y + dy } } as G
     case 'line': return { ...g, from: shiftPoint(g.from, dx, dy), to: shiftPoint(g.to, dx, dy), ...(g.control ? { control: shiftPoint(g.control, dx, dy) } : {}) } as G
     case 'path': return { ...g, points: g.points.map((p) => shiftPathPoint(p, dx, dy)) } as G
   }
@@ -148,10 +206,11 @@ export function scaleShapeGeometry<G extends ShapeGeometry>(geometry: G, factor:
     return { x: origin.x, y: origin.y, width: r.width * factor, height: r.height * factor }
   }
   switch (g.kind) {
-    case 'rect': {
+    case 'rect': case 'bubble': {
       const { cornerRadii } = g
       return { ...g, rect: scaleRect(g.rect), cornerRadius: g.cornerRadius * factor,
-        ...(cornerRadii ? { cornerRadii: { tl: cornerRadii.tl * factor, tr: cornerRadii.tr * factor, br: cornerRadii.br * factor, bl: cornerRadii.bl * factor } } : {}) } as G
+        ...(cornerRadii ? { cornerRadii: { tl: cornerRadii.tl * factor, tr: cornerRadii.tr * factor, br: cornerRadii.br * factor, bl: cornerRadii.bl * factor } } : {}),
+        ...(g.kind === 'bubble' ? { tail: { ...g.tail, width: g.tail.width * factor, length: g.tail.length * factor } } : {}) } as G
     }
     case 'ellipse': case 'highlight': return { ...g, rect: scaleRect(g.rect) } as G
     case 'line': return { ...g, from: at(g.from), to: at(g.to), ...(g.control ? { control: at(g.control) } : {}) } as G

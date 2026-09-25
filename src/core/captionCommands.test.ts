@@ -23,7 +23,7 @@ const timedWords = (text: string, idPrefix = 'w'): CaptionWord[] => captionToken
 }))
 
 const project = (...cues: Cue[]): CaptionProject => ({
-  schemaVersion: 22,
+  schemaVersion: 23,
   tracks: [],
   clips: [],
   assets: [],

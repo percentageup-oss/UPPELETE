@@ -151,6 +151,7 @@ export function applyGroupCommand(project: CaptionProject, command: GroupCommand
           ...shape,
           geometry: scaleShapeGeometry(shape.geometry, factor, anchor),
           stroke: shape.stroke ? { ...shape.stroke, width: clamp(shape.stroke.width * factor, 0, 80) } : null,
+          ...(shape.fitPadding ? { fitPadding: [clamp(shape.fitPadding[0] * factor, 0, 2000), clamp(shape.fitPadding[1] * factor, 0, 2000)] as [number, number] } : {}),
         })),
         textOverlays: mapTexts((text) => {
           const { appearance } = text.style
@@ -180,7 +181,8 @@ export function applyGroupCommand(project: CaptionProject, command: GroupCommand
   const offset = Math.min(250_000, Math.max(0, durationUs - latest))
   const newGroupId = command.idMap[group.id]
   const shapeCopies = members.flatMap((member): Shape[] => member.kind === 'shape'
-    ? [{ ...member.item, id: command.idMap[member.item.id], groupId: newGroupId, startUs: member.item.startUs + offset, endUs: member.item.endUs + offset }] : [])
+    ? [{ ...member.item, id: command.idMap[member.item.id], groupId: newGroupId, startUs: member.item.startUs + offset, endUs: member.item.endUs + offset,
+      ...(member.item.fitTo ? { fitTo: command.idMap[member.item.fitTo] ?? member.item.fitTo } : {}) }] : [])
   const textCopies = members.flatMap((member): TextOverlay[] => member.kind === 'text'
     ? [{ ...member.item, id: command.idMap[member.item.id], groupId: newGroupId, startUs: member.item.startUs + offset, endUs: member.item.endUs + offset }] : [])
   const allShapes = [...project.shapes, ...shapeCopies]

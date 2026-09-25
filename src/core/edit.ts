@@ -377,9 +377,25 @@ export const shapeGeometrySchemaV19 = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), rotation: shapeRotation }),
   ...shapeGeometryVariants,
 ])
-/** `cornerRadii`, when present, wins over `cornerRadius`, which then holds the rounded mean. */
+const cornerRadiiField = cornerRadiiSchema.optional().describe('Per-corner radii (top-left, top-right, bottom-right, bottom-left); wins over cornerRadius. Equal radii are stored as cornerRadius instead.')
+/** Geometry as schemas 20 to 22 stored it: no `bubble`. `cornerRadii`, when present, wins over `cornerRadius`, which then holds the rounded mean. */
+export const shapeGeometrySchemaV22 = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), cornerRadii: cornerRadiiField, rotation: shapeRotation }),
+  ...shapeGeometryVariants,
+])
+/** A speech-bubble tail (schema 23): a triangle, optionally curved, on one side of the box. */
+export const bubbleTailSchema = z.strictObject({
+  side: z.enum(['left', 'right', 'top', 'bottom']),
+  offset: z.number().finite().min(0).max(1).describe('Where the tail sits along its side, 0 = start (left/top), 1 = end (right/bottom)'),
+  width: z.number().finite().min(0).max(2000).describe('Width of the tail where it joins the box'),
+  length: z.number().finite().min(0).max(2000).describe('How far the tip reaches outside the box'),
+  curve: z.number().finite().min(0).max(1).describe('0 = straight edges, 1 = fully concave sweep'),
+})
+export type BubbleTail = z.infer<typeof bubbleTailSchema>
+/** Schema 23 adds `bubble`: a rounded box merged with a tail into one closed outline. */
 export const shapeGeometrySchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), cornerRadii: cornerRadiiSchema.optional().describe('Per-corner radii (top-left, top-right, bottom-right, bottom-left); wins over cornerRadius. Equal radii are stored as cornerRadius instead.'), rotation: shapeRotation }),
+  z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), cornerRadii: cornerRadiiField, rotation: shapeRotation }),
+  z.strictObject({ kind: z.literal('bubble'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), cornerRadii: cornerRadiiField, tail: bubbleTailSchema, rotation: shapeRotation }),
   ...shapeGeometryVariants,
 ])
 export const shapeStrokeSchema = z.strictObject({
@@ -424,7 +440,7 @@ export const shapeSchemaV19 = z.strictObject({
 /** Shape as schema 20 stored it: `cornerRadii`, but no `glass`. */
 export const shapeSchemaV20 = z.strictObject({
   ...shapeFieldsBase,
-  geometry: shapeGeometrySchema,
+  geometry: shapeGeometrySchemaV22,
   /** Absent = `normal`; `normal` is never stored. */
   blendMode: z.enum(BLEND_MODES).optional(),
 }).refine(shapeEndAfterStart, 'Shape end must follow its start')
@@ -453,11 +469,24 @@ export const isClosedShapeGeometry = (geometry: { kind: string; closed?: boolean
 /** Shape as schema 21 stored it: `glass`, but no `groupId`. */
 export const shapeSchemaV21 = z.strictObject({
   ...shapeFieldsBase,
-  geometry: shapeGeometrySchema,
+  geometry: shapeGeometrySchemaV22,
   /** Absent = `normal`; `normal` is never stored. */
   blendMode: z.enum(BLEND_MODES).optional(),
   /** Absent = not glass. */
   glass: glassSchema.optional(),
+}).refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+  .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight or closed path)')
+/** Shape as schema 22 stored it: `groupId`, but no `bubble` geometry and no `fitTo`. */
+export const shapeSchemaV22 = z.strictObject({
+  ...shapeFieldsBase,
+  geometry: shapeGeometrySchemaV22,
+  /** Absent = `normal`; `normal` is never stored. */
+  blendMode: z.enum(BLEND_MODES).optional(),
+  /** Absent = not glass. */
+  glass: glassSchema.optional(),
+  /** Schema 22: the group this shape belongs to; absent = ungrouped. */
+  groupId: itemId.optional(),
 }).refine(shapeEndAfterStart, 'Shape end must follow its start')
   .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
   .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight or closed path)')
@@ -470,9 +499,13 @@ export const shapeSchema = z.strictObject({
   glass: glassSchema.optional(),
   /** Schema 22: the group this shape belongs to; absent = ungrouped. */
   groupId: itemId.optional(),
+  /** Schema 23: the text overlay this shape is sized to; the UI refits the box when that text changes. Absent = not fitted. */
+  fitTo: itemId.optional(),
+  /** Schema 23: padding around the fitted text in composition units, `[horizontal, vertical]`. Only meaningful with `fitTo`. */
+  fitPadding: z.tuple([z.number().finite().min(0).max(2000), z.number().finite().min(0).max(2000)]).optional(),
 }).refine(shapeEndAfterStart, 'Shape end must follow its start')
   .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
-  .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight or closed path)')
+  .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight, bubble or closed path)')
 export type Shape = z.infer<typeof shapeSchema>
 export type ShapeGeometry = z.infer<typeof shapeGeometrySchema>
 export type ShapeAnimation = z.infer<typeof shapeAnimationSchema>
