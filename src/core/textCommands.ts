@@ -1,6 +1,7 @@
 import type { TextOverlay } from './edit'
 import type { CaptionProject } from './model'
 import { sequenceDurationUs } from './timelineModel'
+import { pruneGroups } from './groupCommands'
 import { failItem, replaceById, type ItemFailure, type ItemStep } from './itemStep'
 import { DEFAULT_CAPTION_STYLE, type CaptionStyle } from '../captions/style'
 
@@ -44,11 +45,12 @@ export function applyTextCommand(project: CaptionProject, command: TextCommand):
   }
   const current = project.textOverlays.find((item) => item.id === command.textId)
   if (!current) return failItem('asset-missing', [command.textId], 'That text item no longer exists.')
-  if (command.type === 'text-delete') return { project: { ...project, textOverlays: project.textOverlays.filter((item) => item.id !== current.id) }, selection: null }
+  if (command.type === 'text-delete') return { project: pruneGroups({ ...project, textOverlays: project.textOverlays.filter((item) => item.id !== current.id) }), selection: null }
   if (command.type === 'text-duplicate') {
     if (project.textOverlays.some((item) => item.id === command.duplicateId)) return failItem('asset-missing', [command.duplicateId], 'That text ID is already in use.')
     const length = current.endUs - current.startUs
-    const duplicate = clampToDuration({ ...current, id: command.duplicateId, startUs: current.startUs + Math.min(250_000, Math.max(0, durationUs - current.endUs)) }, durationUs)
+    const { groupId: _groupId, ...ungrouped } = current
+    const duplicate = clampToDuration({ ...ungrouped, id: command.duplicateId, startUs: current.startUs + Math.min(250_000, Math.max(0, durationUs - current.endUs)) }, durationUs)
     if (!duplicate || duplicate.id === current.id || duplicate.startUs === current.startUs && length === durationUs) return failItem('invalid-duration', [current.id], 'There is no room to duplicate this text item.')
     return { project: { ...project, textOverlays: ordered([...project.textOverlays, duplicate]) }, selection: { kind: 'text', id: duplicate.id } }
   }

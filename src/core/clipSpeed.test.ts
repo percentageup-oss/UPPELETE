@@ -24,8 +24,8 @@ const video = (id: string, start: number, s0: number, s1: number, speed?: ClipSp
 const cue = (extra: Partial<Cue> = {}): Cue =>
   ({ id: 'cue', mediaAssetId: 'x', startUs: 2 * US, endUs: 4 * US, text: 'hi', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 const project = (clips: Clip[], tracks: Track[] = [track('V1', 'video')]): CaptionProject => ({
-  schemaVersion: 16, id: 'p', title: 'P', cues: [cue()], assets: [asset('x', 'video')], tracks, clips, captionTracks: [],
-  blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } }, ...dates,
+  schemaVersion: 22, id: 'p', title: 'P', cues: [cue()], assets: [asset('x', 'video')], tracks, clips, captionTracks: [],
+  blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } }, ...dates,
 })
 const context = { compositionHeight: 607.5 }
 const run = (base: CaptionProject, command: ItemCommand) => {
@@ -39,7 +39,7 @@ describe('schema 14', () => {
     const v13 = { ...project([video('a', 0, 0, 10 * US)]), schemaVersion: 13 }
     const loaded = loadProject(v13)
     expect(loaded.migratedFrom).toBe(13)
-    expect(loaded.project).toEqual({ ...v13, schemaVersion: 16 })
+    expect(loaded.project).toEqual({ ...v13, schemaVersion: 21 })
   })
 
   it('validates speed points: strictly increasing source order and bounded rates', () => {

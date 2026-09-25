@@ -1,4 +1,5 @@
 import { assetIdOf, compositionRectSchema } from './edit'
+import { groupMembers } from './groupCommands'
 import { projectMediaSchema } from './media'
 import { z } from 'zod'
 import type { CaptionProject, Cue } from './model'
@@ -59,7 +60,7 @@ export const agentRequestSchema = z.discriminatedUnion('kind', [
   }),
   z.strictObject({ ...base, kind: z.literal('run-commands'), commands: z.array(editCommandSchema).min(1).max(200) }),
   z.strictObject({ ...base, kind: z.literal('seek'), sequenceUs: z.number().int().nonnegative() }),
-  z.strictObject({ ...base, kind: z.literal('select'), selection: z.strictObject({ kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'marker']), id: z.string().min(1) }).nullable() }),
+  z.strictObject({ ...base, kind: z.literal('select'), selection: z.strictObject({ kind: z.enum(['cue', 'clip', 'blur', 'effect', 'text', 'shape', 'marker']), id: z.string().min(1) }).nullable() }),
   z.strictObject({ ...base, kind: z.literal('undo') }),
   z.strictObject({ ...base, kind: z.literal('redo') }),
   z.strictObject({ ...base, kind: z.literal('prepare-snapshot'), sequenceUs: z.number().int().nonnegative() }),
@@ -153,7 +154,11 @@ export type ProjectSummary = {
   zoomRegions: { id: string; startUs: number; endUs: number; rect: unknown; fromRect?: unknown; enabled: boolean }[]
   markers: { id: string; atUs: number; text: string }[]
   effects: { id: string; kind: string; startUs: number; endUs: number; enabled: boolean }[]
-  textOverlays: { id: string; text: string; startUs: number; endUs: number; layerOrder: number; titleMotion?: unknown }[]
+  textOverlays: { id: string; text: string; startUs: number; endUs: number; layerOrder: number; titleMotion?: unknown; /** Schema 22: the group it belongs to. */ groupId?: string }[]
+  /** Schema 17 vector graphics; edit them with the `shape-*` commands. */
+  shapes: { id: string; name?: string; kind: string; startUs: number; endUs: number; layerOrder: number; groupId?: string }[]
+  /** Schema 22: shapes and texts sharing a `groupId` move, retime and duplicate together (`group-*` commands). */
+  groups: { id: string; name: string; memberIds: string[] }[]
   captionStyle: CaptionProject['captionStyle']
   cueCount: number
   warnings: ValidationIssue[]
@@ -174,7 +179,9 @@ export function summarizeProject(
     zoomRegions: project.zoomRegions.map((region) => ({ id: region.id, startUs: region.startUs, endUs: region.endUs, rect: region.rect, ...(region.fromRect ? { fromRect: region.fromRect } : {}), enabled: region.enabled })),
     markers: project.markers.map((marker) => ({ id: marker.id, atUs: marker.atUs, text: marker.text })),
     effects: project.effects.map((effect) => ({ id: effect.id, kind: effect.kind, startUs: effect.startUs, endUs: effect.endUs, enabled: effect.enabled })),
-    textOverlays: project.textOverlays.map(({ id, text, startUs, endUs, layerOrder, titleMotion }) => ({ id, text, startUs, endUs, layerOrder, ...(titleMotion ? { titleMotion } : {}) })),
+    textOverlays: project.textOverlays.map(({ id, text, startUs, endUs, layerOrder, titleMotion, groupId }) => ({ id, text, startUs, endUs, layerOrder, ...(titleMotion ? { titleMotion } : {}), ...(groupId ? { groupId } : {}) })),
+    shapes: project.shapes.map(({ id, name, geometry, startUs, endUs, layerOrder, groupId }) => ({ id, ...(name ? { name } : {}), kind: geometry.kind, startUs, endUs, layerOrder, ...(groupId ? { groupId } : {}) })),
+    groups: (project.groups ?? []).map(({ id, name }) => ({ id, name, memberIds: groupMembers(project, id).map((member) => member.item.id) })),
     captionStyle: project.captionStyle, cueCount: project.cues.length, warnings,
   }
 }

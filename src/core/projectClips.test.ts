@@ -11,9 +11,9 @@ const asset = (id: string, kind: ProjectAsset['kind'], durationUs: number | null
 const video = (id: string, assetId: string, timelineStartUs: number, sourceStartUs = 0, sourceEndUs = 10 * US): Clip =>
   ({ kind: 'video', id, trackId: 'V1', assetId, timelineStartUs, sourceStartUs, sourceEndUs, opacity: 1, fit: 'contain', gain: 1 })
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 16, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video'), asset('img', 'image')],
+  schemaVersion: 22, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video'), asset('img', 'image')],
   tracks: [{ id: 'V1', kind: 'video', name: '', muted: false, hidden: false, locked: false }], clips: [],
-  captionTracks: [{ id: 'C1', name: '', locked: false }], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
+  captionTracks: [{ id: 'C1', name: '', locked: false }], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [],
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
 })
 // Bound to `C1` by default so tests about `mediaAssetId` binding don't also see a caption-track stamp.

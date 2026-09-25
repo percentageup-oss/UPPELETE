@@ -15,7 +15,7 @@ const clip = (id: string, extra: Partial<ManifestClip> = {}): ManifestClip =>
 const manifest = (clips: ManifestClip[], sequenceDurationUs: number): ExportManifestV3 => ({
   version: 3, cues: [], style: DEFAULT_CAPTION_STYLE, display: 'line', format, sequenceDurationUs,
   inputs: clips.map((_, index) => ({ path: `/in${index}.mp4`, kind: 'video' as const })), clips,
-  overlays: [], blurRegions: [], effects: [], pictureEffects: [], textOverlays: [], captionMasks: {}, zoomRegions: [], luts: [],
+  overlays: [], blurRegions: [], effects: [], pictureEffects: [], textOverlays: [], shapes: [], captionMasks: {}, captionOpacities: {}, zoomRegions: [], luts: [],
 })
 
 /** Evaluates the FFmpeg `setpts` expression the way FFmpeg would, for a given zero-based source offset. */
@@ -98,8 +98,8 @@ describe('speed in the export plan', () => {
   const video = (id: string, start: number, s0: number, s1: number, speed?: ClipSpeed): Clip =>
     ({ kind: 'video', id, trackId: 'V1', assetId: 'x', timelineStartUs: start, sourceStartUs: s0, sourceEndUs: s1, opacity: 1, fit: 'contain', gain: 1, ...(speed ? { speed } : {}) })
   const project = (clips: Clip[]): CaptionProject => ({
-    schemaVersion: 16, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video')], tracks: [track('V1', 'video'), track('A1', 'audio')], clips, captionTracks: [],
-    blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
+    schemaVersion: 22, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video')], tracks: [track('V1', 'video'), track('A1', 'audio')], clips, captionTracks: [],
+    blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   })
   const resolver: ExportResolver = { assetUrl: (a) => `media://local${a.reference.absolutePath}`, assetPath: (a) => a.reference.absolutePath!, lutCube: () => { throw new Error('no lut in this test') } }

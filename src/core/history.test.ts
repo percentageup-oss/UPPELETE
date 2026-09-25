@@ -4,11 +4,11 @@ import { commitHistory, createHistory, redoHistory, undoHistory } from './histor
 import type { CaptionProject } from './model'
 
 const original: CaptionProject = {
-  schemaVersion: 16,
+  schemaVersion: 22,
   tracks: [],
   clips: [],
   assets: [],
-  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [],
+  captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [],
   id: 'project',
   title: 'Test',
   cues: [{ id: 'a', startUs: 0, endUs: 1_000_000, text: 'before', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [] }],

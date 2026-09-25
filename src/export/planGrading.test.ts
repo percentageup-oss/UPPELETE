@@ -27,9 +27,9 @@ const adjustment = (id: string, trackId: string, timelineStartUs: number, endUs:
 const lutAsset = (id: string): ProjectAsset =>
   ({ id, kind: 'lut', name: `${id}.cube`, reference: { relativePath: null, absolutePath: `/luts/${id}.cube` }, fingerprint: null, metadata: null })
 const project = (clips: Clip[], tracks: Track[] = [track('V1'), track('V2'), track('A1', 'audio')], assets: ProjectAsset[] = []): CaptionProject => ({
-  schemaVersion: 16, id: 'p', title: 'P', cues: [],
+  schemaVersion: 22, id: 'p', title: 'P', cues: [],
   assets: [{ id: 'x', kind: 'video', name: 'x.mp4', reference: { relativePath: null, absolutePath: '/m/x.mp4' }, fingerprint: null, metadata: meta(10 * US) }, ...assets],
-  tracks, clips, captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format,
+  tracks, clips, captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format,
   createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
 })
 const resolver = (luts: Record<string, Cube3D> = {}): ExportResolver => ({

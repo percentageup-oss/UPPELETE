@@ -12,7 +12,10 @@ import { applyClipCommand, type ClipCommand } from './clipCommands'
 import { applyZoomRegionCommand, type ZoomRegionCommand } from './zoomRegionCommands'
 import { applyEffectCommand, type EffectCommand } from './effectCommands'
 import { applyTextCommand, type TextCommand } from './textCommands'
+import { applyShapeCommand, type ShapeCommand } from './shapeCommands'
+import { applyGroupCommand, type GroupCommand } from './groupCommands'
 import { applyMaskCommand, type MaskCommand } from './maskCommands'
+import { applyLayerLookCommand, type LayerLookCommand } from './layerLookCommands'
 
 /**
  * The second command union, beside `CaptionCommand`. It shares `CommandResult`/`ValidationIssue`
@@ -22,8 +25,8 @@ import { applyMaskCommand, type MaskCommand } from './maskCommands'
  * `zoomRegionCommands.ts`; this module owns the union, the shared validation and the one epilogue
  * every item command runs through.
  */
-export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand | MaskCommand
-export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, MaskCommand, ClipEdge, EditMode }
+export type ItemCommand = AssetCommand | TrackCommand | CaptionTrackCommand | ClipCommand | ZoomRegionCommand | EffectCommand | TextCommand | ShapeCommand | GroupCommand | MaskCommand | LayerLookCommand
+export type { AssetCommand, TrackCommand, CaptionTrackCommand, ClipCommand, ZoomRegionCommand, EffectCommand, TextCommand, ShapeCommand, GroupCommand, MaskCommand, LayerLookCommand, ClipEdge, EditMode }
 export type { BlurRegion, Clip, ClipKind, ProjectAsset, SequenceFormat, TimeRange, Track }
 
 export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<ItemCommand['type']>([
@@ -35,7 +38,9 @@ export const ITEM_COMMAND_TYPES: ReadonlySet<ItemCommand['type']> = new Set<Item
   'zoom-region-add', 'zoom-region-move', 'zoom-region-trim', 'zoom-region-update', 'zoom-region-delete',
   'effect-add', 'effect-move', 'effect-trim', 'effect-update', 'effect-delete',
   'text-add', 'text-update', 'text-move', 'text-trim', 'text-duplicate', 'text-delete', 'text-reorder',
-  'mask-set',
+  'shape-add', 'shape-update', 'shape-move', 'shape-trim', 'shape-duplicate', 'shape-delete', 'shape-reorder',
+  'group-create', 'group-ungroup', 'group-rename', 'group-move', 'group-translate', 'group-scale', 'group-duplicate', 'group-delete',
+  'mask-set', 'layer-look-set',
   'marker-add', 'marker-update', 'marker-delete',
 ])
 
@@ -105,6 +110,11 @@ export function validateItems(project: CaptionProject, context: CommandContext =
       }
     }
   }
+  for (const shape of project.shapes) {
+    if (!Number.isSafeInteger(shape.startUs) || !Number.isSafeInteger(shape.endUs) || shape.startUs < 0 || shape.endUs <= shape.startUs) {
+      errors.push(issue('invalid-duration', [shape.id], 'A shape must end after its non-negative start.'))
+    }
+  }
   for (const effect of project.effects) {
     if (!Number.isSafeInteger(effect.startUs) || !Number.isSafeInteger(effect.endUs) || effect.startUs < 0 || effect.endUs <= effect.startUs) {
       errors.push(issue('invalid-duration', [effect.id], 'An effect must end after its non-negative start.'))
@@ -114,8 +124,11 @@ export function validateItems(project: CaptionProject, context: CommandContext =
 }
 
 export function applyItemCommand(project: CaptionProject, command: ItemCommand, context: CommandContext = {}): CommandResult {
-  const step = command.type.startsWith('mask-') ? applyMaskCommand(project, command as MaskCommand)
+  const step = command.type === 'layer-look-set' ? applyLayerLookCommand(project, command as LayerLookCommand)
+    : command.type.startsWith('group-') ? applyGroupCommand(project, command as GroupCommand, context.compositionHeight)
+    : command.type.startsWith('mask-') ? applyMaskCommand(project, command as MaskCommand)
     : command.type.startsWith('text-') ? applyTextCommand(project, command as TextCommand)
+    : command.type.startsWith('shape-') ? applyShapeCommand(project, command as ShapeCommand)
     : command.type.startsWith('asset-') ? applyAssetCommand(project, command as AssetCommand, context)
     : command.type.startsWith('caption-track-') ? applyCaptionTrackCommand(project, command as CaptionTrackCommand)
     : command.type.startsWith('track-') ? applyTrackCommand(project, command as TrackCommand)

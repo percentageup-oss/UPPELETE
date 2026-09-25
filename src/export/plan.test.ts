@@ -13,8 +13,11 @@ import { activeWordIndex, wordDisplayCue } from '../captions/wordDisplay'
 import type { CaptionProject, CaptionWord, Cue } from '../core/model'
 import type { Clip, Track } from '../core/edit'
 import { defaultTextOverlay } from '../core/textCommands'
+import { defaultShape } from '../core/shapeCommands'
+import { frameRequestSchema } from './frameRequest'
 import { CAPTION_TEMPLATES, titleTemplateChanges } from '../captions/templates'
 import { textMotionAt } from '../captions/textMotion'
+import { graphicsPasses } from '../core/graphicsPasses'
 
 const fixture = (name: string) => readFile(path.join(__dirname, '../../tests/fixtures', name), 'utf8')
 
@@ -215,8 +218,8 @@ describe('buildExportManifest', () => {
     ({ kind: 'audio', id, trackId, assetId: 'snd', timelineStartUs, sourceStartUs, sourceEndUs, gain: 0.8 })
   const cue = (id: string, mediaAssetId: string): Cue => ({ id, mediaAssetId, startUs: 0, endUs: US, text: id, timingSource: 'manual', needsReview: false, textSource: 'user', words: [] })
   const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-    schemaVersion: 16, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
-    tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format,
+    schemaVersion: 22, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video'), asset('y', 'video', 6 * US), asset('img', 'image'), asset('snd', 'audio', 5 * US)],
+    tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')], clips: [video('c1', 0, 0, 10 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format,
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z', ...extra,
   })
   const resolver: ExportResolver = { assetUrl: (a) => `media://local${a.reference.absolutePath}`, assetPath: (a) => a.reference.absolutePath!, lutCube: () => { throw new Error('no lut in this test') } }
@@ -357,6 +360,27 @@ describe('buildExportManifest', () => {
     }
   })
 
+  it('forces shapes onto v3 and puts only active shapes, interleaved with text by layer order, in the frame request', () => {
+    const shapes = [{ ...defaultShape('box', 'front', 0, 3 * US), layerOrder: 3 }, { ...defaultShape('highlight', 'under', 0, 3 * US) }, defaultShape('arrow', 'later', 5 * US, 7 * US)]
+    const built = buildExportManifest(project({ shapes }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version !== 3) return
+    expect(exportManifestSchema.safeParse(built.manifest).success).toBe(true)
+    expect(built.manifest.shapes.map((item) => item.id)).toEqual(['front', 'under', 'later'])
+    const { request } = frameRequestAtSequence(built.manifest, 30)
+    expect(request.version).toBe(4)
+    if (request.version === 4) {
+      expect(request.shapeActors?.map((actor) => actor.shape.id)).toEqual(['front', 'under'])
+      expect(frameRequestSchema.safeParse(request).success).toBe(true)
+    }
+  })
+
+  it('clips shapes to the sequence length', () => {
+    const built = buildExportManifest(project({ shapes: [defaultShape('box', 'long', 8 * US, 30 * US), defaultShape('box', 'gone', 12 * US, 13 * US)] }), resolver)
+    if (built.manifest.version !== 3) throw new Error('expected v3')
+    expect(built.manifest.shapes.map((item) => [item.id, item.endUs])).toEqual([['long', 10 * US]])
+  })
+
   it('carries all five keynote title treatments into portrait and landscape export frames at matching times', () => {
     for (const template of CAPTION_TEMPLATES.filter((entry) => entry.id.startsWith('keynote-')))
       for (const [width, height] of [[1080, 1920], [1920, 1080]]) {
@@ -479,6 +503,44 @@ describe('buildExportManifest', () => {
     expect(under.inputs.map((input) => input.kind)).toEqual(['video', 'image', 'video'])
   })
 
+  it('carries a non-normal blend mode to the manifest, forces v3 and sends a blending image through FFmpeg', () => {
+    const tracks = [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')]
+    expect(flatSequence(project({ clips: [{ ...video('c1', 0, 0, 10 * US), blendMode: 'multiply' } as Clip] }))).toBeNull()
+    const normal = buildExportManifest(project({ clips: [video('c1', 0, 0, 10 * US), { ...video('pip', 0, 0, 2 * US, { trackId: 'V2', assetId: 'y', rect } as Partial<Clip>), blendMode: 'normal' } as Clip] }), resolver).manifest as ExportManifestV3
+    expect(normal.clips.some((clip) => 'blendMode' in clip)).toBe(false)
+    const blended = buildExportManifest(project({ tracks, clips: [video('c1', 0, 0, 10 * US), { ...video('pip', 0, 0, 2 * US, { trackId: 'V2', assetId: 'y', rect } as Partial<Clip>), blendMode: 'multiply' } as Clip] }), resolver).manifest as ExportManifestV3
+    expect(blended.clips.map((clip) => [clip.id, clip.blendMode])).toEqual([['c1', undefined], ['pip', 'multiply']])
+    // An image above every video is host-painted, which cannot blend: a blending one is composited by FFmpeg instead.
+    const screen = buildExportManifest(project({ tracks: [...tracks, track('V3', 'video')], clips: [video('c1', 0, 0, 10 * US), { ...image('i', 'V3', 0, US), blendMode: 'screen' } as Clip] }), resolver).manifest as ExportManifestV3
+    expect(screen.overlays).toEqual([])
+    expect(screen.clips.find((clip) => clip.id === 'i')).toMatchObject({ kind: 'image', blendMode: 'screen' })
+  })
+
+  it('splits a blending shape into its own export pass rather than refusing (docs/plans/shape-blend/02)', () => {
+    const blending = { ...defaultShape('box', 's1', 0, 3 * US), layerOrder: 1, blendMode: 'multiply' as const }
+    const built = buildExportManifest(project({ shapes: [blending] }), resolver)
+    expect(built.manifest.version).toBe(3)
+    if (built.manifest.version !== 3) return
+    expect(built.manifest.shapes.map((item) => [item.id, item.blendMode])).toEqual([['s1', 'multiply']])
+    const passes = graphicsPasses(built.manifest.shapes)
+    expect(passes.count).toBe(3)
+    // Band 0: pinned content and the caption plane (the blend shape sorts above `layerOrder: 0`).
+    const band0 = frameRequestAtSequence(built.manifest, 30, undefined, 0).request
+    expect(band0.hideCaption).toBeUndefined()
+    // Band 1: exactly the blend shape, caption hidden.
+    const band1 = frameRequestAtSequence(built.manifest, 30, undefined, 1).request
+    expect(band1.version).toBe(4)
+    if (band1.version === 4) {
+      expect(band1.shapeActors?.map((actor) => actor.shape.id)).toEqual(['s1'])
+      expect(band1.textActors).toEqual([])
+    }
+    expect(band1.hideCaption).toBe(true)
+    expect(frameRequestSchema.safeParse(band1).success).toBe(true)
+    // Band 1 outside the shape's own time range carries no shape actor at all.
+    const band1Later = frameRequestAtSequence(built.manifest, 400, undefined, 1).request
+    expect(band1Later.version === 4 ? band1Later.shapeActors ?? [] : []).toEqual([])
+  })
+
   it('refuses before the job starts when a file is not registered, naming it', () => {
     const strict: ExportResolver = { ...resolver, assetPath: (a) => { if (a.id === 'snd') throw new Error(`"${a.name}" is missing`); return a.reference.absolutePath! } }
     expect(() => buildExportManifest(project({ clips: [video('c1', 0, 0, 10 * US), audio('s', 0, 0, US)] }), strict)).toThrow('"snd.bin" is missing')
@@ -511,6 +573,20 @@ describe('buildExportManifest', () => {
     expect(request.captionMask).toEqual(mask)
     if (request.version !== 1 && request.version !== 5) expect(request.overlays[0].mask).toEqual(mask)
     expect(exportManifestSchema.parse(JSON.parse(JSON.stringify(built.manifest)))).toEqual(built.manifest)
+  })
+
+  it('carries caption track opacity only when below 1, and routes it through v3', () => {
+    const track = { id: 'ct', name: '', locked: false }
+    const cues = [{ ...cue('k', 'x'), captionTrackId: 'ct' }]
+    expect(flatSequence(project({ captionTracks: [{ ...track, opacity: 0.5 }] }))).toBeNull()
+    expect(flatSequence(project({ captionTracks: [{ ...track, opacity: 1 }] }))).not.toBeNull()
+    const dim = buildExportManifest(project({ clips: [video('c1', 0, 0, 10 * US)], cues, captionTracks: [{ ...track, opacity: 0.5 }] }), resolver)
+    expect(dim.manifest.version).toBe(3)
+    if (dim.manifest.version !== 3) return
+    expect(dim.manifest.captionOpacities).toEqual({ ct: 0.5 })
+    expect(frameRequestAtSequence(dim.manifest, 3).request.captionOpacity).toBe(0.5)
+    const plain = buildExportManifest(project({ clips: [video('c1', 0, 0, 10 * US)], cues, captionTracks: [{ ...track, opacity: 1 }] }), resolver)
+    expect(plain.manifest.version).toBe(2) // nothing dimmed: the flat v2 path, unchanged
   })
 
   it('round-trips v3 through the wire schema, so what main writes is what the worker accepts', () => {

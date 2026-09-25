@@ -123,6 +123,8 @@ export const captionTrackSchema = z.strictObject({
   locked: z.boolean().default(false),
   /** Schema 12: masks the whole caption plane of this track (every cue). */
   mask: layerMaskSchema.optional(),
+  /** Schema 18: fades the whole caption plane of this track. Absent = 1. */
+  opacity: z.number().finite().min(0).max(1).optional(),
 })
 
 /**
@@ -156,10 +158,16 @@ const clipBase = { ...clipTiming, assetId: itemId }
 const sourceEndAfterStart = (clip: { sourceStartUs: number; sourceEndUs: number }) => clip.sourceEndUs > clip.sourceStartUs
 const clipLengthMessage = 'A clip’s source end must follow its start'
 
+/** Schema 18: how a layer composites onto what is beneath it. Absent = `normal`; `normal` is never stored.
+ * Only modes whose FFmpeg result matches the W3C formulas ship (`workers/media/blend.test.ts`); color-dodge, color-burn and soft-light did not. */
+export const BLEND_MODES = ['normal', 'multiply', 'screen', 'overlay', 'darken', 'lighten', 'hard-light', 'difference', 'exclusion'] as const
+export type BlendMode = (typeof BLEND_MODES)[number]
+
 const visualFields = {
   /** Absent fills the frame; present places the clip picture-in-picture, in composition units. */
   rect: compositionRectSchema.optional(),
   opacity: z.number().finite().min(0).max(1).default(1),
+  blendMode: z.enum(BLEND_MODES).optional(),
   fit: fitSchema.default('contain'),
   mask: layerMaskSchema.optional(),
 }
@@ -309,7 +317,7 @@ export const textAnimationSchema = z.strictObject({
 }).superRefine((animation, context) => {
   if (animation.kind === 'slide' && !animation.direction) context.addIssue({ code: 'custom', path: ['direction'], message: 'Slide animation needs a direction.' })
 })
-export const textOverlaySchema = z.strictObject({
+const textOverlayFields = {
   id: itemId,
   text: z.string().trim().min(1).max(16000),
   startUs: sourceUs,
@@ -322,7 +330,153 @@ export const textOverlaySchema = z.strictObject({
   /** Negative values paint below captions; positive values paint above them. */
   layerOrder: z.number().int().min(-10000).max(10000).default(1),
   mask: layerMaskSchema.optional(),
+  /** Schema 18: absent = 1. */
+  opacity: z.number().finite().min(0).max(1).optional(),
+}
+/** Text overlay as schemas 10 to 21 stored it: no `groupId`. */
+export const textOverlaySchemaV21 = z.strictObject(textOverlayFields)
+  .refine((overlay) => overlay.endUs > overlay.startUs, 'Text end must follow its start')
+/** A group (schema 22): a named set of shapes and text overlays that move, retime and duplicate together. */
+export const groupSchema = z.strictObject({ id: itemId, name: z.string().max(200).default('') })
+export type Group = z.infer<typeof groupSchema>
+export const textOverlaySchema = z.strictObject({
+  ...textOverlayFields,
+  /** Schema 22: the group this overlay belongs to; absent = ungrouped. */
+  groupId: itemId.optional(),
 }).refine((overlay) => overlay.endUs > overlay.startUs, 'Text end must follow its start')
+
+/**
+ * Vector graphics (schema 17, docs/EDITING.md "Shapes"): sequence-timed arrows, boxes, circles,
+ * lines and highlighter bars, in composition units. They share `layerOrder` with authored text, so
+ * shapes and titles interleave and either can sit below the captions. Motion is a closed-form
+ * function of sequence time (`src/captions/shapeMotion.ts`), painted by one shared SVG painter for
+ * preview and the export host.
+ */
+const shapeHex = z.string().regex(/^#[\da-fA-F]{6}$/)
+export const shapeAnimationSchema = z.strictObject({
+  kind: z.enum(['none', 'fade', 'pop', 'draw', 'sweep', 'grow', 'slide']),
+  durationUs: z.number().int().nonnegative().max(5_000_000).default(400_000),
+  direction: z.enum(['left', 'right', 'up', 'down']).optional(),
+}).superRefine((animation, context) => {
+  if (animation.kind === 'slide' && !animation.direction) context.addIssue({ code: 'custom', path: ['direction'], message: 'Slide animation needs a direction.' })
+})
+const shapeRotation = z.number().finite().min(-360).max(360).default(0)
+const rectCornerRadius = z.number().finite().min(0).max(20000)
+/** Independent radii for a box's four corners (schema 20). Never stored when all four are equal. */
+export const cornerRadiiSchema = z.strictObject({ tl: rectCornerRadius, tr: rectCornerRadius, br: rectCornerRadius, bl: rectCornerRadius })
+export type CornerRadii = z.infer<typeof cornerRadiiSchema>
+const shapeGeometryVariants = [
+  z.strictObject({ kind: z.literal('ellipse'), rect: maskBox, rotation: shapeRotation }),
+  z.strictObject({ kind: z.literal('highlight'), rect: maskBox, rotation: shapeRotation }),
+  /** `control` bends the line into a quadratic curve. */
+  z.strictObject({ kind: z.literal('line'), from: maskPoint, to: maskPoint, control: maskPoint.optional() }),
+  z.strictObject({ kind: z.literal('path'), points: z.array(maskPathPointSchema).min(2).max(256), closed: z.boolean().default(false) }),
+] as const
+/** Geometry as schemas 17 to 19 stored it: a rect has one `cornerRadius` and no `cornerRadii`. */
+export const shapeGeometrySchemaV19 = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), rotation: shapeRotation }),
+  ...shapeGeometryVariants,
+])
+/** `cornerRadii`, when present, wins over `cornerRadius`, which then holds the rounded mean. */
+export const shapeGeometrySchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('rect'), rect: maskBox, cornerRadius: rectCornerRadius.default(0), cornerRadii: cornerRadiiSchema.optional().describe('Per-corner radii (top-left, top-right, bottom-right, bottom-left); wins over cornerRadius. Equal radii are stored as cornerRadius instead.'), rotation: shapeRotation }),
+  ...shapeGeometryVariants,
+])
+export const shapeStrokeSchema = z.strictObject({
+  color: shapeHex,
+  width: z.number().finite().min(0).max(80),
+  dash: z.enum(['solid', 'dashed', 'dotted']).default('solid'),
+  cap: z.enum(['round', 'butt']).default('round'),
+})
+export const shapeFillSchema = z.strictObject({ color: shapeHex, opacity: z.number().finite().min(0).max(1).default(1) })
+export const arrowheadSchema = z.enum(['none', 'triangle', 'open', 'dot'])
+const shapeFieldsBase = {
+  id: itemId,
+  name: z.string().max(200).optional(),
+  startUs: sourceUs,
+  endUs: positiveUs,
+  stroke: shapeStrokeSchema.nullable(),
+  fill: shapeFillSchema.nullable(),
+  /** Arrowheads apply to `line` and `path` geometries only. */
+  arrowStart: arrowheadSchema.default('none'),
+  arrowEnd: arrowheadSchema.default('none'),
+  opacity: z.number().finite().min(0).max(1).default(1),
+  enter: shapeAnimationSchema,
+  exit: shapeAnimationSchema,
+  /** Shares the text overlays' space: negative paints below the captions, positive above. */
+  layerOrder: z.number().int().min(-10000).max(10000).default(1),
+  mask: layerMaskSchema.optional(),
+}
+const shapeEndAfterStart = (shape: { startUs: number; endUs: number }) => shape.endUs > shape.startUs
+const shapeVisible = (shape: { stroke: unknown; fill: unknown }) => shape.stroke !== null || shape.fill !== null
+/** Shape as schemas 17 and 18 stored it: no `blendMode`, so those files stay strict. */
+export const shapeSchemaV18 = z.strictObject({ ...shapeFieldsBase, geometry: shapeGeometrySchemaV19 })
+  .refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+/** Shape as schema 19 stored it: `blendMode`, but no `cornerRadii`. */
+export const shapeSchemaV19 = z.strictObject({
+  ...shapeFieldsBase,
+  geometry: shapeGeometrySchemaV19,
+  /** Absent = `normal`; `normal` is never stored. */
+  blendMode: z.enum(BLEND_MODES).optional(),
+}).refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+/** Shape as schema 20 stored it: `cornerRadii`, but no `glass`. */
+export const shapeSchemaV20 = z.strictObject({
+  ...shapeFieldsBase,
+  geometry: shapeGeometrySchema,
+  /** Absent = `normal`; `normal` is never stored. */
+  blendMode: z.enum(BLEND_MODES).optional(),
+}).refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+/** Liquid Glass look (schema 21): the picture under the shape is blurred, saturated and refracted at its rim.
+ * Absent = not glass. Lengths are composition units. */
+export const glassShadowSchema = z.strictObject({
+  blur: z.number().finite().min(0).max(60),
+  offsetY: z.number().finite().min(-40).max(40),
+  opacity: z.number().finite().min(0).max(1),
+})
+export const glassSchema = z.strictObject({
+  blur: z.number().finite().min(0).max(60).describe('Backdrop blur sigma'),
+  saturation: z.number().finite().min(0.5).max(3),
+  refraction: z.number().finite().min(0).max(40).describe('Maximum edge shift in pixels'),
+  bezel: z.number().finite().min(2).max(80).describe('Width of the refracting rim band'),
+  tintOpacity: z.number().finite().min(0).max(1).describe('Opacity of the fill colour over the glass'),
+  rim: z.number().finite().min(0).max(1),
+  specular: z.number().finite().min(0).max(1),
+  shadow: glassShadowSchema,
+})
+export type Glass = z.infer<typeof glassSchema>
+/** Glass needs a silhouette with an inside: open lines and open paths have none. */
+export const isClosedShapeGeometry = (geometry: { kind: string; closed?: boolean }) =>
+  geometry.kind !== 'line' && (geometry.kind !== 'path' || geometry.closed === true)
+/** Shape as schema 21 stored it: `glass`, but no `groupId`. */
+export const shapeSchemaV21 = z.strictObject({
+  ...shapeFieldsBase,
+  geometry: shapeGeometrySchema,
+  /** Absent = `normal`; `normal` is never stored. */
+  blendMode: z.enum(BLEND_MODES).optional(),
+  /** Absent = not glass. */
+  glass: glassSchema.optional(),
+}).refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+  .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight or closed path)')
+export const shapeSchema = z.strictObject({
+  ...shapeFieldsBase,
+  geometry: shapeGeometrySchema,
+  /** Absent = `normal`; `normal` is never stored. */
+  blendMode: z.enum(BLEND_MODES).optional(),
+  /** Absent = not glass. */
+  glass: glassSchema.optional(),
+  /** Schema 22: the group this shape belongs to; absent = ungrouped. */
+  groupId: itemId.optional(),
+}).refine(shapeEndAfterStart, 'Shape end must follow its start')
+  .refine(shapeVisible, 'A shape needs a stroke or a fill to be visible')
+  .refine((shape) => !shape.glass || isClosedShapeGeometry(shape.geometry), 'Glass needs a closed shape (box, ellipse, highlight or closed path)')
+export type Shape = z.infer<typeof shapeSchema>
+export type ShapeGeometry = z.infer<typeof shapeGeometrySchema>
+export type ShapeAnimation = z.infer<typeof shapeAnimationSchema>
+export type Arrowhead = z.infer<typeof arrowheadSchema>
 
 /** An effect over the composited program: sequence-timed, with no asset, source or in point.
  * `enabled` (schema 8) bypasses the effect without deleting it: preview and export both skip a

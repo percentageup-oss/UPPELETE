@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { cueSchema } from './model'
-import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema, layerMaskSchema, fillSchema, backgroundMotionSchema, clipSpeedSchema, gradeSchema } from './edit'
+import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema, layerMaskSchema, shapeSchema, glassSchema, fillSchema, backgroundMotionSchema, clipSpeedSchema, gradeSchema, BLEND_MODES } from './edit'
 import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import type { EditCommand } from './commands'
@@ -227,12 +227,39 @@ const textDuplicate = z.strictObject({ type: z.literal('text-duplicate'), textId
 const textDelete = z.strictObject({ type: z.literal('text-delete'), textId: itemId })
 const textReorder = z.strictObject({ type: z.literal('text-reorder'), textId: itemId, direction: z.enum(['forward', 'backward', 'above-captions', 'below-captions']) })
 
+const shapeChanges = z.strictObject({
+  name: shapeSchema.shape.name, geometry: shapeSchema.shape.geometry.optional(),
+  stroke: shapeSchema.shape.stroke.optional(), fill: shapeSchema.shape.fill.optional(),
+  arrowStart: shapeSchema.shape.arrowStart.optional(), arrowEnd: shapeSchema.shape.arrowEnd.optional(),
+  opacity: shapeSchema.shape.opacity.optional(), enter: shapeSchema.shape.enter.optional(), exit: shapeSchema.shape.exit.optional(),
+  layerOrder: shapeSchema.shape.layerOrder.optional(),
+  /** `null` removes the glass look. */
+  glass: glassSchema.nullable().optional(),
+})
+const shapeAdd = z.strictObject({ type: z.literal('shape-add'), shape: shapeSchema })
+const shapeUpdate = z.strictObject({ type: z.literal('shape-update'), shapeId: itemId, changes: shapeChanges })
+const shapeMove = z.strictObject({ type: z.literal('shape-move'), shapeId: itemId, startUs: z.number().int().nonnegative() })
+const shapeTrim = z.strictObject({ type: z.literal('shape-trim'), shapeId: itemId, edge: z.enum(['start', 'end']), deltaUs: z.number().int() })
+const shapeDuplicate = z.strictObject({ type: z.literal('shape-duplicate'), shapeId: itemId, duplicateId: itemId })
+const shapeDelete = z.strictObject({ type: z.literal('shape-delete'), shapeId: itemId })
+const shapeReorder = z.strictObject({ type: z.literal('shape-reorder'), shapeId: itemId, direction: z.enum(['forward', 'backward', 'above-captions', 'below-captions']) })
+
+const groupCreate = z.strictObject({ type: z.literal('group-create'), groupId: itemId, name: z.string().max(200).optional(), itemIds: z.array(itemId).min(2).max(1000) })
+const groupUngroup = z.strictObject({ type: z.literal('group-ungroup'), groupId: itemId })
+const groupRename = z.strictObject({ type: z.literal('group-rename'), groupId: itemId, name: z.string().max(200) })
+const groupMove = z.strictObject({ type: z.literal('group-move'), groupId: itemId, startUs: z.number().int().nonnegative() })
+const groupTranslate = z.strictObject({ type: z.literal('group-translate'), groupId: itemId, dx: z.number().finite().min(-20000).max(20000), dy: z.number().finite().min(-20000).max(20000) })
+const groupScale = z.strictObject({ type: z.literal('group-scale'), groupId: itemId, factor: z.number().finite().min(0.05).max(20), anchor: z.strictObject({ x: z.number().finite().min(-20000).max(20000), y: z.number().finite().min(-20000).max(20000) }) })
+const groupDuplicate = z.strictObject({ type: z.literal('group-duplicate'), groupId: itemId, idMap: z.record(itemId, itemId) })
+const groupDelete = z.strictObject({ type: z.literal('group-delete'), groupId: itemId })
+
 const maskTarget = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('clip'), id: itemId }), z.strictObject({ kind: z.literal('text'), id: itemId }),
+  z.strictObject({ kind: z.literal('clip'), id: itemId }), z.strictObject({ kind: z.literal('text'), id: itemId }), z.strictObject({ kind: z.literal('shape'), id: itemId }),
   z.strictObject({ kind: z.literal('captionTrack'), id: itemId }), z.strictObject({ kind: z.literal('blur'), id: itemId }),
   z.strictObject({ kind: z.literal('effect'), id: itemId }),
 ])
 const maskSet = z.strictObject({ type: z.literal('mask-set'), target: maskTarget, mask: layerMaskSchema.nullable() })
+const layerLookSet = z.strictObject({ type: z.literal('layer-look-set'), target: maskTarget, opacity: z.number().finite().min(0).max(1).optional(), blendMode: z.enum(BLEND_MODES).nullable().optional() })
 
 export const clipCommandSchema = z.discriminatedUnion('type', [
   clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
@@ -249,7 +276,8 @@ export const itemCommandSchema = z.discriminatedUnion('type', [
   clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
-  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder, maskSet,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, maskSet, layerLookSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 
@@ -266,7 +294,8 @@ export const editCommandSchema = z.discriminatedUnion('type', [
   clipAdd, clipMove, clipTrim, clipTrimTo, clipUpdate, clipSplit, clipDelete, clipsLink, clipsUnlink, clipDetachAudio, gapClose, clipsSet, clipsRestore, formatSet,
   blurAdd, blurUpdate, blurDelete, zoomRegionAdd, zoomRegionMove, zoomRegionTrim, zoomRegionUpdate, zoomRegionDelete,
   effectAdd, effectMove, effectTrim, effectUpdate, effectDelete,
-  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder, maskSet,
+  textAdd, textUpdate, textMove, textTrim, textDuplicate, textDelete, textReorder,
+  shapeAdd, shapeUpdate, shapeMove, shapeTrim, shapeDuplicate, shapeDelete, shapeReorder, groupCreate, groupUngroup, groupRename, groupMove, groupTranslate, groupScale, groupDuplicate, groupDelete, maskSet, layerLookSet,
   markerAdd, markerUpdate, markerDelete,
 ])
 

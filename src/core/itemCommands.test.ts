@@ -6,6 +6,8 @@ import { commitHistory, createHistory, undoHistory } from './history'
 import type { CaptionProject, Cue } from './model'
 import type { Clip, ProjectAsset, Track } from './edit'
 import { defaultTextOverlay } from './textCommands'
+import { defaultShape } from './shapeCommands'
+import { MAX_BLENDING_SHAPES } from './graphicsPasses'
 
 const US = 1_000_000
 const dates = { createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z' }
@@ -25,10 +27,10 @@ const cue = (id: string, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 16, id: 'project', title: 'Test', cues: [cue('cue-a')],
+  schemaVersion: 22, id: 'project', title: 'Test', cues: [cue('cue-a')],
   assets: [asset('x', 'video'), asset('y', 'video', 10 * US), asset('img', 'image'), asset('snd', 'audio', 4 * US)],
   tracks: [track('V1', 'video'), track('V2', 'video'), track('A1', 'audio')],
-  clips: [video('c1', 'V1', 0, 0, 20 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
+  clips: [video('c1', 'V1', 0, 0, 20 * US)], captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
   ...dates, ...extra,
 })
 const context = { compositionHeight: 607.5 }
@@ -289,6 +291,53 @@ describe('item commands', () => {
     expect(run(track, { type: 'mask-set', target: { kind: 'captionTrack', id: 'ct' }, mask }).project.captionTracks[0].mask).toEqual(mask)
   })
 
+  it('sets opacity and blend as one command, stripping default values', () => {
+    const text = { id: 't1', text: 'Hi', startUs: 0, endUs: US, style: DEFAULT_CAPTION_STYLE, enter: { kind: 'none' as const, durationUs: 0 }, exit: { kind: 'none' as const, durationUs: 0 }, layerOrder: 1 }
+    const base = run(run(project(), { type: 'text-add', overlay: text }).project, { type: 'caption-track-add', track: { id: 'ct', name: '', locked: false } }).project
+    const clip = run(base, { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, opacity: .6, blendMode: 'multiply' })
+    expect(clip.project.clips[0]).toMatchObject({ opacity: .6, blendMode: 'multiply' })
+    const reset = run(clip.project, { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, opacity: 1, blendMode: 'normal' }).project.clips[0]
+    expect(reset).toMatchObject({ opacity: 1 })
+    expect('blendMode' in reset).toBe(false)
+    expect('blendMode' in run(clip.project, { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, blendMode: null }).project.clips[0]).toBe(false)
+    const faded = run(base, { type: 'layer-look-set', target: { kind: 'text', id: 't1' }, opacity: .25 }).project
+    expect(faded.textOverlays[0].opacity).toBe(.25)
+    expect('opacity' in run(faded, { type: 'layer-look-set', target: { kind: 'text', id: 't1' }, opacity: 1 }).project.textOverlays[0]).toBe(false)
+    expect(run(base, { type: 'layer-look-set', target: { kind: 'captionTrack', id: 'ct' }, opacity: .5 }).project.captionTracks[0].opacity).toBe(.5)
+    const shaped = run(base, { type: 'shape-add', shape: defaultShape('box', 's1', 0, US) }).project
+    expect(run(shaped, { type: 'layer-look-set', target: { kind: 'shape', id: 's1' }, opacity: .4 }).project.shapes[0].opacity).toBe(.4)
+    const blendedShape = run(shaped, { type: 'layer-look-set', target: { kind: 'shape', id: 's1' }, blendMode: 'multiply' }).project
+    expect(blendedShape.shapes[0]).toMatchObject({ blendMode: 'multiply' })
+    expect(undoHistory(commitHistory(createHistory(shaped), blendedShape)).present).toEqual(shaped)
+    const shapeReset = run(blendedShape, { type: 'layer-look-set', target: { kind: 'shape', id: 's1' }, blendMode: 'normal' }).project
+    expect('blendMode' in shapeReset.shapes[0]).toBe(false)
+    expect('blendMode' in run(blendedShape, { type: 'layer-look-set', target: { kind: 'shape', id: 's1' }, blendMode: null }).project.shapes[0]).toBe(false)
+  })
+
+  it('caps blending shapes at MAX_BLENDING_SHAPES, and duplicating past the cap drops the blend', () => {
+    let proj = project()
+    for (let index = 0; index < MAX_BLENDING_SHAPES; index += 1) {
+      proj = run(proj, { type: 'shape-add', shape: defaultShape('box', `s${index}`, 0, US) }).project
+      proj = run(proj, { type: 'layer-look-set', target: { kind: 'shape', id: `s${index}` }, blendMode: 'multiply' }).project
+    }
+    proj = run(proj, { type: 'shape-add', shape: defaultShape('box', 'extra', 0, US) }).project
+    expect(refuse(proj, { type: 'layer-look-set', target: { kind: 'shape', id: 'extra' }, blendMode: 'multiply' })).toContain(`at most ${MAX_BLENDING_SHAPES}`)
+    const duplicated = run(proj, { type: 'shape-duplicate', shapeId: 's0', duplicateId: 's0-copy' }).project
+    expect('blendMode' in duplicated.shapes.find((shape) => shape.id === 's0-copy')!).toBe(false)
+  })
+
+  it('refuses looks on missing layers, effects, blur, audio and blend on non-clips', () => {
+    const text = { id: 't1', text: 'Hi', startUs: 0, endUs: US, style: DEFAULT_CAPTION_STYLE, enter: { kind: 'none' as const, durationUs: 0 }, exit: { kind: 'none' as const, durationUs: 0 }, layerOrder: 1 }
+    const base = run(project(), { type: 'text-add', overlay: text }).project
+    expect(refuse(base, { type: 'layer-look-set', target: { kind: 'text', id: 'nope' }, opacity: .5 })).toContain('no longer exists')
+    expect(refuse(base, { type: 'layer-look-set', target: { kind: 'effect', id: 'e' }, opacity: .5 })).toContain('no opacity')
+    expect(refuse(base, { type: 'layer-look-set', target: { kind: 'blur', id: 'b' }, opacity: .5 })).toContain('no opacity')
+    expect(refuse(base, { type: 'layer-look-set', target: { kind: 'text', id: 't1' }, blendMode: 'screen' })).toContain('blend')
+    expect(refuse(base, { type: 'layer-look-set', target: { kind: 'clip', id: 'c1' }, opacity: 2 })).toContain('between 0 and 1')
+    const withAudio = run(project(), { type: 'clip-add', clip: { kind: 'audio', id: 'a', trackId: 'A1', assetId: 'snd', timelineStartUs: 0, sourceStartUs: 0, sourceEndUs: US, gain: 1 } }).project
+    expect(refuse(withAudio, { type: 'layer-look-set', target: { kind: 'clip', id: 'a' }, opacity: .5 })).toContain('picture')
+  })
+
   it('carries a clip\'s mask along when it is moved, but not when it is resized', () => {
     const mask = { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'ellipse' as const, rect: { x: 100, y: 100, width: 200, height: 100 } } }
     const pip = run(project({ clips: [video('c1', 'V1', 0, 0, 20 * US)] }), { type: 'clip-update', clipId: 'c1', changes: { rect: { x: 0, y: 0, width: 400, height: 225 } } }).project
@@ -335,7 +384,7 @@ describe('item commands', () => {
   })
 
   it('edits authored text independently, permits overlap, clamps boundaries, and preserves selection through undoable steps', () => {
-    const base = project({ textOverlays: [] })
+    const base = project({ textOverlays: [], shapes: [] })
     const first = run(base, { type: 'text-add', overlay: defaultTextOverlay('t1', 2 * US, 5 * US, 'Apple iPhone') })
     expect(first.selection).toEqual({ kind: 'text', id: 't1' })
     const overlapping = run(first.project, { type: 'text-add', overlay: defaultTextOverlay('t2', 3 * US, 6 * US, 'iPhone') })

@@ -48,10 +48,22 @@ Off by default. In **Settings → AI agents**, turn on **Allow agent access**. T
 - A **🤖 Agent** chip appears in the top bar whenever the server is listening, with a live client
   count; clicking it opens the Settings tab.
 
+Each initialized HTTP client gets its own MCP server/transport pair, routed by `Mcp-Session-Id`.
+This allows Claude Code, the bundled stdio bridge and an OpenAI Secure MCP Tunnel to connect
+independently, and means an agent or tunnel that exits without closing its session cannot block the
+next client with `Server already initialized`. Closing the app closes every remaining session.
+
 The DNS-rebinding protection built into the MCP SDK's Streamable HTTP transport is enabled
 (`allowedHosts` locked to `127.0.0.1:<port>`/`localhost:<port>`), and every request is checked for
 the exact Bearer token (constant-time compare) before it ever reaches MCP protocol handling — an
 unauthenticated request gets a 401 and touches nothing else.
+
+Every tool declares the MCP safety annotations ChatGPT uses during connector discovery:
+`readOnlyHint`, `destructiveHint`, `openWorldHint`, and `idempotentHint`. Inspection tools are
+read-only; `edit` is marked potentially destructive because its command union includes deletion and
+overwrite operations; `import_media` is open-world because its URL form can fetch a public HTTPS
+resource. Tools that only change KathaCut editor state or add undoable project content are
+non-destructive but are not labelled read-only.
 
 ## Time bases and units
 
@@ -81,6 +93,8 @@ Composition space is always **1080 units wide** by `1080 / aspect` tall (`COMPOS
 | `import_media` | Brings an image (or audio/video) into the project from exactly one of: `path`, `fromClipboard`, `imageBase64` (≤ 5 MB) or `url` (public https, ≤ 25 MB). Images are identified by content, not extension; the same picture twice reuses one asset. With `placement` an image is also placed at `sequenceUs` in the same undo step. Bytes that did not come from a path are saved content-addressed to `<userData>/agent-media/`. |
 | `place_at_word` | Places an already-imported image at a spoken word or phrase (`text` + optional `occurrence`, or `cueId` + `wordIndex`), in sequence time, as one undo step. Reports `timing: ESTIMATED` when the word's timing is not aligned, and fails when the word is inside a removed range. |
 | `add_title` | One animated title from a built-in treatment (`title-*` templates) at sequence times, one undo step. |
+| `add_shape` | One vector graphic (`box`, `circle`, `arrow`, `dotted-arrow`, `underline`, `highlight`) at sequence times, optionally recoloured, one undo step. Refine it with the `shape-*` commands in `edit`; `list_creative_options` lists the presets (with `useWhen`/`avoidWhen`) and the shape schema. A `box` takes `cornerRadius`, or `cornerRadii {tl,tr,br,bl}` in `shape-update` geometry for four independent corners. A closed shape can be Liquid Glass with `shape-update` `changes.glass` (`null` removes it); the preview and export both show it (a project with glass exports with PNG frame transport). |
+| `edit` group commands | `group-create`, `group-ungroup`, `group-rename`, `group-move`, `group-translate`, `group-scale`, `group-duplicate`, `group-delete` (schema 22, docs/EDITING.md "Groups"). Callers mint every id; `group-duplicate` takes an `idMap` of old id to new id for the group and each member. The project summary lists `groups` (with `memberIds`) and a `groupId` on grouped shapes and texts. |
 | `render_frame` | Up to 6 preview frames (as JPEG images, ≤1024 px) at sequence times: what the user sees, including zooms, titles, effects, grade and captions. Seeks the playhead. Needs the window visible. |
 | `match_color_to_reference` | Derives a LUT from a reference picture (`imagePath`, `fromClipboard`, or small `imageBase64`) against the frame at `sequenceUs` and adds it as one adjustment layer (one undo step). Reuses `src/color/referenceMatch.ts`. The LUT is saved silently to `<userData>/generated-luts/`. |
 | `seek` | Moves the playhead (sequence µs). |
