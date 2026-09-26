@@ -7,7 +7,9 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%C2%B7%20macOS%20Apple%20Silicon-lightgrey)
 ![Status](https://img.shields.io/badge/status-pre--1.0-orange)
-[![Buy Me a Coffee](https://img.shields.io/badge/support-Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/sadiqsulaimn)
+[![Buy Me a Coffee](https://img.shields.io/badge/%E2%98%95%20Buy%20me%20a%20coffee-support%20KathaCut-ffdd00?logoColor=black)](https://buymeacoffee.com/sadiqsulaimn)
+
+<sub>Free and open source · [☕ Support development](#-support-the-project)</sub>
 
 </div>
 
@@ -94,9 +96,18 @@ The dev scripts save tool paths to the git-ignored `caption-studio.local.json`. 
 
 KathaCut is **pre-1.0** and under active development. It is developed on macOS (Apple Silicon) and Windows (x64 with an NVIDIA GPU); Linux is not supported yet. Some recent features have been type-checked but not yet exercised on every platform, and [STATUS.md](docs/STATUS.md) records exactly what has and has not been verified.
 
-## Support the project
+## ☕ Support the project
 
-KathaCut is free, and nothing is paywalled. If it saves you time and you would like to support its development, you can [buy me a coffee](https://buymeacoffee.com/sadiqsulaimn). Starring the repo, sharing it, testing it on your hardware and reporting Malayalam rendering problems help just as much.
+<p align="center">
+  <b>KathaCut is free, open source, and built by one person.</b><br>
+  No ads, no accounts, no paywalled features.<br><br>
+  If it saved you an hour of caption fixing, a coffee helps me keep building it: better Malayalam support, more effects, more platforms.<br><br>
+  <a href="https://buymeacoffee.com/sadiqsulaimn">
+    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=sadiqsulaimn&button_colour=FFDD00&font_colour=000000&font_family=Bree&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="50">
+  </a>
+</p>
+
+Can't chip in? Starring the repo, sharing it with a creator friend, testing it on your hardware and reporting Malayalam rendering problems help just as much. 💜
 
 ## Contributing
 
