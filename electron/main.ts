@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, type OpenDialogOptions } from 'electron'
 import { z } from 'zod'
 import { constants as fsConstants } from 'node:fs'
 import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
@@ -27,6 +27,7 @@ import { registerModelIpc, closeModelManager } from './modelIpc'
 import { readThumbnailCache, writeThumbnailCache } from './thumbnailCache'
 import { PlaybackProxyService } from './playbackProxyService'
 import { registerTranscriptionIpc, runTranscriptionSmoke } from './transcriptionIpc'
+import { registerCaptionTranslationIpc } from './captionTranslationIpc'
 import { modelIdSchema } from '../src/core/modelCatalog'
 import { hasRunningExports, registerExportIpc, runExportSmoke } from './exportIpc'
 import { exportSettingsSchema } from '../src/export/settings'
@@ -78,6 +79,7 @@ function fingerprintKey(fingerprint: NonNullable<ProjectMedia['fingerprint']>) {
 }
 
 registerTranscriptionIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
+registerCaptionTranslationIpc()
 registerExportIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerAlignmentIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerProviderKeysIpc()
@@ -292,6 +294,11 @@ ipcMain.handle('media:thumbnails-load', async (event, value: unknown) => {
       }
     }
     return { thumbnails: results as ThumbnailImage[], extractionVersion: THUMBNAIL_EXTRACTION_VERSION }
+  } catch (error) {
+    // The renderer cancels on unmount/scroll; that is routine, so resolve empty instead of letting
+    // Electron log every cancellation as an unhandled handler error. Callers already ignore cancelled results.
+    if (active.cancelled) return { thumbnails: [], extractionVersion: THUMBNAIL_EXTRACTION_VERSION }
+    throw error
   } finally {
     event.sender.removeListener('destroyed', cancelForDestroyedRenderer)
     activeThumbnailRequests.delete(requestKey)
@@ -383,8 +390,21 @@ ipcMain.handle('media:playback-proxy-ensure', async (event, value: unknown) => {
   getPlaybackProxyService().ensure({ fingerprint: request.fingerprint, inputPath: registered.path, durationUs: request.durationUs }, send)
 })
 
+// Folder of the last file the user picked in any open dialog this session. Electron/Windows otherwise falls back
+// to the Desktop for dialogs opened from another screen (e.g. Home → new project after opening a video elsewhere).
+let lastDialogDir: string | null = null
+
+async function showOpenDialogRemembering(options: OpenDialogOptions) {
+  const result = await dialog.showOpenDialog({ ...(lastDialogDir ? { defaultPath: lastDialogDir } : {}), ...options })
+  if (!result.canceled && result.filePaths[0]) lastDialogDir = path.dirname(result.filePaths[0])
+  return result
+}
+
+/** Save dialogs given a bare file name start in the remembered folder; absolute names are left alone. */
+const withLastDialogDir = (defaultName: string) => (lastDialogDir && !path.isAbsolute(defaultName) ? path.join(lastDialogDir, defaultName) : defaultName)
+
 ipcMain.handle('dialog:open-video', async () => {
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogRemembering({
     properties: ['openFile'],
     filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'mkv', 'webm', 'm4v'] }],
   })
@@ -395,7 +415,7 @@ ipcMain.handle('dialog:open-video', async () => {
 })
 
 ipcMain.handle('dialog:open-text', async () => {
-  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }] })
+  const result = await showOpenDialogRemembering({ properties: ['openFile'], filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }] })
   if (result.canceled || !result.filePaths[0]) return null
   const filePath = result.filePaths[0]
   return { path: filePath, content: await readFile(filePath, 'utf8') }
@@ -418,7 +438,7 @@ async function writeProjectFile(project: CaptionProject, filePath: string) {
 }
 
 ipcMain.handle('project:open', async () => {
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogRemembering({
     properties: ['openFile'],
     filters: [
       { name: PROJECT_FILE_FILTER_NAME, extensions: [PROJECT_FILE_EXTENSION] },
@@ -548,7 +568,7 @@ const assetKindSchema = z.enum(['image', 'audio'])
  * picked, so a video renamed to .png is refused rather than silently accepted as an overlay image. */
 ipcMain.handle('assets:import', async (_event, kindValue: unknown) => {
   const kind = assetKindSchema.parse(kindValue)
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogRemembering({
     properties: ['openFile'],
     filters: [{ name: kind === 'image' ? 'Image' : 'Audio', extensions: kind === 'image' ? IMAGE_EXTENSIONS : AUDIO_EXTENSIONS }],
   })
@@ -571,7 +591,7 @@ const RELINK_FILTERS = {
 
 ipcMain.handle('assets:relink', async (_event, expectedValue: unknown) => {
   const expected = projectAssetSchema.parse(expectedValue)
-  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [RELINK_FILTERS[expected.kind]] })
+  const result = await showOpenDialogRemembering({ properties: ['openFile'], filters: [RELINK_FILTERS[expected.kind]] })
   if (result.canceled || !result.filePaths[0]) return null
   try {
     if (expected.kind === 'lut') return { ok: true as const, candidate: await inspectLut(result.filePaths[0], expected) }
@@ -585,7 +605,7 @@ ipcMain.handle('assets:relink', async (_event, expectedValue: unknown) => {
 /** "My LUTs" → Import .cube (Slice 5): opens a dialog filtered to `.cube`, reads, validates and
  * fingerprints it (`inspectLut`) — the renderer creates a new `lut` project asset from the result. */
 ipcMain.handle('lut:import', async () => {
-  const result = await dialog.showOpenDialog({ properties: ['openFile'], filters: [RELINK_FILTERS.lut] })
+  const result = await showOpenDialogRemembering({ properties: ['openFile'], filters: [RELINK_FILTERS.lut] })
   if (result.canceled || !result.filePaths[0]) return null
   try { return { ok: true as const, candidate: await inspectLut(result.filePaths[0]) } }
   catch (error) { return { ok: false as const, message: errorMessage(error) } }
@@ -623,7 +643,7 @@ const MEDIA_BIN_EXTENSIONS = [...IMAGE_EXTENSIONS, ...AUDIO_EXTENSIONS, ...VIDEO
 /** Multi-select import for the media bin (Media panel "Import…" button). Each picked file is
  * classified independently, so a mixed selection of images/audio/video/SRT succeeds file-by-file. */
 ipcMain.handle('assets:import-files', async () => {
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialogRemembering({
     properties: ['openFile', 'multiSelections'],
     filters: [
       { name: 'All media', extensions: MEDIA_BIN_EXTENSIONS },
@@ -651,7 +671,7 @@ ipcMain.handle('dialog:save-text', async (_event, request: { content: string; de
     throw new Error('Invalid save request')
   }
   const result = await dialog.showSaveDialog({
-    defaultPath: request.defaultName,
+    defaultPath: withLastDialogDir(request.defaultName),
     filters: [{ name: 'SubRip subtitles', extensions: ['srt'] }],
   })
   if (result.canceled || !result.filePath) return null
@@ -665,7 +685,7 @@ ipcMain.handle('project:save', async (_event, request: { project: unknown; defau
   if (!request || typeof request.defaultName !== 'string') throw new Error('Invalid project save request')
   const project = projectSchema.parse(request.project)
   const result = await dialog.showSaveDialog({
-    defaultPath: request.defaultName,
+    defaultPath: withLastDialogDir(request.defaultName),
     filters: [{ name: PROJECT_FILE_FILTER_NAME, extensions: [PROJECT_FILE_EXTENSION] }],
   })
   if (result.canceled || !result.filePath) return null

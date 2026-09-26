@@ -58,7 +58,7 @@ function WordBlocks({ cue, span, selectedWordId, onSeek, onSelectWord }: {
  * the sequence shows it (`spansOf`). A caption clipped by a cut still drags as one caption: only its
  * outer pieces carry handles.
  */
-export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, warningCueIds, draggingId, selectedWordId, locked = false, onBeginDrag, onKeyboardSelect, onSeekSource, onSelectWord, onSeekTrack }: {
+export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, warningCueIds, draggingId, selectedWordId, locked = false, trackId, onBeginDrag, onKeyboardSelect, onSeekSource, onSelectWord, onSeekTrack }: {
   cues: readonly Cue[]
   spansOf: (cue: Cue) => CaptionSpan[]
   durationUs: number
@@ -69,6 +69,7 @@ export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, 
   selectedWordId: string | null
   /** The caption track this row belongs to (schema 6) is locked: no drag handles, moving refused. */
   locked?: boolean
+  trackId?: string
   onBeginDrag: (event: ReactPointerEvent<HTMLElement>, cue: Cue, mode: CueDragMode, span: CaptionSpan) => void
   onKeyboardSelect: (event: ReactKeyboardEvent<HTMLDivElement>, cue: Cue, span: CaptionSpan) => void
   onSeekSource: (cue: Cue, sourceUs: number, span: CaptionSpan) => void
@@ -76,7 +77,7 @@ export function CaptionsTrack({ cues, spansOf, durationUs, mode, selectedCueId, 
   onSeekTrack: (event: ReactPointerEvent<HTMLDivElement>) => void
 }) {
   const place = (span: CaptionSpan) => ({ left: `${timeToPixel(span.startUs, durationUs, 100)}%`, width: `${Math.max(.02, timeToPixel(span.endUs - span.startUs, durationUs, 100))}%` })
-  return <div className={`track captions ${mode} ${locked ? 'locked' : ''}`} onPointerDown={onSeekTrack} role="group"
+  return <div className={`track captions ${mode} ${locked ? 'locked' : ''}`} data-caption-track-id={trackId} onPointerDown={onSeekTrack} role="group"
     aria-label={mode === 'line' ? 'Caption lines. Tab to a caption, then press Enter or Space to select and seek to it.' : 'Caption words. Tab to a word, then press Enter or Space to seek to it.'}>
     {mode === 'line' ? cues.flatMap((cue) => spansOf(cue).map((span, spanIndex, spans) => <div
       key={`${cue.id}:${spanIndex}`}

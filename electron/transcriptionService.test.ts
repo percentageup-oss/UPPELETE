@@ -57,7 +57,7 @@ function handlers(overrides: Record<string, Handler> = {}): Record<string, Handl
 }
 
 const request = (overrides: Partial<TranscriptionRequest> = {}): TranscriptionRequest => ({
-  mediaPath: '/Media/വീഡിയോ.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, modelId: 'whisper-base', language: 'auto', device: 'metal', translateTo: null, ...overrides,
+  mediaPath: '/Media/വീഡിയോ.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, modelId: 'whisper-base', language: 'auto', device: 'metal', translateTo: [], ...overrides,
 })
 
 describe('TranscriptionService', () => {
@@ -149,12 +149,12 @@ describe('TranscriptionService', () => {
       },
     })
     const snapshots: JobSnapshot[] = []
-    const outcome = await service.start(request({ translateTo: 'en', apiKey: 'test-key' }), (snapshot) => snapshots.push(snapshot)).outcome
+    const outcome = await service.start(request({ translateTo: ['en'], apiKey: 'test-key' }), (snapshot) => snapshots.push(snapshot)).outcome
     if (outcome.state !== 'succeeded') throw new Error(JSON.stringify(outcome))
     expect(tasks.map((task) => task.operation)).toEqual(['inspectWhisper', 'extractAudio', 'whisperTranscribe'])
     expect(translateCalls).toEqual([{ texts: ['ആദ്യ വാചകം', 'after the pause'], target: 'en', sourceLanguage: 'ml' }])
     expect(outcome.value.transcript.segments.map((segment) => segment.text)).toEqual(['ആദ്യ വാചകം', 'after the pause'])
-    expect(outcome.value.translation?.segments.map((segment) => segment.text)).toEqual(['First sentence', 'After the pause'])
+    expect(outcome.value.translations[0]?.segments.map((segment) => segment.text)).toEqual(['First sentence', 'After the pause'])
     expect(outcome.value.run.translation).toEqual({ provider: 'gemini', model: 'gemini-3.8-flash', targetLanguage: 'en', segmentCount: 2, inputTokens: 20, outputTokens: 10 })
     expect(snapshots.map((snapshot) => snapshot.progress?.phase)).toEqual(expect.arrayContaining(['recognizing', 'translating']))
     expect(await leftovers()).toEqual([])
@@ -165,7 +165,7 @@ describe('TranscriptionService', () => {
     const service = new TranscriptionService({ worker, scheduler: new JobScheduler(), whisperConfigured: true, temporaryRoot, installedModelPath: async () => '/Models/ggml-base.bin' })
     const outcome = await service.start(request(), () => {}).outcome
     if (outcome.state !== 'succeeded') throw new Error(JSON.stringify(outcome))
-    expect(outcome.value.translation).toBeNull()
+    expect(outcome.value.translations).toEqual([])
     expect(outcome.value.run.translation).toBeUndefined()
   })
 
@@ -179,7 +179,7 @@ describe('TranscriptionService', () => {
         queueMicrotask(() => cancelJob())
       }),
     })
-    const handle = service.start(request({ translateTo: 'en', apiKey: 'test-key' }), () => {})
+    const handle = service.start(request({ translateTo: ['en'], apiKey: 'test-key' }), () => {})
     cancelJob = handle.cancel
     expect(await handle.outcome).toEqual({ state: 'cancelled' })
     expect(await leftovers()).toEqual([])
@@ -216,7 +216,7 @@ describe('TranscriptionService with Gemini', () => {
       installedModelPath: async () => { throw new Error('must not be called') },
       geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 }, droppedAnnotations: 0 }) },
     })
-    const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: null, apiKey: 'test-key-123' }, () => {}).outcome
+    const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: [], apiKey: 'test-key-123' }, () => {}).outcome
     if (outcome.state !== 'succeeded') throw new Error(JSON.stringify(outcome))
     expect(keys).toEqual(['test-key-123'])
     expect(tasks.map((task) => task.operation)).toEqual(['extractAudio', 'speechChunks'])
@@ -240,7 +240,7 @@ describe('TranscriptionService with Gemini', () => {
         queueMicrotask(() => cancelJob())
       }),
     })
-    const handle = service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 0, endUs: 10_000_000 }, language: 'ml', translateTo: null, apiKey: 'k' }, () => {})
+    const handle = service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 0, endUs: 10_000_000 }, language: 'ml', translateTo: [], apiKey: 'k' }, () => {})
     cancelJob = handle.cancel
     expect(await handle.outcome).toEqual({ state: 'cancelled' })
     expect(await leftovers()).toEqual([])
@@ -255,11 +255,11 @@ describe('TranscriptionService with Gemini', () => {
       geminiRecognizer: (apiKey) => { keys.push(apiKey); return async () => ({ words: [{ text: 'ആദ്യ', startUs: 1_000_000, endUs: 1_400_000 }, { text: 'വാചകം', startUs: 1_450_000, endUs: 2_000_000 }], usage: { inputTokens: 12, outputTokens: 5 }, droppedAnnotations: 0 }) },
       geminiTranslator: (apiKey) => { keys.push(apiKey); return async (texts) => ({ texts: texts.map(() => 'First sentence'), usage: { inputTokens: 8, outputTokens: 4 } }) },
     })
-    const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: 'en', apiKey: 'test-key-123' }, () => {}).outcome
+    const outcome = await service.start({ engine: 'gemini', mediaPath: '/Media/clip.mp4', sourceRange: { startUs: 5_000_000, endUs: 15_000_000 }, language: 'auto', translateTo: ['en'], apiKey: 'test-key-123' }, () => {}).outcome
     if (outcome.state !== 'succeeded') throw new Error(JSON.stringify(outcome))
     expect(keys).toEqual(['test-key-123', 'test-key-123'])
     expect(outcome.value.transcript.segments[0].text).toBe('ആദ്യ വാചകം')
-    expect(outcome.value.translation?.segments.map((segment) => segment.text)).toEqual(['First sentence'])
+    expect(outcome.value.translations[0]?.segments.map((segment) => segment.text)).toEqual(['First sentence'])
     expect(outcome.value.run).toMatchObject({ translation: { provider: 'gemini', targetLanguage: 'en', segmentCount: 1, inputTokens: 8, outputTokens: 4 } })
     expect(await leftovers()).toEqual([])
   })

@@ -209,3 +209,11 @@ describe('speech chunk files for cloud transcription', () => {
     expect(await readdir(outputDirectory)).toEqual([])
   })
 })
+
+describe('splitAtPauses', () => {
+  it('cuts at the pause nearest the limit and falls back to a fixed cut', async () => {
+    const { splitAtPauses } = await import('./whisper')
+    const parts = splitAtPauses({ startSample: 0, endSample: 250 }, 100, [{ startSample: 40, endSample: 60 }, { startSample: 80, endSample: 90 }])
+    expect(parts).toEqual([{ startSample: 0, endSample: 85 }, { startSample: 85, endSample: 185 }, { startSample: 185, endSample: 250 }])
+  })
+})

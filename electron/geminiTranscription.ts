@@ -6,8 +6,12 @@ import { GEMINI_TRANSCRIBE_MODEL, type GeminiLocale, type GeminiRecognizer } fro
 export { segmentsFromWords } from './cloudTranscription'
 export const GEMINI_ENGINE_ID = 'gemini-api'
 export const GEMINI_ENGINE_VERSION = 'v1beta'
-/** Upload size bound per request; speech with no 2-second pause for this long is split at a fixed point. */
-export const GEMINI_MAX_CHUNK_US = 20 * 60 * 1_000_000
+/**
+ * Length bound per request; longer continuous speech is split at a short pause. Kept short because a 10-minute
+ * video sent as one request came back with captions missing for whole stretches (suspected partial word timings;
+ * unconfirmed against the run record).
+ */
+export const GEMINI_MAX_CHUNK_US = 3 * 60 * 1_000_000
 
 /**
  * `auto` returns no locale at all. The transcription docs are explicit that `language_codes`

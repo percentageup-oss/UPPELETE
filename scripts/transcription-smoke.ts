@@ -65,7 +65,7 @@ async function main() {
     const transcribe = async (device: TranscriptionDevice): Promise<TranscriptionJobValue> => {
       const started = performance.now()
       const progress: string[] = []
-      const handle = service.start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language, device, translateTo: null }, (job) => {
+      const handle = service.start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language, device, translateTo: [] }, (job) => {
         if (job.progress) progress.push(job.progress.kind === 'measured' ? `${job.progress.phase}:${job.progress.completed}/${job.progress.total}` : job.progress.phase)
       })
       const outcome = await handle.outcome
@@ -97,7 +97,7 @@ async function main() {
     // Cancel once whisper.cpp itself has reported recognition progress, so a running engine process is stopped.
     let cancel = () => {}
     let cancelledAt: string | null = null
-    const cancelHandle = service.start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language, device: 'cpu', translateTo: null }, (job) => {
+    const cancelHandle = service.start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language, device: 'cpu', translateTo: [] }, (job) => {
       if (cancelledAt === null && job.progress?.kind === 'measured' && job.progress.phase === 'recognizing' && job.progress.completed > 0) {
         cancelledAt = `${job.progress.completed}/${job.progress.total}`
         cancel()

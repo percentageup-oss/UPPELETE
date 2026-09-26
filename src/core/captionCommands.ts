@@ -7,6 +7,7 @@ import type { CaptionDisplay } from '../captions/wordDisplay'
 import type { CaptionMotion, CaptionStyle } from '../captions/style'
 import type { Selection } from './timelineItems'
 import { bindUnboundItems, defaultBindingAssetId } from './projectClips'
+import type { TranslationTarget } from './transcription'
 
 /**
  * A word-menu target: a timed word entry (`wordId`), or a plain text token that has no word
@@ -23,6 +24,8 @@ export type CaptionCommand =
    * complete timing, so a word-driven motion preset keeps animating instead of silently falling back to
    * static-clean. It never estimates a cue that had no word timing to begin with (e.g. imported SRT). */
   | { type: 'update-text'; cueId: string; text: string; estimateIfUntimed?: string }
+  /** Global edit: several captions' text in one undo step. Unchanged texts are skipped; the whole command fails if any cue is missing. */
+  | { type: 'update-text-many'; edits: { cueId: string; text: string }[]; estimateIfUntimed?: string }
   | { type: 'update-time'; cueId: string; startUs: number; endUs: number }
   | { type: 'shift-time'; cueId: string; deltaUs: number }
   | { type: 'add'; cue: Cue }
@@ -30,7 +33,10 @@ export type CaptionCommand =
   | { type: 'delete'; cueId: string }
   | { type: 'delete-word'; cueId: string; target: WordTarget }
   | { type: 'split'; cueId: string; atUs: number; rightCueId: string }
+  /** Merges with the next cue *of the same language*. */
   | { type: 'merge-next'; cueId: string }
+  /** Chooses which translation is shown on video, in export and in SRT; `null` shows the original. A language must have at least one cue. */
+  | { type: 'set-shown-translation'; language: TranslationTarget | null }
   | { type: 'regroup'; cueId: string; idPrefix: string; estimateMissing: boolean; options?: GroupingOptions }
   | { type: 'regroup-many'; cueIds: string[]; idPrefix: string; estimateMissing: boolean; options?: GroupingOptions }
   | { type: 'set-timeline-display'; display: CaptionDisplay }
@@ -113,6 +119,14 @@ function cueErrors(cue: Cue, mediaDurationUs?: number | null): ValidationIssue[]
   return errors
 }
 
+const sameLanguage = (a: Cue, b: Cue) => a.translationLanguage === b.translationLanguage
+
+/** The index of the nearest cue in `direction` from `index` that is in the same language, or -1. */
+function adjacentSameLanguage(cues: readonly Cue[], index: number, direction: 1 | -1): number {
+  for (let at = index + direction; at >= 0 && at < cues.length; at += direction) if (sameLanguage(cues[at], cues[index])) return at
+  return -1
+}
+
 export function validateCaptions(cues: Cue[], context: CommandContext = {}): { errors: ValidationIssue[]; warnings: ValidationIssue[] } {
   const errors = cues.flatMap((cue) => cueErrors(cue, boundFor(cue.mediaAssetId, context)))
   const wordIds = new Set<string>()
@@ -121,9 +135,13 @@ export function validateCaptions(cues: Cue[], context: CommandContext = {}): { e
     wordIds.add(word.id)
   }
   const warnings: ValidationIssue[] = []
-  // Cues of different videos live on different source timelines, so they can never overlap each other.
+  // Cues of different videos live on different source timelines, so they can never overlap each other;
+  // an original and its translations share one timeline on purpose, so each language is its own group.
   const byVideo = new Map<string, Cue[]>()
-  for (const cue of cues) byVideo.set(cue.mediaAssetId ?? '', [...(byVideo.get(cue.mediaAssetId ?? '') ?? []), cue])
+  for (const cue of cues) {
+    const key = `${cue.mediaAssetId ?? ''}|${cue.translationLanguage ?? ''}`
+    byVideo.set(key, [...(byVideo.get(key) ?? []), cue])
+  }
   for (const group of byVideo.values()) {
     const ordered = [...group].sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
     for (let index = 0; index < ordered.length; index += 1) {
@@ -188,6 +206,7 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
   let captionDisplay = project.captionDisplay
   let timelineDisplay = project.timelineDisplay
   let captionStyle = project.captionStyle
+  let shownTranslation = project.shownTranslation
   const commandWarnings: ValidationIssue[] = []
   // Shared by 'delete' and the "word alone in an otherwise-empty cue" fallback of 'delete-word'.
   const removeCue = (cueId: string): boolean => {
@@ -219,34 +238,42 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
       cues = replaceCue(cues, cue.id, [{ ...cue, words, needsReview: true }])
     }
     catch (error) { return fail(error instanceof Error ? error.message : 'Cannot estimate word timing.') }
-  } else if (command.type === 'update-text') {
-    const cue = cues.find((item) => item.id === command.cueId)
-    if (!cue) return fail('The selected cue no longer exists.')
-    if (cue.text === command.text) return { ok: true, project, selectedId: cue.id, warnings: validateCaptions(cues, context).warnings }
-    // A cue that already had complete word timing keeps a word-driven motion preset working
-    // through the edit — see `wordMotionAvailability` (renderer.ts), which requires every token to
-    // be covered by a timed word or falls back to static-clean. Only fill the gap this edit just
-    // opened; never invent word timing for a cue that never had it (e.g. imported SRT).
-    const hadCompleteTiming = cue.words.length > 0 && untimedTokenCount(cue) === 0
-    let words = retainSafeWordTimings(cue.words, cue.text, command.text)
-    if (command.estimateIfUntimed !== undefined && hadCompleteTiming) {
-      const draft = { ...cue, text: command.text, words }
-      if (untimedTokenCount(draft) > 0 && captionTokens(command.text).length > 0) {
-        let serial = 0
-        try { words = estimateMissingWordTimings(draft, () => `${command.estimateIfUntimed}-${++serial}`) }
-        catch (error) {
-          commandWarnings.push({ kind: 'estimate-skipped', cueIds: [cue.id], message: error instanceof Error ? error.message : 'Cannot estimate word timing.' })
+  } else if (command.type === 'update-text' || command.type === 'update-text-many') {
+    const edits = command.type === 'update-text' ? [{ cueId: command.cueId, text: command.text }] : command.edits
+    if (command.type === 'update-text-many' && edits.some((edit) => !edit.text.trim())) return fail('A caption cannot be empty.')
+    if (edits.length === 1 && cues.find((item) => item.id === edits[0].cueId)?.text === edits[0].text) {
+      return { ok: true, project, selectedId: edits[0].cueId, warnings: validateCaptions(cues, context).warnings }
+    }
+    for (const edit of edits) {
+      const cue = cues.find((item) => item.id === edit.cueId)
+      if (!cue) return fail('The selected cue no longer exists.')
+      if (cue.text === edit.text) continue
+      // A cue that already had complete word timing keeps a word-driven motion preset working
+      // through the edit — see `wordMotionAvailability` (renderer.ts), which requires every token to
+      // be covered by a timed word or falls back to static-clean. Only fill the gap this edit just
+      // opened; never invent word timing for a cue that never had it (e.g. imported SRT).
+      const hadCompleteTiming = cue.words.length > 0 && untimedTokenCount(cue) === 0
+      let words = retainSafeWordTimings(cue.words, cue.text, edit.text)
+      if (command.estimateIfUntimed !== undefined && hadCompleteTiming) {
+        const draft = { ...cue, text: edit.text, words }
+        if (untimedTokenCount(draft) > 0 && captionTokens(edit.text).length > 0) {
+          let serial = 0
+          const prefix = command.type === 'update-text' ? command.estimateIfUntimed : `${command.estimateIfUntimed}-${cue.id}`
+          try { words = estimateMissingWordTimings(draft, () => `${prefix}-${++serial}`) }
+          catch (error) {
+            commandWarnings.push({ kind: 'estimate-skipped', cueIds: [cue.id], message: error instanceof Error ? error.message : 'Cannot estimate word timing.' })
+          }
         }
       }
+      cues = replaceCue(cues, cue.id, [{
+        ...cue,
+        text: edit.text,
+        emphasized: retainEmphasis(cue.emphasized, cue.text, edit.text),
+        textSource: 'user',
+        needsReview: true,
+        words,
+      }])
     }
-    cues = replaceCue(cues, cue.id, [{
-      ...cue,
-      text: command.text,
-      emphasized: retainEmphasis(cue.emphasized, cue.text, command.text),
-      textSource: 'user',
-      needsReview: true,
-      words,
-    }])
   } else if (command.type === 'update-time') {
     const cue = cues.find((item) => item.id === command.cueId)
     if (!cue) return fail('The selected cue no longer exists.')
@@ -368,7 +395,8 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
   } else if (command.type === 'merge-next') {
     const index = cues.findIndex((cue) => cue.id === command.cueId)
     const cue = cues[index]
-    const next = cues[index + 1]
+    const nextIndex = cue ? cues.findIndex((item, at) => at > index && sameLanguage(item, cue)) : -1
+    const next = cues[nextIndex]
     if (!cue || !next) return fail('Select a cue that has a following cue to merge.')
     if (cue.mediaAssetId !== next.mediaAssetId) return fail('Captions of different videos cannot be merged.')
     const joiner = /\s$/u.test(cue.text) || /^\s/u.test(next.text) ? '' : ' '
@@ -390,8 +418,12 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
       textSource: 'user',
       needsReview: cue.needsReview || next.needsReview,
     }
-    cues = [...cues.slice(0, index), merged, ...cues.slice(index + 2)]
+    cues = cues.flatMap((item, at) => at === index ? [merged] : at === nextIndex ? [] : [item])
     selectedId = merged.id
+  } else if (command.type === 'set-shown-translation') {
+    if (command.language !== null && !cues.some((cue) => cue.translationLanguage === command.language)) return fail('There are no captions in that language to show.')
+    shownTranslation = command.language ?? undefined
+    selectedId = undefined
   } else if (command.type === 'set-timeline-display') {
     timelineDisplay = command.display
   } else if (command.type === 'set-display') {
@@ -468,7 +500,8 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
   } else if (command.type === 'move-from-word-to-next' || command.type === 'move-through-word-to-previous') {
     const sourceIndex = cues.findIndex((cue) => cue.id === command.cueId)
     const source = cues[sourceIndex]
-    const destinationIndex = command.type === 'move-from-word-to-next' ? sourceIndex + 1 : sourceIndex - 1
+    const forwards = command.type === 'move-from-word-to-next'
+    const destinationIndex = source ? adjacentSameLanguage(cues, sourceIndex, forwards ? 1 : -1) : -1
     const destination = cues[destinationIndex]
     const wordIndex = source?.words.findIndex((word) => word.id === command.wordId) ?? -1
     const spans = source && locateWordSpans(source.text, source.words)
@@ -506,7 +539,8 @@ export function applyCaptionCommand(project: CaptionProject, command: CaptionCom
 
   // A project with clips requires every cue to name its video. A cue created here (add) or by a
   // caller that did not say which video takes the explicit default, else the sequence's only video.
-  const next = { ...project, cues, captionDisplay, timelineDisplay, captionStyle }
+  const next = { ...project, cues, captionDisplay, timelineDisplay, captionStyle, ...(shownTranslation ? { shownTranslation } : {}) }
+  if (!shownTranslation) delete next.shownTranslation
   const bound = bindUnboundItems(next, defaultBindingAssetId(next, context.defaultAssetId))
   const validation = validateCaptions(bound.cues, boundContext(bound, context))
   if (validation.errors.length) return { ok: false, ...validation }

@@ -18,7 +18,7 @@ const cue = (extra: Partial<Cue> = {}): Cue => ({
 })
 
 const project = (item: Cue): CaptionProject => ({
-  schemaVersion: 23,
+  schemaVersion: 24,
   tracks: [],
   clips: [],
   assets: [],

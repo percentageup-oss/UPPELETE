@@ -98,7 +98,7 @@ describe('speed in the export plan', () => {
   const video = (id: string, start: number, s0: number, s1: number, speed?: ClipSpeed): Clip =>
     ({ kind: 'video', id, trackId: 'V1', assetId: 'x', timelineStartUs: start, sourceStartUs: s0, sourceEndUs: s1, opacity: 1, fit: 'contain', gain: 1, ...(speed ? { speed } : {}) })
   const project = (clips: Clip[]): CaptionProject => ({
-    schemaVersion: 23, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video')], tracks: [track('V1', 'video'), track('A1', 'audio')], clips, captionTracks: [],
+    schemaVersion: 24, id: 'p', title: 'P', cues: [], assets: [asset('x', 'video')], tracks: [track('V1', 'video'), track('A1', 'audio')], clips, captionTracks: [],
     blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format: { width: 1920, height: 1080, frameRate: { numerator: 25, denominator: 1 } },
     createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   })

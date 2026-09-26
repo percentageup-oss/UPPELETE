@@ -73,7 +73,24 @@ export function segmentsFromWords(recognized: readonly RecognizedWord[], chunkDu
   return { segments, droppedWords }
 }
 
+/** A chunk has no pause of 2 s or more, so a stretch this long with no recognized word is probably missing speech. */
+export const UNCOVERED_GAP_US = 10_000_000
+export type UncoveredRange = { startUs: number; endUs: number }
+
+/** Stretches of at least `minGapUs` inside `[0, chunkDurationUs]` (chunk-relative) that no segment covers. */
+export function uncoveredRanges(segments: readonly { startUs: number; endUs: number }[], chunkDurationUs: number, minGapUs = UNCOVERED_GAP_US): UncoveredRange[] {
+  const gaps: UncoveredRange[] = []
+  let cursor = 0
+  for (const segment of [...segments, { startUs: chunkDurationUs, endUs: chunkDurationUs }]) {
+    if (segment.startUs - cursor >= minGapUs) gaps.push({ startUs: cursor, endUs: segment.startUs })
+    cursor = Math.max(cursor, segment.endUs)
+  }
+  return gaps
+}
+
 export type CloudRunReport = Omit<Extract<MediaResult, { operation: 'speechChunks' }>, 'operation'> & {
+  /** Audio-relative stretches inside speech chunks where the provider returned no words. */
+  uncovered: UncoveredRange[]
   inputTokens: number; outputTokens: number; droppedWords: number
   /** Provider output that could not become a timed word (see `CloudRecognition.droppedAnnotations`). */
   droppedAnnotations: number
@@ -123,6 +140,7 @@ export class CloudTranscriptionAdapter implements TranscriptionAdapter {
     }, { signal: cancellation, timeoutMs: Math.min(86_400_000, 300_000 + Math.ceil(input.audio.durationUs / 1000)) }).result
     const language = options.language as CloudLanguage
     const segments: RawSegment[] = []
+    const uncovered: UncoveredRange[] = []
     let inputTokens = 0, outputTokens = 0, droppedWords = 0, droppedAnnotations = 0
     let detected: CloudSpokenLanguage | null = null
     for (const [index, chunk] of plan.chunks.entries()) {
@@ -134,12 +152,13 @@ export class CloudTranscriptionAdapter implements TranscriptionAdapter {
       for (const segment of chunkSegments.segments) {
         segments.push({ ...segment, startUs: offset(segment.startUs), endUs: offset(segment.endUs), words: segment.words?.map((word) => ({ ...word, startUs: offset(word.startUs), endUs: offset(word.endUs) })) })
       }
+      for (const gap of uncoveredRanges(chunkSegments.segments, chunk.endUs - chunk.startUs)) uncovered.push({ startUs: offset(gap.startUs), endUs: offset(gap.endUs) })
       droppedWords += chunkSegments.droppedWords
       droppedAnnotations += result.droppedAnnotations
       inputTokens += result.usage.inputTokens ?? 0; outputTokens += result.usage.outputTokens ?? 0
     }
     if (plan.chunks.length) progress({ kind: 'measured', phase: 'recognizing', completed: plan.chunks.length, total: plan.chunks.length, unit: 'items' })
-    this.lastRun = { speechGating: plan.speechGating, silences: plan.silences, chunks: plan.chunks, inputTokens, outputTokens, droppedWords, droppedAnnotations }
+    this.lastRun = { speechGating: plan.speechGating, silences: plan.silences, chunks: plan.chunks, uncovered, inputTokens, outputTokens, droppedWords, droppedAnnotations }
     return {
       engine: this.config.engineId, model: this.config.model,
       // A provider-reported language wins; otherwise a mixed request is recorded as Malayalam, as the alignment path does.

@@ -1,5 +1,66 @@
 # Status
 
+## 2026-09-26 — Caption languages 05: Hinglish and Manglish targets
+
+**Changes:**
+- `translationTargetSchema` / `TranslationTarget` (`src/core/transcription.ts`): `languageCodeSchema` or `hi-latn` / `ml-latn`. Used for cue `translationLanguage`, `shownTranslation`, `translationRuns[].targetLanguage`, run translation provenance, `TranslatedTranscript.targetLanguage`, `translateTo`, caption-translation targets and `set-shown-translation`. `languageCodeSchema` and the schema version (24) are unchanged.
+- `translationLanguages.ts`: Manglish and Hinglish entries with hints, `isRomanizedTarget`, `romanizedBase`.
+- `scriptCheck.ts`: romanized targets fail as `UNEXPECTED_SCRIPT` (retryable) when Devanagari / Malayalam script dominates instead of Latin.
+- `geminiTranslation.ts`: transliteration prompt branch (keeps English words, no meaning translation, no source-language mention).
+- Transcribe dialog and "+ Translate…" list show hints; tabs already use `translationTargetLabel`.
+- `docs/PRODUCT.md` and `docs/TRANSCRIPTION.md` updated.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows).
+
+**Limitations:** transliteration quality unverified on real clips; Gemini-only and needs a Gemini key. The optional "works best when spoken language is Hindi/Malayalam" hint was skipped. Not committed: the working tree holds other sessions' uncommitted edits.
+
+**Next:** none planned in this series; consider a migration round-trip test for schema 24.
+
+## 2026-09-26 — Caption languages 03: translate existing captions (text only)
+
+**Changes:**
+- `electron/geminiTranslation.ts`: `translateLines` (batches of 60, `UNEXPECTED_SCRIPT` check) extracted; `translateTranscript` calls it.
+- New IPC `captions:translate` / `captions:translate:cancel` / `captions:translate:progress` (`electron/captionTranslationIpc.ts`, zod `z.strictObject` schemas in `src/core/captionTranslationIpc.ts`). The Gemini key is loaded in main only. Targets run sequentially on the job scheduler, each in its own try/catch, so a failed language never discards the others. Registered in `main.ts`; exposed in `preload.ts` and `env.d.ts`.
+- `src/core/captionLanguages.ts`: `translatedCaptionsFromCues` (same window/video/track, `model` sources, Needs review, estimated words), `originalCuesOfVideo`, `describeTranslationLayer`, `applyTranslatedLayers` (one project value; keeps user-edited cues of an existing layer, appends `translationRuns`, leaves `shownTranslation` alone).
+- `src/TranslateCaptions.tsx`: "+ Translate…" popover in the Captions tab (language checkboxes, up to 5, progress, cancel, disabled with a reason without a Gemini key, redo confirmation naming how many edited cues are kept). `App.tsx` `applyTranslations` commits all languages in one undo step, switches to the first added tab, and reports failed languages in the notice.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows). Read-checked: request schema is `z.strictObject`, no path accepts a key from the renderer.
+
+**Limitations:** translation jobs use the `transcription` job kind, so they queue behind a running transcription. A blank translated line produces no cue. Source captions over 2000 characters or more than 5000 cues are refused. The redo confirmation uses `window.confirm`. Not committed: the touched files also hold other sessions' uncommitted edits.
+
+**Next:** brief 04 (multi-language in the Transcribe dialog).
+
+## 2026-09-26 — Caption languages 01: schema 24, language layers, display filter
+
+**Changes**
+- Schema 24: optional `translationLanguage` on cues, `shownTranslation` and `translationRuns` on the project; migration `migrateV23.ts` tags cues of runs that had a legacy `translation` and sets `shownTranslation`. Legacy run `translation` stays readable, no longer written.
+- `src/core/captionLanguages.ts`: `displayedCues`, `cuesForLanguage`, `projectLanguages` (plus `shownLanguage`). Preview (`visibleCues`), timeline, SRT export, layer stack and both export manifests use `displayedCues`.
+- `validateCaptions` groups by video and language; `merge-next` and the move-word commands stay within one language. New undoable command `set-shown-translation` (+ zod schema).
+- `applyTranscription` takes `translations[]`: original layer is always kept, each translation is its own tagged layer, overlap checks are per language, `translationRuns` recorded, first translation shown. `applyTranscript` still wraps the single IPC translation.
+- Existing tests touched only to keep the typecheck: `schemaVersion: 23` to `24` in 12 fixtures, and the `translations` argument in `transcriptionApply.test.ts`.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean).
+
+**Limitations:** the migration is untested (a round-trip test is worth adding). Two tests in `transcriptionApply.test.ts` ("with a translation") still expect translated-only cues and will fail until updated. The Captions panel now lists only the shown language and cannot select a hidden-language cue until brief 02. Agent `getCaptions` still returns every language. Not committed: the working tree holds other sessions' uncommitted edits to the same files.
+
+**Next:** brief 02 (Captions panel language tabs and "Show on video").
+
+
+## 2026-09-26 — Cloud transcription: shorter chunks, pause-aware splits, missing-caption warning
+
+**Why:** a 10-minute video transcribed with Gemini came back with captions missing for whole stretches. Cause not confirmed against the run record; the leading suspect is that the whole video went up as one request (chunks were only split at 2 s silences, capped at 20 min) and the model returned word timings for part of it, which nothing checked.
+
+**Changes**
+- `GEMINI_MAX_CHUNK_US` 20 min → 3 min.
+- `writeSpeechChunks` splits over-long speech at the latest ≥250 ms pause in the second half of the limit (`splitAtPauses`), falling back to a fixed cut only when no pause exists.
+- `CloudTranscriptionAdapter` records `uncovered` stretches (≥10 s inside a speech chunk with no recognized word); all three cloud providers get it. Stored on the run as optional `uncoveredRanges` (source time) and shown in the post-transcription notice as a warning with the first three ranges.
+
+**Verification:** typecheck clean; new tests for `splitAtPauses` and `uncoveredRanges` pass along with the existing whisper/transcription-service/gemini suites. `src/core/model.test.ts` has 28 failures that are identical without these changes. Not run against real Gemini or in the app.
+
+**Limitations:** gaps are only reported, not retried; a 10 s gap can be genuine non-speech (music, background). OpenAI and ElevenLabs chunk sizes are unchanged. Cause remains unconfirmed until the same video is re-transcribed.
+
+**Next:** re-transcribe the same 10-minute video with Gemini and check the notice/run record; if gaps persist, add an automatic retry of the uncovered ranges as sub-chunks.
+
 ## 2026-09-26 — Settings cleanup: provider dropdown, friendly model tiers, shorter copy
 
 **Changes**
@@ -3574,3 +3635,78 @@ Limitations/next: the source fix still needs to be bundled, installed, and check
 OpenAI Secure MCP Tunnel. Connector creation can then be retried; if ChatGPT still rejects it, the
 next diagnostic target is the connector-creation API response rather than local reachability or MCP
 discovery, both of which are already returning success.
+
+## Editor fixes: caption edit reset, Add text crash, font menu, Global Edit, stage text drag
+
+Changes: inline caption edit no longer resets on double-click (CaptionsPanel); "Add text at playhead" in Titles no longer passes the click event as a placement anchor; font menu selects installed system fonts instead of "Custom" and previews each font in its own face; new "Edit all" dialog (script view + find & replace, grapheme-safe, one undo step via `update-text-many`); pressing an unselected title now selects and drags in one gesture, the subtitle box no longer blocks titles under it, and clicking a stacked spot cycles title layers.
+
+Verification: not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows 11).
+
+Limitations: Global Edit cannot add/remove captions; grouped titles still need click-then-drag; shapes are not part of click-through cycling or subtitle pass-through; no layer reordering.
+
+Next: manual check of the five scenarios in the app.
+
+## Transcribe range 01: request range + boundary-safe apply
+
+Changes: `transcription:start` accepts an optional source-time `range` (zod-validated, clamped to the probed duration, min 1 s, in main); `applyTranscription(..., { partial })` never replaces a caption crossing the range edge and reports `boundaryKept`; the panel decides "choose" from `replaceableCaptionsInRange`; `Delivered.partial` exists (always false until brief 02); the notice names the range for partial runs.
+
+Verification: not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows 11).
+
+Limitations: no UI to pick a range yet.
+
+Next: brief 02 (always-visible Transcribe + range picker).
+
+## Caption languages 02: Captions panel language tabs + "Show on video"
+
+Changes: the Captions tab shows one tab per language (hidden until a translation exists) with an "On video" dot; translation tabs have a single-select "Show on video" checkbox (`set-shown-translation`, one undo step), the Original tab shows a status line. The list, cue count, Edit all, regroup-all, prev/next cue and "Add at playhead" act on the active tab; the tab follows `shownTranslation` and the language of a selected cue. "Rebuild original captions" (`rebuildOriginalCues` in `transcriptionApply.ts`) recreates a video's original cues from `run.recognition` in one history step when it has none. Empty tabs show a hint.
+
+Verification: not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows 11).
+
+Limitations: a cue added on a hidden language tab is not visible on video until that language is shown; the selected cue can belong to a hidden layer (inspector still edits it).
+
+Next: brief 03 (translate existing captions).
+
+## Transcribe range 02: always-visible Transcribe + range picker
+
+**Changes**
+- `src/core/transcriptionRange.ts`: `sourceUsForAssetAt`, `sourceRangeForSequenceRange`, `transcriptionRangeProblem`, `parseRangeInput`, `formatRangeTime`.
+- The Transcribe button now sits once in the Captions heading (before "Edit all"), whether or not the picked video has captions; it is accent-styled only when the video has none. The empty state keeps "Import SRT" plus a one-line hint.
+- Dialog has a "What to transcribe" choice: Whole video, In–Out range (only when the marks overlap the picked video), Part of the video (Start/End fields in the video's own time, each with a Playhead button). Problems show as an alert and disable the start button. Partial runs send `range`, deliver `partial: true`, and the button, progress line and review heading name the range.
+- `App` passes `transcribeContext` (duration, playhead source time rounded to 100 ms, In–Out mapped to source time) through `CaptionsPanel`; the prop is optional.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). Not viewed in the running app.
+
+**Limitations:** ranges are in the video's own time; an In–Out range over a cut or repeated video uses the hull of its source spans, so a little extra audio may be transcribed. A running job is lost if the Captions tab is closed (pre-existing). Not committed: the touched files also hold other sessions' uncommitted edits.
+
+**Next:** brief 03 (gap list and "Transcribe this gap..." on the timeline).
+
+## Transcribe range 03: gap list + "Transcribe this gap..."
+
+**Changes**
+- `src/core/transcriptionRange.ts`: `captionGaps` (stretches of 5 s or more with no caption of that video, including before the first and after the last) and `captionGapAt` (any length).
+- Transcribe dialog: under "Part of the video", a list of caption gaps (max 8, then "and N more") plus the provider's `uncoveredRanges` from earlier runs of this video that still have an uncaptioned stretch and are not already listed. Clicking a row selects Part of the video with the range filled in. `CaptionsPanel` and `TranscriptionPanel` take optional `runs`.
+- `TranscriptionPanel` `openRequest` (`{ assetId, range, nonce }`) opens the dialog prefilled from outside; it never interrupts a running job or a pending choice (calls `onOpenRequestIgnored`, and App shows an info notice).
+- Right-click on an empty stretch of a captions lane (`data-caption-track-id`, `captionLane` on the empty menu target) offers "Transcribe this gap (…)…" when a video is under the click and that spot has no caption. It picks that video, switches to the Captions tab and opens the dialog.
+
+**Verification:** not tested, typecheck only. Errors that remain in `src/TranscriptionPanel.tsx` (start(): `translateTo` string vs string[]) and `electron/transcriptionService.test.ts` come from the separate caption-languages work in progress, not from this slice. Not viewed in the running app.
+
+**Limitations:** gaps are computed from the cues shown in the active language tab; a provider uncovered stretch fully inside a listed gap is shown once, as the caption gap.
+
+**Next:** optional automatic retry of `uncoveredRanges` inside `CloudTranscriptionAdapter`.
+
+## Caption languages 04: multi-language in the Transcribe dialog
+
+**Changes**
+- `translateTo` is now `LanguageCode[]` (0..5, unique) end to end: `transcriptionStartRequestSchema`, IPC key check, `TranscriptionService` requests, dev smoke callers.
+- `TranscriptionService.translateAll` replaces the single `translate()`: one audio pass, then one text call per target, sequentially. A failed language is recorded in `translationFailures` (`{ target, message }`) and skipped; cancellation still aborts the job. `run.translation` is no longer written and `translationProvenance` is removed.
+- `TranscriptionJobValue` / `TranscriptionOutcome` carry `translations: TranslationWithUsage[]` (translation plus Gemini token usage, written into `translationRuns` by `applyTranscription`) and `translationFailures`.
+- Job progress gained an optional `detail` (here the target code). Translation progress spans all targets so the bar never rewinds, and the dialog names the language being translated.
+- Dialog: one shared "Translate to" checkbox list (max 5) for both engines, with the cost line; localStorage holds a JSON array (an old single code reads as one item; absent or malformed reads as none). "Transcribe and translate" whenever any target is picked.
+- `applyTranscript` passes the array and its notice lists added and failed languages, says the original captions were kept and points to "+ Translate…" for retries.
+- Existing tests fixed minimally (`null` to `[]`, `'en'` to `['en']`, `translation` to `translations[0]`).
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). Not viewed in the running app.
+
+**Limitations:** `electron/transcriptionService.test.ts` still asserts the removed `run.translation` in two places (would fail if run; left alone per the no-tests override). Untested: partial failure, cancellation between languages.
+
+**Next:** brief 05 (Hinglish and Manglish targets).

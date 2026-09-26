@@ -31,7 +31,7 @@ export function Row({ label, htmlFor, onReset, isDefault = true, hint, labelHidd
 
 /** A dropdown: a real `<select>` (long lists like installed fonts stay keyboard- and screen-reader-
  * accessible) drawn with a trailing chevron, like the reference's Font / Direction rows. */
-export type SelectOption<T extends string> = { value: T; label: string; group?: string }
+export type SelectOption<T extends string> = { value: T; label: string; group?: string; style?: CSSProperties }
 
 export function Select<T extends string>({ id, value, options, ariaLabel, onChange, onOpen, searchable }: {
   id: string; value: T; options: readonly SelectOption<T>[]; ariaLabel?: string; onChange: (value: T) => void; onOpen?: () => void
@@ -121,7 +121,7 @@ function PopoverSelect<T extends string>({ id, value, options, ariaLabel, onChan
         else if (event.key === 'ArrowUp' && !open) { event.preventDefault(); move(-1) }
         else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open ? setOpen(false) : show() }
       }}>
-      <span>{selected?.label ?? value}</span>
+      <span style={selected?.style}>{selected?.label ?? value}</span>
     </button>
     <ChevronDownIcon className="ins-select-chevron" />
     {open && box && createPortal(
@@ -139,7 +139,7 @@ function PopoverSelect<T extends string>({ id, value, options, ariaLabel, onChan
               ? [<li key={`group:${option.group}`} className="group" role="presentation">{option.group}</li>] : []
             return [...heading, <li key={option.value} role="option" aria-selected={option.value === value}
               className={[option.value === value ? 'selected' : '', index === active ? 'active' : ''].join(' ').trim() || undefined}
-              onMouseMove={() => index !== active && setActive(index)} onClick={() => pick(option.value)}>{option.label}</li>]
+              onMouseMove={() => index !== active && setActive(index)} onClick={() => pick(option.value)} style={option.style}>{option.label}</li>]
           })}
           {shown.length === 0 && <li className="empty" role="presentation">No matching fonts</li>}
         </ul>

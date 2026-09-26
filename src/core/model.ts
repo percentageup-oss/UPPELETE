@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { projectMediaSchema } from './media'
 import { captionTokens, locateWordSpans } from './captionText'
-import { languageCodeSchema, sourceTimedTranscriptSchema } from './transcription'
+import { translationTargetSchema, sourceTimedTranscriptSchema } from './transcription'
 import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema, savedCaptionPresetSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
 import {
@@ -28,6 +28,7 @@ import { migrateV19 } from './migrateV19'
 import { migrateV20 } from './migrateV20'
 import { migrateV21 } from './migrateV21'
 import { migrateV22 } from './migrateV22'
+import { migrateV23 } from './migrateV23'
 
 export const wordSchema = z.object({
   id: z.string().min(1),
@@ -62,6 +63,8 @@ export const cueSchema = z.object({
   emphasized: z.array(z.strictObject({ text: z.string().min(1), textStart: z.number().int().nonnegative(), textEnd: z.number().int().positive() })).optional(),
   // Set only on cues created from a transcription run; the run record carries engine/model provenance.
   transcriptionRunId: z.string().min(1).max(128).optional(),
+  // Schema 24: the language of a translated cue. Absent means an original-language cue.
+  translationLanguage: translationTargetSchema.optional(),
   // A cue may override either project-level motion field; absent values inherit it.
   motionOverride: z.object({ motion: motionSchema.optional(), motionSpeed: motionSpeedSchema.optional() })
     .refine((value) => value.motion !== undefined || value.motionSpeed !== undefined, 'Caption override must change motion or speed.')
@@ -108,7 +111,22 @@ const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
 const translationProvenanceSchema = z.strictObject({
   provider: z.literal('gemini'),
   model: z.string().min(1).max(256),
-  targetLanguage: languageCodeSchema,
+  targetLanguage: translationTargetSchema,
+  segmentCount: count,
+  inputTokens: count.optional(),
+  outputTokens: count.optional(),
+})
+
+/** One text translation (Gemini) of a project's captions into `targetLanguage`, made during transcription or later from existing captions. */
+export const translationRunSchema = z.strictObject({
+  id: z.string().min(1).max(128),
+  createdAt: z.string().min(1).max(64),
+  provider: z.literal('gemini'),
+  model: z.string().min(1).max(256),
+  sourceLanguage: z.string().min(1).max(16).nullable(),
+  targetLanguage: translationTargetSchema,
+  mediaAssetId: z.string().min(1).max(128).optional(),
+  transcriptionRunId: z.string().min(1).max(128).optional(),
   segmentCount: count,
   inputTokens: count.optional(),
   outputTokens: count.optional(),
@@ -163,6 +181,9 @@ export const geminiTranscriptionRunSchema = z.strictObject({
   // timed word — text Gemini produced that never reached the transcript, surfaced instead of silently
   // vanishing. See `GeminiRecognition.droppedAnnotations`.
   droppedAnnotationCount: count.optional(),
+  // Optional: source-time stretches of 10 s or more inside speech chunks where the provider returned no words,
+  // so captions may be missing there. Absent on older runs.
+  uncoveredRanges: z.array(z.strictObject({ startUs: count, endUs: count })).max(1000).optional(),
   inputTokens: count.optional(),
   outputTokens: count.optional(),
   recognition: sourceTimedTranscriptSchema.optional(),
@@ -989,7 +1010,7 @@ export const projectSchemaV22 = z.object({
 
 /** Schema 23 adds the `bubble` shape geometry and the optional `fitTo` / `fitPadding` on shapes (docs/EDITING.md "Shapes").
  * Both are optional or additive, so the migration from 22 only moves the version. */
-export const projectSchema = z.object({
+export const projectSchemaV23 = z.object({
   ...projectSchemaV22.shape,
   schemaVersion: z.literal(23),
   shapes: z.array(shapeSchema).max(1000).default([]),
@@ -1004,9 +1025,25 @@ export const projectSchema = z.object({
   if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
 })
 
+/** Schema 24 adds language layers: an optional `translationLanguage` on cues, the project's `shownTranslation`
+ * (absent = the original is shown) and `translationRuns`. All optional; the migration from 23 tags the cues of runs
+ * that were translated. */
+export const projectSchema = z.object({
+  ...projectSchemaV23.shape,
+  schemaVersion: z.literal(24),
+  shownTranslation: translationTargetSchema.optional(),
+  translationRuns: z.array(translationRunSchema).max(200).optional(),
+}).superRefine((project, context) => {
+  const { shownTranslation: _shown, translationRuns: _runs, ...rest } = project
+  const cues = project.cues.map(({ translationLanguage: _language, ...cue }) => cue)
+  const old = projectSchemaV23.safeParse({ ...rest, schemaVersion: 23, cues })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+})
+
 export type Cue = z.infer<typeof cueSchema>
 export type CaptionWord = z.infer<typeof wordSchema>
 export type CaptionProject = z.infer<typeof projectSchema>
+export type CaptionProjectV23 = z.infer<typeof projectSchemaV23>
 export type CaptionProjectV22 = z.infer<typeof projectSchemaV22>
 export type CaptionProjectV21 = z.infer<typeof projectSchemaV21>
 export type CaptionProjectV20 = z.infer<typeof projectSchemaV20>
@@ -1044,7 +1081,7 @@ const legacyProjectSchema = z.object({
 
 export type ProjectLoadResult = {
   project: CaptionProject
-  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | null
+  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | null
   /** What the 4 → 5 migration could not carry over exactly, surfaced as a notice (never silent loss). */
   migrationNotes: MigrationNote[]
 }
@@ -1176,8 +1213,11 @@ const toV21FromV20 = (project: CaptionProjectV20): CaptionProjectV21 => projectS
 /** Schema 21 → 22: `groups` starts empty. */
 const toV22FromV21 = (project: CaptionProjectV21): CaptionProjectV22 => projectSchemaV22.parse(migrateV21(project).project)
 /** Schema 22 → 23: `bubble` geometry and `fitTo` are additive, so only the version number changes. */
-const toV23FromV22 = (project: CaptionProjectV22): CaptionProject => projectSchema.parse(migrateV22(project).project)
-const toV23FromV20 = (project: CaptionProjectV20): CaptionProject => toV23FromV22(toV22FromV21(toV21FromV20(project)))
+const toV23FromV22 = (project: CaptionProjectV22): CaptionProjectV23 => projectSchemaV23.parse(migrateV22(project).project)
+/** Schema 23 → 24: language layers; the cues of a translated transcription run are tagged with its target language. */
+const toV24FromV23 = (project: CaptionProjectV23): CaptionProject => projectSchema.parse(migrateV23(project).project)
+const toV24FromV22 = (project: CaptionProjectV22): CaptionProject => toV24FromV23(toV23FromV22(project))
+const toV24FromV20 = (project: CaptionProjectV20): CaptionProject => toV24FromV22(toV22FromV21(toV21FromV20(project)))
 const toV20FromV18 = (project: CaptionProjectV18): CaptionProjectV20 => toV20FromV19(toV19FromV18(project))
 const toV20FromV17 = (project: CaptionProjectV17): CaptionProjectV20 => toV20FromV18(toV18FromV17(project))
 const toV20FromV16 = (project: CaptionProjectV16): CaptionProjectV20 => toV20FromV17(toV17FromV16(project))
@@ -1189,44 +1229,46 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (current.success) return { project: current.data, migratedFrom: null, migrationNotes: [] }
   const from = (migratedFrom: 1 | 2 | 3 | 4, v4: CaptionProjectV4): ProjectLoadResult => {
     const { project, notes } = toV9(v4, newId)
-    return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project))))))), migratedFrom, migrationNotes: notes }
+    return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project))))))), migratedFrom, migrationNotes: notes }
   }
+  const v23 = projectSchemaV23.safeParse(value)
+  if (v23.success) return { project: toV24FromV23(v23.data), migratedFrom: 23, migrationNotes: [] }
   const v22 = projectSchemaV22.safeParse(value)
-  if (v22.success) return { project: toV23FromV22(v22.data), migratedFrom: 22, migrationNotes: [] }
+  if (v22.success) return { project: toV24FromV22(v22.data), migratedFrom: 22, migrationNotes: [] }
   const v21 = projectSchemaV21.safeParse(value)
-  if (v21.success) return { project: toV23FromV22(toV22FromV21(v21.data)), migratedFrom: 21, migrationNotes: [] }
+  if (v21.success) return { project: toV24FromV22(toV22FromV21(v21.data)), migratedFrom: 21, migrationNotes: [] }
   const v20 = projectSchemaV20.safeParse(value)
-  if (v20.success) return { project: toV23FromV20(v20.data), migratedFrom: 20, migrationNotes: [] }
+  if (v20.success) return { project: toV24FromV20(v20.data), migratedFrom: 20, migrationNotes: [] }
   const v19 = projectSchemaV19.safeParse(value)
-  if (v19.success) return { project: toV23FromV20(toV20FromV19(v19.data)), migratedFrom: 19, migrationNotes: [] }
+  if (v19.success) return { project: toV24FromV20(toV20FromV19(v19.data)), migratedFrom: 19, migrationNotes: [] }
   const v18 = projectSchemaV18.safeParse(value)
-  if (v18.success) return { project: toV23FromV20(toV20FromV18(v18.data)), migratedFrom: 18, migrationNotes: [] }
+  if (v18.success) return { project: toV24FromV20(toV20FromV18(v18.data)), migratedFrom: 18, migrationNotes: [] }
   const v17 = projectSchemaV17.safeParse(value)
-  if (v17.success) return { project: toV23FromV20(toV20FromV17(v17.data)), migratedFrom: 17, migrationNotes: [] }
+  if (v17.success) return { project: toV24FromV20(toV20FromV17(v17.data)), migratedFrom: 17, migrationNotes: [] }
   const v16 = projectSchemaV16.safeParse(value)
-  if (v16.success) return { project: toV23FromV20(toV20FromV16(v16.data)), migratedFrom: 16, migrationNotes: [] }
+  if (v16.success) return { project: toV24FromV20(toV20FromV16(v16.data)), migratedFrom: 16, migrationNotes: [] }
   const v15 = projectSchemaV15.safeParse(value)
-  if (v15.success) return { project: toV23FromV20(toV20FromV15(v15.data)), migratedFrom: 15, migrationNotes: [] }
+  if (v15.success) return { project: toV24FromV20(toV20FromV15(v15.data)), migratedFrom: 15, migrationNotes: [] }
   const v14 = projectSchemaV14.safeParse(value)
-  if (v14.success) return { project: toV23FromV20(toV20FromV15(toV15FromV14(v14.data))), migratedFrom: 14, migrationNotes: [] }
+  if (v14.success) return { project: toV24FromV20(toV20FromV15(toV15FromV14(v14.data))), migratedFrom: 14, migrationNotes: [] }
   const v13 = projectSchemaV13.safeParse(value)
-  if (v13.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(v13.data))), migratedFrom: 13, migrationNotes: [] }
+  if (v13.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(v13.data))), migratedFrom: 13, migrationNotes: [] }
   const v12 = projectSchemaV12.safeParse(value)
-  if (v12.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(v12.data)))), migratedFrom: 12, migrationNotes: [] }
+  if (v12.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(v12.data)))), migratedFrom: 12, migrationNotes: [] }
   const v11 = projectSchemaV11.safeParse(value)
-  if (v11.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data))))), migratedFrom: 11, migrationNotes: [] }
+  if (v11.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data))))), migratedFrom: 11, migrationNotes: [] }
   const v10 = projectSchemaV10.safeParse(value)
-  if (v10.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data)))))), migratedFrom: 10, migrationNotes: [] }
+  if (v10.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data)))))), migratedFrom: 10, migrationNotes: [] }
   const v9 = projectSchemaV9.safeParse(value)
-  if (v9.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data))))))), migratedFrom: 9, migrationNotes: [] }
+  if (v9.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data))))))), migratedFrom: 9, migrationNotes: [] }
   const v8 = projectSchemaV8.safeParse(value)
-  if (v8.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data)))))))), migratedFrom: 8, migrationNotes: [] }
+  if (v8.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data)))))))), migratedFrom: 8, migrationNotes: [] }
   const v7 = projectSchemaV7.safeParse(value)
-  if (v7.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data))))))))), migratedFrom: 7, migrationNotes: [] }
+  if (v7.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data))))))))), migratedFrom: 7, migrationNotes: [] }
   const v6 = projectSchemaV6.safeParse(value)
-  if (v6.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data)))))))))), migratedFrom: 6, migrationNotes: [] }
+  if (v6.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data)))))))))), migratedFrom: 6, migrationNotes: [] }
   const v5 = projectSchemaV5.safeParse(value)
-  if (v5.success) return { project: toV23FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId))))))))))), migratedFrom: 5, migrationNotes: [] }
+  if (v5.success) return { project: toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId))))))))))), migratedFrom: 5, migrationNotes: [] }
   const v4 = projectSchemaV4.safeParse(value)
   if (v4.success) return from(4, v4.data)
   const v3 = projectSchemaV3.safeParse(value)
@@ -1235,7 +1277,8 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (v2.success) return from(2, migrateV3(migrateV2(v2.data), newId))
   // A file that claims the current (or a previous, still-named) schema but fails it reports
   // *that* failure, not schema 1's.
-  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 23) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 24) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 23) projectSchemaV23.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 22) projectSchemaV22.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 21) projectSchemaV21.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 20) projectSchemaV20.parse(value)
@@ -1288,7 +1331,7 @@ export function defaultCaptionTracks(newId: () => string = () => crypto.randomUU
 export function createProject(): CaptionProject {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 23,
+    schemaVersion: 24,
     id: crypto.randomUUID(),
     title: 'Untitled project',
     cues: [],

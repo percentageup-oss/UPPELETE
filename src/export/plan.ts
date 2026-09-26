@@ -23,6 +23,7 @@ import { frameEffectsAt } from '../core/frameEffects'
 import { activeMask } from '../core/layerMask'
 import { imagesHostPainted } from '../core/hostPainted'
 import { graphicsPasses, passOf } from '../core/graphicsPasses'
+import { displayedCues } from '../core/captionLanguages'
 import { resolveExportFormat, type ExportSettings } from './settings'
 
 /**
@@ -624,7 +625,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
     const path = resolver.assetPath(flat.asset)
     const manifest = exportManifestV2Schema.parse({
       version: 2,
-      cues: project.cues.filter((cue) => !cue.mediaAssetId || cue.mediaAssetId === flat.asset.id),
+      cues: displayedCues(project.cues, project.shownTranslation).filter((cue) => !cue.mediaAssetId || cue.mediaAssetId === flat.asset.id),
       style, display,
       ...(flat.identity ? {} : { segments: flat.videos.map((clip) => ({ startUs: clip.sourceStartUs, endUs: clip.sourceEndUs })) }),
       // The identity edit only: sequence time equals source time, so image clips are v2 overlays verbatim.
@@ -719,7 +720,7 @@ export function buildExportManifest(project: CaptionProject, resolver: ExportRes
   const luts = [...lutCache.values()].map(({ id, cube }) => ({ id, size: cube.size, data: encodeCubeData(cube.data) }))
   const manifest = exportManifestV3Schema.parse({
     version: 3,
-    cues: project.cues.filter((cue) => cue.mediaAssetId ? captionAssets.has(cue.mediaAssetId) : !captionAssets.size),
+    cues: displayedCues(project.cues, project.shownTranslation).filter((cue) => cue.mediaAssetId ? captionAssets.has(cue.mediaAssetId) : !captionAssets.size),
     style, display, format, sequenceDurationUs, inputs, clips, overlays, luts,
     blurRegions: blurFor(sequenceDurationUs),
     zoomRegions: zoomFor(sequenceDurationUs),

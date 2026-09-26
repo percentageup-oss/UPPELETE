@@ -30,6 +30,13 @@ export type SegmentTimingAdjustment = z.infer<typeof segmentTimingAdjustmentSche
 export const languageCodeSchema = z.string().regex(/^[a-z]{2,3}$/, 'Expected a lowercase ISO 639 language code')
 export type LanguageCode = z.infer<typeof languageCodeSchema>
 
+/**
+ * A stored or requested translation target: a spoken-language code, or one of two romanized (Latin-script)
+ * transliteration targets. Recognition-side fields keep `languageCodeSchema`.
+ */
+export const translationTargetSchema = languageCodeSchema.or(z.enum(['hi-latn', 'ml-latn']))
+export type TranslationTarget = z.infer<typeof translationTargetSchema>
+
 function uniqueArray<T>(items: T[]): boolean {
   return new Set(items).size === items.length
 }
@@ -164,7 +171,7 @@ export const translatedTranscriptSchema = z.strictObject({
   contractVersion: z.literal(TRANSCRIPTION_CONTRACT_VERSION),
   provider: z.literal('gemini'),
   model: z.string().min(1).max(256),
-  targetLanguage: languageCodeSchema,
+  targetLanguage: translationTargetSchema,
   segments: z.array(z.strictObject({ text: z.string().min(1).max(10000) })).max(100000),
 })
 export type TranslatedTranscript = z.infer<typeof translatedTranscriptSchema>
@@ -193,7 +200,7 @@ function isOrderedNonOverlapping(items: readonly { startUs: number; endUs: numbe
  */
 export function validateTranslationOutput(
   source: SourceTimedTranscript,
-  target: LanguageCode,
+  target: TranslationTarget,
   model: string,
   raw: unknown,
 ): TranslatedTranscript {

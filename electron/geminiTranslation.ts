@@ -2,7 +2,8 @@ import { GoogleGenAI } from '@google/genai'
 import { z } from 'zod'
 import { jobFailure, type JobProgress } from '../src/core/jobs'
 import { checkTranscriptScript } from '../src/core/scriptCheck'
-import { validateTranslationOutput, type LanguageCode, type SourceTimedTranscript, type TranslatedTranscript } from '../src/core/transcription'
+import { validateTranslationOutput, type LanguageCode, type TranslationTarget, type SourceTimedTranscript, type TranslatedTranscript } from '../src/core/transcription'
+import { isRomanizedTarget, romanizedBase } from '../src/core/translationLanguages'
 import type { GeminiUsage } from './geminiRecognition'
 
 export const GEMINI_TRANSLATE_MODEL = 'gemini-3.8-flash'
@@ -11,7 +12,7 @@ export const GEMINI_TRANSLATE_BATCH_SIZE = 60
 
 export type GeminiTranslator = (
   texts: readonly string[],
-  target: LanguageCode,
+  target: TranslationTarget,
   sourceLanguage: LanguageCode | null,
   signal: AbortSignal,
 ) => Promise<{ texts: string[]; usage: GeminiUsage }>
@@ -49,12 +50,20 @@ export function geminiTranslator(apiKey: string): GeminiTranslator {
           temperature: 0,
           responseMimeType: 'application/json',
           responseJsonSchema,
-          systemInstruction: [
-            `Translate each subtitle line's "text" into ${target}${sourceLanguage ? ` from ${sourceLanguage}` : ''}.`,
-            'Return exactly one output line per input line, in the same order, each keeping its original "i".',
-            'Translate meaning naturally for subtitles; preserve names, numbers and punctuation style.',
-            'Never merge, split, add or drop lines, and never add commentary or notes.',
-          ].join(' '),
+          systemInstruction: isRomanizedTarget(target)
+            ? [
+              `Transliterate each subtitle line's "text" into ${romanizedBase(target) === 'hi' ? 'Hindi' : 'Malayalam'} written in Latin (English) letters, as people type it in chat (${target === 'hi-latn' ? 'Hinglish' : 'Manglish'}). Do NOT translate the meaning.`,
+              `Keep every word that is already English (Latin script) exactly as written. Do not translate ${romanizedBase(target) === 'hi' ? 'Hindi' : 'Malayalam'} words into English.`,
+              'Use simple, common spellings a native reader expects; no diacritics, no IPA, no long-vowel marks. Keep numbers, names and punctuation style.',
+              'Return exactly one output line per input line, in the same order, each keeping its original "i".',
+              'Never merge, split, add or drop lines, and never add commentary or notes.',
+            ].join(' ')
+            : [
+              `Translate each subtitle line's "text" into ${target}${sourceLanguage ? ` from ${sourceLanguage}` : ''}.`,
+              'Return exactly one output line per input line, in the same order, each keeping its original "i".',
+              'Translate meaning naturally for subtitles; preserve names, numbers and punctuation style.',
+              'Never merge, split, add or drop lines, and never add commentary or notes.',
+            ].join(' '),
         },
       })
       const raw = response.text
@@ -83,21 +92,19 @@ export function geminiTranslator(apiKey: string): GeminiTranslator {
 }
 
 /**
- * Translates a validated, source-timed transcript's segment texts in fixed-size batches,
- * reporting measured progress per batch, then validates the assembled result against the
- * source transcript (same segment count, clean text) and runs the same wrong-script sanity
- * check recognition uses, against the requested target language.
+ * Translates caption lines in fixed-size batches, reporting measured progress per batch, then runs the same
+ * wrong-script sanity check recognition uses against the requested target language. Text only: no timing,
+ * no audio. Shared by transcript translation and by translating captions that already exist.
  */
-export async function translateTranscript(
+export async function translateLines(
   translator: GeminiTranslator,
-  transcript: SourceTimedTranscript,
-  target: LanguageCode,
+  texts: readonly string[],
+  target: TranslationTarget,
+  sourceLanguage: LanguageCode | null,
   signal: AbortSignal,
   onProgress?: (value: JobProgress) => void,
-): Promise<{ translation: TranslatedTranscript; usage: GeminiUsage }> {
-  const texts = transcript.segments.map((segment) => segment.text)
-  if (!texts.length) return { translation: validateTranslationOutput(transcript, target, GEMINI_TRANSLATE_MODEL, { segments: [] }), usage: {} }
-
+): Promise<{ texts: string[]; usage: GeminiUsage }> {
+  if (!texts.length) return { texts: [], usage: {} }
   const batches: string[][] = []
   for (let start = 0; start < texts.length; start += GEMINI_TRANSLATE_BATCH_SIZE) batches.push(texts.slice(start, start + GEMINI_TRANSLATE_BATCH_SIZE))
 
@@ -105,7 +112,7 @@ export async function translateTranscript(
   let inputTokens = 0, outputTokens = 0
   onProgress?.({ kind: 'measured', phase: 'translating', completed: 0, total: batches.length, unit: 'items' })
   for (const [index, batch] of batches.entries()) {
-    const result = await translator(batch, target, transcript.language, signal)
+    const result = await translator(batch, target, sourceLanguage, signal)
     if (result.texts.length !== batch.length) throw jobFailure('MALFORMED_OUTPUT', 'Gemini returned a different number of translated lines than were sent.')
     translated.push(...result.texts)
     inputTokens += result.usage.inputTokens ?? 0
@@ -113,12 +120,29 @@ export async function translateTranscript(
     onProgress?.({ kind: 'measured', phase: 'translating', completed: index + 1, total: batches.length, unit: 'items' })
   }
 
-  const translation = validateTranslationOutput(transcript, target, GEMINI_TRANSLATE_MODEL, { segments: translated.map((text) => ({ text })) })
-  const scriptCheck = checkTranscriptScript(target, translation.segments.map((segment) => segment.text))
+  const scriptCheck = checkTranscriptScript(target, translated)
   if (!scriptCheck.ok) {
     throw jobFailure('UNEXPECTED_SCRIPT',
       `Translation to "${target}" was requested, but the returned text is mostly ${scriptCheck.dominantScript} script, not ${scriptCheck.expectedScript}. Try translating again, or expect to correct this section by hand.`,
       { diagnostic: `Expected ${scriptCheck.expectedScript}, got ${scriptCheck.dominantScript} (${Math.round(scriptCheck.dominantShare * 100)}%): ${scriptCheck.sample}`.slice(0, 8192), retryable: true })
   }
-  return { translation, usage: { inputTokens, outputTokens } }
+  return { texts: translated, usage: { inputTokens, outputTokens } }
+}
+
+/**
+ * Translates a validated, source-timed transcript's segment texts, then validates the assembled result
+ * against the source transcript (same segment count, clean text).
+ */
+export async function translateTranscript(
+  translator: GeminiTranslator,
+  transcript: SourceTimedTranscript,
+  target: TranslationTarget,
+  signal: AbortSignal,
+  onProgress?: (value: JobProgress) => void,
+): Promise<{ translation: TranslatedTranscript; usage: GeminiUsage }> {
+  const texts = transcript.segments.map((segment) => segment.text)
+  if (!texts.length) return { translation: validateTranslationOutput(transcript, target, GEMINI_TRANSLATE_MODEL, { segments: [] }), usage: {} }
+  const result = await translateLines(translator, texts, target, transcript.language, signal, onProgress)
+  const translation = validateTranslationOutput(transcript, target, GEMINI_TRANSLATE_MODEL, { segments: result.texts.map((text) => ({ text })) })
+  return { translation, usage: result.usage }
 }

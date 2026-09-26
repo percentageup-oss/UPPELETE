@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { cueSchema } from './model'
+import { translationTargetSchema } from './transcription'
 import { blurRegionSchema, captionTrackSchema, clipSchema, effectRegionSchema, markerSchema, projectAssetSchema, sequenceFormatSchema, trackSchema, zoomRegionSchema, compositionRectSchema, textOverlaySchema, layerMaskSchema, shapeSchema, glassSchema, fillSchema, backgroundMotionSchema, clipSpeedSchema, gradeSchema, BLEND_MODES } from './edit'
 import { captionAppearanceSchema, captionStyleSchema, motionSchema, motionSpeedSchema } from '../captions/style'
 import { captionDisplaySchema } from '../captions/wordDisplay'
@@ -45,6 +46,7 @@ const deleteCue = z.strictObject({ type: z.literal('delete'), cueId: itemId })
 const deleteWord = z.strictObject({ type: z.literal('delete-word'), cueId: itemId, target: wordTarget })
 const split = z.strictObject({ type: z.literal('split'), cueId: itemId, atUs: z.number().int().nonnegative(), rightCueId: itemId })
 const mergeNext = z.strictObject({ type: z.literal('merge-next'), cueId: itemId })
+const setShownTranslation = z.strictObject({ type: z.literal('set-shown-translation'), language: translationTargetSchema.nullable() })
 const regroup = z.strictObject({ type: z.literal('regroup'), cueId: itemId, idPrefix: z.string().min(1), estimateMissing: z.boolean(), options: groupingOptions.optional() })
 const regroupMany = z.strictObject({ type: z.literal('regroup-many'), cueIds: z.array(itemId).min(1), idPrefix: z.string().min(1), estimateMissing: z.boolean(), options: groupingOptions.optional() })
 const setTimelineDisplay = z.strictObject({ type: z.literal('set-timeline-display'), display: captionDisplaySchema })
@@ -73,7 +75,7 @@ const moveFromWordToNext = z.strictObject({ type: z.literal('move-from-word-to-n
 const moveThroughWordToPrevious = z.strictObject({ type: z.literal('move-through-word-to-previous'), cueId: itemId, wordId: z.string().min(1) })
 
 export const captionCommandSchema = z.discriminatedUnion('type', [
-  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext,
+  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext, setShownTranslation,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
   resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
 ])
@@ -296,7 +298,7 @@ export const itemCommandSchema = z.discriminatedUnion('type', [
  * `applyEditCommand`. `word-action-menu`/App.tsx-issued commands never cross this boundary and
  * stay on the plain TypeScript types; this is deliberately not the same object as `EditCommand`. */
 export const editCommandSchema = z.discriminatedUnion('type', [
-  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext,
+  toggleEmphasis, estimateWords, updateText, updateTime, shiftTime, addCue, duplicateCue, deleteCue, deleteWord, split, mergeNext, setShownTranslation,
   regroup, regroupMany, setTimelineDisplay, setDisplay, setCaptionDisplay, applyTemplate, setMotionOverride,
   resetMotionOverrides, setPlacementOverride, resetPlacementOverrides, lineBreakBeforeWord, splitBeforeWord, moveFromWordToNext, moveThroughWordToPrevious,
   assetAdd, assetRemove, assetUpdate, trackAdd, trackRemove, trackUpdate, trackReorder,

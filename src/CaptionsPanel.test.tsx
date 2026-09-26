@@ -9,13 +9,14 @@ const cue = (text: string, words: Cue['words'] = []): Cue => ({
 })
 
 const render = (cues: Cue[]) => renderToStaticMarkup(<CaptionsPanel
-  cueCount={cues.length} visibleCues={cues} selectedCueId="c1" selectedWordId={null} warningCueIds={new Set()}
+  cueCount={cues.length} totalCueCount={cues.length} languageTab={null} languages={{ originalLanguage: null, translations: [] }} shownTranslation={null}
+  onLanguageTab={() => {}} onShowOnVideo={() => {}} onRebuildOriginal={null} visibleCues={cues} selectedCueId="c1" selectedWordId={null} warningCueIds={new Set()}
   notInSequence={() => false} videoNameOf={() => null} historyPastLength={0} historyFutureLength={0} onUndo={() => {}} onRedo={() => {}}
   effectiveStyle={DEFAULT_CAPTION_STYLE} selected={cues[0] ?? null} captionDisplay="line" onCaptionDisplay={() => {}} onProjectStyle={() => {}}
   onOverride={() => {}} onResetOverrides={() => {}} onPlacementOverride={() => {}} onEstimate={() => {}} onGroup={() => {}}
-  onSelect={() => {}} onUpdateText={() => true} onSelectWord={() => {}} onWordAction={() => {}} onEstimateMissing={() => {}}
+  onSelect={() => {}} onApplyEdits={() => true} onUpdateText={() => true} onSelectWord={() => {}} onWordAction={() => {}} onEstimateMissing={() => {}}
   cueButtonRefs={{ current: new Map() }} videos={[]} pickedVideo={null} onPickVideo={() => {}} mediaReady={false}
-  onApplyTranscript={(() => {}) as never} providerKeys={null} transcriptionDefaults={{ provider: 'whisper', models: {} }} onNeedGeminiKey={() => {}} onImportSrt={() => {}} />)
+  onApplyTranscript={(() => {}) as never} providerKeys={null} transcriptionDefaults={{ provider: 'whisper', models: {} }} onNeedGeminiKey={() => {}} onImportSrt={() => {}} allCues={[]} onTranslated={() => {}} />)
 
 const wordButtons = (html: string) => [...html.matchAll(/<button[^>]*class="transcript-word[^"]*"[^>]*>([^<]*)<\/button>/g)].map((match) => match[1])
 

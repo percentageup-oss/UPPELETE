@@ -6,25 +6,43 @@ import { formatClock, formatTimestamp } from './core/time'
 import { untimedTokenCount } from './core/wordTiming'
 import { DEFAULT_GROUPING, groupCaption, type GroupingOptions } from './core/captionGrouping'
 import type { ProjectAsset } from './core/edit'
-import type { Cue } from './core/model'
+import type { Cue, TranscriptionRun } from './core/model'
+import type { TranslationTarget } from './core/transcription'
+import { translationTargetLabel } from './core/translationLanguages'
 import { wordMotionAvailability } from './captions/renderer'
 import { MOTIONS, resolveCaptionMotion, type CaptionMotion, type CaptionStyle } from './captions/style'
 import type { CaptionDisplay } from './captions/wordDisplay'
 import { transcriptSpans, wordMenuAvailability, type TranscriptSpan, type WordActionType } from './transcript'
 import { positionWordActionMenu } from './wordActionMenu'
-import { TranscriptionPanel, type ApplyTranscript } from './TranscriptionPanel'
+import { NO_TRANSCRIBE_CONTEXT, TranscriptionPanel, type ApplyTranscript, type TranscribeOpenRequest, type TranscribeContext } from './TranscriptionPanel'
 import { NumberField } from './style/controls'
+import { GlobalCaptionEditor, type CaptionEdit } from './GlobalCaptionEditor'
+import { TranslateCaptions, type TranslationFailure } from './TranslateCaptions'
+import { originalCuesOfVideo, type TranslatedLayerResult } from './core/captionLanguages'
 
 export type { WordActionType }
 
 export function CaptionsPanel({
-  cueCount, visibleCues, selectedCueId, selectedWordId, warningCueIds, notInSequence, videoNameOf,
+  cueCount, totalCueCount, languageTab, languages, shownTranslation, onLanguageTab, onShowOnVideo, onRebuildOriginal, visibleCues, selectedCueId, selectedWordId, warningCueIds, notInSequence, videoNameOf,
   historyPastLength, historyFutureLength, onUndo, onRedo,
   effectiveStyle, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onPlacementOverride, onEstimate, onGroup,
-  onSelect, onUpdateText, onSelectWord, onWordAction, onEstimateMissing, cueButtonRefs,
-  videos, pickedVideo, onPickVideo, mediaReady, onApplyTranscript, providerKeys, transcriptionDefaults, onNeedGeminiKey, onImportSrt,
+  onSelect, onApplyEdits, onUpdateText, onSelectWord, onWordAction, onEstimateMissing, cueButtonRefs,
+  videos, pickedVideo, onPickVideo, mediaReady, onApplyTranscript, providerKeys, transcriptionDefaults, onNeedGeminiKey, onImportSrt, transcribeContext = NO_TRANSCRIBE_CONTEXT, allCues, onTranslated, runs, openRequest, onOpenRequestIgnored,
 }: {
+  /** Cues in the active language tab. */
   cueCount: number
+  /** Cues in every language: the transcription empty state applies only when this is 0. */
+  totalCueCount: number
+  /** The active language tab (`null` = the original). */
+  languageTab: TranslationTarget | null
+  languages: { originalLanguage: string | null; translations: TranslationTarget[] }
+  /** The translation currently replacing the original on video (`null` = the original is shown). */
+  shownTranslation: TranslationTarget | null
+  onLanguageTab: (language: TranslationTarget | null) => void
+  onShowOnVideo: (language: TranslationTarget | null) => void
+  /** Set when the picked video's original captions are missing but its saved recognition can rebuild them. */
+  onRebuildOriginal: (() => void) | null
+  /** The active tab's cues. */
   visibleCues: readonly Cue[]
   selectedCueId: string | null
   selectedWordId: string | null
@@ -49,6 +67,8 @@ export function CaptionsPanel({
   onEstimate: () => void
   onGroup: (options: GroupingOptions, all: boolean) => void
   onSelect: (cue: Cue) => void
+  /** Global edit: applies many captions' text as one undo step. */
+  onApplyEdits: (edits: CaptionEdit[]) => boolean
   onUpdateText: (cueId: string, text: string) => boolean
   onSelectWord: (cue: Cue, span: TranscriptSpan) => void
   onWordAction: (cueId: string, type: WordActionType, span: TranscriptSpan) => void
@@ -67,27 +87,54 @@ export function CaptionsPanel({
   transcriptionDefaults: TranscriptionDefaults
   onNeedGeminiKey: () => void
   onImportSrt: () => void
+  /** Where the picked video is on the timeline, for the transcription range picker. */
+  transcribeContext?: TranscribeContext
+  /** Every transcription run of the project (the panel uses the picked video's). */
+  runs?: readonly TranscriptionRun[]
+  openRequest?: TranscribeOpenRequest | null
+  onOpenRequestIgnored?: () => void
+  /** Every cue in every language, for the translate control. */
+  allCues: readonly Cue[]
+  onTranslated: (done: { assetId: string; sourceLanguage: string | null; originals: Cue[]; results: TranslatedLayerResult[]; failures: TranslationFailure[] }) => void
 }) {
+  const [globalEdit, setGlobalEdit] = useState(false)
   const selectedWord = selected?.words.find((word) => word.id === selectedWordId) ?? null
   // Each video is transcribed on its own: offer it whenever the chosen video has no captions yet,
   // so a second video can be transcribed after the first already has captions.
   const pickedCues = pickedVideo ? visibleCues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId) : visibleCues
-  const offerTranscription = !cueCount || (pickedVideo !== null && !pickedCues.length)
+  const offerTranscription = !totalCueCount || (languageTab === null && pickedVideo !== null && !pickedCues.length)
   return <>
     <div className="panel-heading"><div><h2 id="transcript-heading">Captions</h2><small>{cueCount} cues</small></div><div className="caption-heading-actions">
+      {/* One instance only: a second would be a second dialog with its own running job. */}
+      <TranscriptionPanel media={pickedVideo} mediaReady={mediaReady} cues={[...pickedCues]} runs={runs} openRequest={openRequest} onOpenRequestIgnored={onOpenRequestIgnored} onApply={onApplyTranscript} primary={offerTranscription}
+        providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={onNeedGeminiKey} context={transcribeContext} />
+      <button type="button" disabled={!visibleCues.length} onClick={() => setGlobalEdit(true)} title="Edit every caption in one place">Edit all</button>
       <div className="history"><button onClick={onUndo} disabled={!historyPastLength} aria-label="Undo" title="Undo (⌘/Ctrl+Z)">↶</button><button onClick={onRedo} disabled={!historyFutureLength} aria-label="Redo" title="Redo (⌘/Ctrl+Shift+Z or Ctrl+Y)">↷</button></div>
       <CaptionTools style={effectiveStyle} selected={selected} captionDisplay={captionDisplay}
         onCaptionDisplay={onCaptionDisplay} onProjectStyle={onProjectStyle}
         onOverride={onOverride} onResetOverrides={onResetOverrides} onPlacementOverride={onPlacementOverride}
         onEstimate={onEstimate} onGroup={onGroup} />
     </div></div>
+    {globalEdit && <GlobalCaptionEditor cues={visibleCues} onApply={onApplyEdits} onClose={() => setGlobalEdit(false)} />}
+    {languages.translations.length > 0 && <div className="caption-language-tabs" role="tablist" aria-label="Caption language">
+      {[null, ...languages.translations].map((language) => <button key={language ?? 'original'} type="button" role="tab" aria-selected={language === languageTab} onClick={() => onLanguageTab(language)}>
+        {language === null ? languages.originalLanguage ? translationTargetLabel(languages.originalLanguage) : 'Original' : translationTargetLabel(language)}
+        {language === shownTranslation && <span className="caption-language-live" title="Shown on video" aria-label="On video">●</span>}
+      </button>)}
+    </div>}
+    {totalCueCount > 0 && <TranslateCaptions originals={pickedVideo ? originalCuesOfVideo(allCues, pickedVideo.id) : []} assetId={pickedVideo?.id ?? null} allCues={allCues}
+      originalLanguage={languages.originalLanguage} translations={languages.translations} providerKeys={providerKeys} onNeedGeminiKey={onNeedGeminiKey} onTranslated={onTranslated} />}
+    {languages.translations.length > 0 && (languageTab === null
+      ? <p className="style-hint caption-language-status">{shownTranslation === null ? 'Shown on video' : 'Hidden while a translation is shown'}</p>
+      : <label className="caption-language-show"><input type="checkbox" checked={shownTranslation === languageTab} onChange={(event) => onShowOnVideo(event.target.checked ? languageTab : null)} /> Show on video</label>)}
     <div className="cue-list" aria-label="Caption cues">
       {videos.length > 1 && <VideoPicker videos={videos} picked={pickedVideo} onPick={onPickVideo} label="Transcribe" />}
-      {offerTranscription && <div className="cue-list-empty">
-        <TranscriptionPanel media={pickedVideo} mediaReady={mediaReady} cues={[...pickedCues]} onApply={onApplyTranscript} primary
-          providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={onNeedGeminiKey} />
-        {!cueCount && <button type="button" onClick={onImportSrt}>Import SRT</button>}
+      {offerTranscription && !cueCount && <div className="cue-list-empty">
+        <p className="style-hint">Transcribe the video’s audio or import an SRT.</p>
+        <button type="button" onClick={onImportSrt}>Import SRT</button>
       </div>}
+      {languageTab === null && onRebuildOriginal && <button type="button" onClick={onRebuildOriginal} title="Recreate the spoken-language captions from the saved recognition. No API call is made.">Rebuild original captions</button>}
+      {totalCueCount > 0 && !visibleCues.length && <p className="style-hint">{languageTab === null ? 'No original captions yet.' : `No ${translationTargetLabel(languageTab)} captions yet.`}</p>}
       {visibleCues.map((cue, index) => <TranscriptCue key={cue.id} cue={cue} index={index} selected={cue.id === selectedCueId} warning={warningCueIds.has(cue.id)}
         notInSequence={notInSequence(cue)} videoName={videos.length > 1 ? videoNameOf(cue) : null} selectedWordId={selectedWord?.id ?? null}
         effectiveStyle={effectiveStyle}
@@ -220,7 +267,7 @@ function TranscriptCue({ cue, index, selected, warning, notInSequence, videoName
       window.removeEventListener('scroll', place, true)
     }
   }, [menuOpen, active?.textStart])
-  const beginEditing = () => { setMenuOpen(false); setDraft(cue.text); setEditing(true) }
+  const beginEditing = () => { setMenuOpen(false); if (editing) return; setDraft(cue.text); setEditing(true) }
   return <div ref={(element) => { rootRef.current = element; reference(element) }} role="button" tabIndex={0} className={`cue-card ${selected ? 'selected' : ''} ${warning ? 'has-warning' : ''}`}
     onClick={() => { setMenuOpen(false); onSelect() }} onDoubleClick={beginEditing}
     // Enter selects; Space is left alone so it reaches the global play/pause shortcut even while a
@@ -232,7 +279,7 @@ function TranscriptCue({ cue, index, selected, warning, notInSequence, videoName
       {notInSequence && <span className="cue-cut-badge" title="No clip on the timeline plays this caption’s part of its video, so it won’t appear in the exported video. It is kept, and comes back if that part is played again.">Not in sequence</span>}
       {availability && !availability.enabled && <span className="cue-timing-badge" title={availability.explanation}>Animation paused</span>}
       {availability?.enabled && availability.estimated && <span className="cue-timing-badge estimated" title={availability.explanation}>Estimated timing</span>}
-      {editing ? <textarea className="transcript-inline-editor" autoFocus value={draft} onClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
+      {editing ? <textarea className="transcript-inline-editor" autoFocus value={draft} onClick={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => setDraft(event.target.value)} onCompositionStart={() => setComposing(true)} onCompositionEnd={() => setComposing(false)}
         onKeyDown={(event) => { if (composing || event.nativeEvent.isComposing) return; if (event.key === 'Escape') { event.preventDefault(); setEditing(false) } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); if (onUpdateText(draft)) setEditing(false) } }}
         onBlur={() => { if (!composing && onUpdateText(draft)) setEditing(false) }} aria-label={`Edit caption ${index + 1}`} /> : <span className="cue-text">{spans.length ? spans.map((span, position) => <span key={span.textStart}>{cue.text.slice(position ? spans[position - 1].textEnd : 0, span.textStart)}<button type="button" className={`transcript-word ${(span.word ? span.word.id === selectedWordId : menuOpen && span.textStart === activeStart) ? 'selected' : ''}`}
         onClick={(event) => activateWord(event, span)} onContextMenu={(event) => activateWord(event, span)}>{cue.text.slice(span.textStart, span.textEnd)}</button>{position === spans.length - 1 ? cue.text.slice(span.textEnd) : ''}</span>) : cue.text}</span>

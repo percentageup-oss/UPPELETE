@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { HexColorField, NumberField, Row, Section, Segmented, Select, SliderWithNumber, TextField, Toggle } from './style/controls'
 import { AlignCenterIcon, AlignLeftIcon, AlignRightIcon, DropIcon, PaletteIcon, UnderlineIcon } from './style/icons'
 import { fallbackCatalog, loadLocalFontCatalog, resetLocalFontCatalogCache, type LocalFontCatalogState } from './style/localFonts'
@@ -34,6 +34,7 @@ export function StylePanel({ style, onDraft, onCommit }: {
   const [draft, setDraft] = useState(style)
   const [customFont, setCustomFont] = useState(() => FONT_FAMILY_CHOICES.includes(style.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) ? '' : style.appearance.fontFamily)
   const [fontError, setFontError] = useState<string | null>(null)
+  const [customMode, setCustomMode] = useState(false)
   const [fonts, setFonts] = useState<LocalFontCatalogState>({ status: 'idle' })
   useEffect(() => {
     setDraft(style)
@@ -83,12 +84,15 @@ export function StylePanel({ style, onDraft, onCommit }: {
 
   const groupedFamily = (family: { family: string }) => ({
     value: family.family, label: family.family,
+    style: { fontFamily: `"${family.family}", system-ui, sans-serif` } as CSSProperties,
     group: (FONT_FAMILY_CHOICES as readonly string[]).includes(family.family) ? 'Favourites' : 'System fonts',
   })
   // Try to have the full list ready before the menu is opened; if Chromium refuses without a
   // click (`needs-gesture`) the menu's own open click retries.
   useEffect(() => { void loadFonts() }, [])
   const families = fonts.status === 'ready' || fonts.status === 'unavailable' ? fonts.families : fallbackCatalog()
+  const knownFont = families.some((family) => family.family === draft.appearance.fontFamily)
+  const showCustom = customMode || !knownFont
   const currentFamily = families.find((family) => family.family === draft.appearance.fontFamily)
   const faceOptions = fonts.status === 'ready' && currentFamily?.faces.length ? currentFamily.faces : FACE_OPTIONS
   const emphasisFamily = families.find((family) => family.family === (draft.appearance.emphasisFontFamily || draft.appearance.fontFamily))
@@ -98,16 +102,16 @@ export function StylePanel({ style, onDraft, onCommit }: {
     <Section id="fonts" title="Text">
       <Row label="Font" htmlFor="style-font-family" onReset={() => reset(RESET_KEYS.fontFamily)} isDefault={isDefault(RESET_KEYS.fontFamily)}>
         <Select id="style-font-family"
-          value={FONT_FAMILY_CHOICES.includes(draft.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) ? draft.appearance.fontFamily : 'custom'}
+          value={showCustom ? 'custom' : draft.appearance.fontFamily}
           options={[...families.map(groupedFamily), { value: 'custom', label: 'Custom local font…' }]} onOpen={loadFonts} searchable
-          onChange={(value) => { if (value === 'custom') { setCustomFont(draft.appearance.fontFamily); return } commitNow({ fontFamily: value }) }} />
+          onChange={(value) => { if (value === 'custom') { setCustomFont(draft.appearance.fontFamily); setCustomMode(true); return } setCustomMode(false); commitNow({ fontFamily: value }) }} />
       </Row>
       <Row label="Font Face" htmlFor="style-font-face" labelHidden onReset={() => reset(RESET_KEYS.fontFace)} isDefault={isDefault(RESET_KEYS.fontFace)}>
         <Select id="style-font-face" value={faceKey(draft.appearance.fontWeight, draft.appearance.fontItalic)}
           options={faceOptions.map((face) => ({ value: faceKey(face.weight, face.italic), label: face.style }))}
           onChange={(value) => { const [weight, italic] = value.split(':'); commitNow({ fontWeight: Number(weight), fontItalic: italic === 'true' }) }} />
       </Row>
-      {!FONT_FAMILY_CHOICES.includes(draft.appearance.fontFamily as (typeof FONT_FAMILY_CHOICES)[number]) && <Row label="Custom font name" htmlFor="style-font-custom">
+      {showCustom && <Row label="Custom font name" htmlFor="style-font-custom">
         <TextField id="style-font-custom" value={customFont} onChange={applyCustomFont} onBlur={() => commit()}
           invalid={!!fontError} describedBy={fontError ? 'style-font-error' : undefined} />
       </Row>}
@@ -244,6 +248,7 @@ export function StylePanel({ style, onDraft, onCommit }: {
         <Row label="Color" htmlFor="style-emphasis-glow-color">
           <HexColorField id="style-emphasis-glow-color" value={draft.appearance.emphasisGlowColor} onDraft={(value) => change({ emphasisGlowColor: value })} onCommit={() => commit()} />
         </Row>
+        <Row label="Radius" htmlFor="style-emphasis-glow-radius"><SliderWithNumber id="style-emphasis-glow-radius" min={0} max={40} value={draft.appearance.emphasisGlowRadius} onDraft={(value) => change({ emphasisGlowRadius: value })} onCommit={() => commit()} /></Row>
       </div>}
       <Row label="Styles" onReset={() => reset(RESET_KEYS.emphasisStyles)} isDefault={isDefault(RESET_KEYS.emphasisStyles)}>
         <div className="segmented icons" role="group" id="style-emphasis-text-transform">

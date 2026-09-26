@@ -7,6 +7,7 @@ import { compareLayered } from './graphicsOrder'
 import { imagesHostPainted } from './hostPainted'
 import { shapeBox } from './shapePath'
 import { groupSpan } from './groupCommands'
+import { displayedCues } from './captionLanguages'
 import { activeClipsAt, activeCueAt, captionTrackLabel, trackLabel } from './timelineModel'
 
 /**
@@ -72,8 +73,9 @@ export function layerStackAt(project: CaptionProject, sequenceUs: number): Layer
   ].sort((a, b) => compareLayered(a.order, b.order))
   rows.push(...activeText.filter(({ order }) => order.layerOrder >= 0).reverse().map(({ row }) => row))
 
-  const shown = activeCueAt(at, project.tracks, project.clips, project.cues)
-  const trackIds = shown?.cue.captionTrackId ? [shown.cue.captionTrackId] : shown ? [] : project.cues.length ? project.captionTracks.map((track) => track.id) : []
+  const cues = displayedCues(project.cues, project.shownTranslation)
+  const shown = activeCueAt(at, project.tracks, project.clips, cues)
+  const trackIds = shown?.cue.captionTrackId ? [shown.cue.captionTrackId] : shown ? [] : cues.length ? project.captionTracks.map((track) => track.id) : []
   for (const id of trackIds) {
     const track = project.captionTracks.find((candidate) => candidate.id === id)
     if (!track) continue

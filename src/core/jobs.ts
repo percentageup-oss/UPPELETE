@@ -56,13 +56,15 @@ export const jobProgressPhaseSchema = z.enum([
 export type JobProgressPhase = z.infer<typeof jobProgressPhaseSchema>
 
 export const jobProgressSchema = z.discriminatedUnion('kind', [
-  z.strictObject({ kind: z.literal('indeterminate'), phase: jobProgressPhaseSchema }),
+  z.strictObject({ kind: z.literal('indeterminate'), phase: jobProgressPhaseSchema, detail: z.string().max(64).optional() }),
   z.strictObject({
     kind: z.literal('measured'),
     phase: jobProgressPhaseSchema,
     completed: microseconds,
     total: positiveInt,
     unit: z.enum(['sourceUs', 'items', 'frames']),
+    /** Which item the phase is working on, e.g. the translation target language code. */
+    detail: z.string().max(64).optional(),
   }).refine((p) => p.completed <= p.total, 'Progress exceeds total'),
 ])
 export type JobProgress = z.infer<typeof jobProgressSchema>

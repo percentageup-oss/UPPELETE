@@ -86,7 +86,7 @@ describe('applyTranscription with a translation', () => {
   }
 
   it('creates captions from the translated text, keeps the source-language recognition, and always needs review', () => {
-    const { project, summary } = applyTranscription(createProject(), transcript, run, null, newId, translation)
+    const { project, summary } = applyTranscription(createProject(), transcript, run, null, newId, [translation])
     expect(project.cues.map(({ startUs, endUs, text, textSource, timingSource, needsReview, transcriptionRunId }) => ({ startUs, endUs, text, textSource, timingSource, needsReview, transcriptionRunId }))).toEqual([
       { startUs: 1_000_000, endUs: 3_000_000, text: 'First sentence', textSource: 'model', timingSource: 'model', needsReview: true, transcriptionRunId: 'run-2' },
       { startUs: 25_000_000, endUs: 27_000_000, text: 'After a long pause (translated)', textSource: 'model', timingSource: 'model', needsReview: true, transcriptionRunId: 'run-2' },
@@ -100,12 +100,12 @@ describe('applyTranscription with a translation', () => {
 
   it('throws when the translation segment count does not match the transcript, never silently misaligning timing to the wrong text', () => {
     const mismatched: TranslatedTranscript = { ...translation, segments: translation.segments.slice(0, 1) }
-    expect(() => applyTranscription(createProject(), transcript, run, null, newId, mismatched)).toThrow()
+    expect(() => applyTranscription(createProject(), transcript, run, null, newId, [mismatched])).toThrow()
   })
 
   it('keeps authored captions and still translates the replaced segments when combined with keep-authored', () => {
     const untouched = cue('untouched', 25_000_000, 26_500_000, 'old model text')
-    const { project } = applyTranscription(withCues([untouched]), transcript, run, 'keep-authored', newId, translation)
+    const { project } = applyTranscription(withCues([untouched]), transcript, run, 'keep-authored', newId, [translation])
     expect(project.cues.map((item) => item.text)).toEqual(['First sentence', 'After a long pause (translated)'])
   })
 })
@@ -114,7 +114,7 @@ describe('applyTranscription of one video among several', () => {
   it('never offers another video’s captions for replacement, and binds the new captions and the run to the transcribed video', () => {
     const otherVideo = withCues([cue('a-line', 1_000_000, 3_000_000, 'Video A caption', { mediaAssetId: 'video-a', textSource: 'imported', timingSource: 'imported' })])
     // Numerically overlapping source time, but a different file: no choice is needed and nothing of A is touched.
-    const { project, summary } = applyTranscription(otherVideo, transcript, run, null, newId, null, 'video-b')
+    const { project, summary } = applyTranscription(otherVideo, transcript, run, null, newId, [], 'video-b')
     expect(project.cues.find((entry) => entry.id === 'a-line')).toEqual(otherVideo.cues[0])
     expect(project.cues.filter((entry) => entry.id !== 'a-line').every((entry) => entry.mediaAssetId === 'video-b')).toBe(true)
     expect(project.transcriptionRuns?.at(-1)?.mediaAssetId).toBe('video-b')
@@ -123,6 +123,6 @@ describe('applyTranscription of one video among several', () => {
 
   it('still asks before replacing the transcribed video’s own captions', () => {
     const same = withCues([cue('b-line', 1_000_000, 3_000_000, 'Video B caption', { mediaAssetId: 'video-b', textSource: 'imported', timingSource: 'imported' })])
-    expect(() => applyTranscription(same, transcript, run, null, newId, null, 'video-b')).toThrow(TranscriptionChoiceRequired)
+    expect(() => applyTranscription(same, transcript, run, null, newId, [], 'video-b')).toThrow(TranscriptionChoiceRequired)
   })
 })

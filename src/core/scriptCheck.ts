@@ -1,4 +1,4 @@
-import type { LanguageCode } from './transcription'
+import type { LanguageCode, TranslationTarget } from './transcription'
 
 /**
  * Whisper's `-l` flag only selects a language token; it does not force the model to write in that
@@ -85,13 +85,29 @@ function scriptCounts(text: string): Map<string, number> {
 }
 
 /**
+ * Transliteration targets expect Latin letters. The failure mode is the model returning the native script
+ * unchanged, so fail when the source language's own script dominates.
+ */
+function checkRomanizedScript(target: 'hi-latn' | 'ml-latn', texts: readonly string[]): ScriptCheckResult {
+  const nativeScript = target === 'hi-latn' ? 'Devanagari' : 'Malayalam'
+  const joined = texts.join(' ')
+  const counts = scriptCounts(joined)
+  const total = [...counts.values()].reduce((sum, count) => sum + count, 0)
+  if (total < MIN_SCRIPT_LETTERS) return { ok: true }
+  const nativeShare = (counts.get(nativeScript) ?? 0) / total
+  if (nativeShare < MIN_DOMINANT_SHARE) return { ok: true }
+  return { ok: false, expectedScript: 'Latin', dominantScript: nativeScript, dominantShare: nativeShare, sample: joined.slice(0, SAMPLE_LENGTH) }
+}
+
+/**
  * Checks recognized text against the script expected for `language`. Passes languages with no
  * declared script, passes whenever there are too few letters to judge reliably, and passes
  * whenever Latin letters dominate the whole transcript (English terms, or Whisper writing the
  * spoken language phonetically in English). Otherwise, judges the non-Latin remainder: passes if
  * the expected script dominates it, fails if a different non-Latin script does.
  */
-export function checkTranscriptScript(language: LanguageCode, texts: readonly string[]): ScriptCheckResult {
+export function checkTranscriptScript(language: TranslationTarget, texts: readonly string[]): ScriptCheckResult {
+  if (language === 'hi-latn' || language === 'ml-latn') return checkRomanizedScript(language, texts)
   const expectedScript = EXPECTED_SCRIPT[language]
   if (!expectedScript) return { ok: true }
 

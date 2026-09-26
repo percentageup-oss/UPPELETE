@@ -196,7 +196,7 @@ type TimelineProps = {
 
 export type TimelineMenuTarget =
   | { kind: 'clip' | 'cue' | 'word' | 'text' | 'shape' | 'zoomRegion' | 'blur' | 'effect'; id: string; unlinked?: boolean }
-  | { kind: 'empty'; trackId: string | null; atUs: number }
+  | { kind: 'empty'; trackId: string | null; atUs: number; captionLane?: boolean }
 
 const ZOOM_MIN = 1
 const ZOOM_MAX = 32
@@ -677,7 +677,7 @@ export function Timeline(props: TimelineProps) {
     const rect = content.getBoundingClientRect()
     const atUs = Math.max(0, Math.min(durationUs, Math.round(pixelToTime(clientX - rect.left, durationUs, rect.width))))
     const trackId = target.closest<HTMLElement>('[data-track-id]')?.dataset.trackId ?? null
-    props.onContextMenu({ kind: 'empty', trackId, atUs }, clientX, clientY)
+    props.onContextMenu({ kind: 'empty', trackId, atUs, captionLane: target.closest('[data-caption-track-id]') !== null }, clientX, clientY)
   }
   const onContentContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => openContextMenu(event, event.clientX, event.clientY)
   const onContentKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -801,7 +801,7 @@ export function Timeline(props: TimelineProps) {
               onSelectMarker={(markerId, atUs) => { onSeek(atUs); props.onSelectMarker?.(markerId) }} />
             if (row.kind === 'captionTrack') {
               const onTrack = displayCues.filter((cue) => cue.captionTrackId === row.track.id)
-              return <CaptionsTrack key={row.id} cues={onTrack} spansOf={spansOf} durationUs={durationUs} mode={display} locked={row.track.locked}
+              return <CaptionsTrack key={row.id} cues={onTrack} spansOf={spansOf} durationUs={durationUs} mode={display} locked={row.track.locked} trackId={row.track.id}
                 selectedCueId={selectedCueId} warningCueIds={warningCueIds} draggingId={drag?.kind === 'cue' ? drag.cue.id : null} selectedWordId={props.selectedWordId}
                 onBeginDrag={beginCueDrag} onKeyboardSelect={selectCueFromKeyboard}
                 onSeekSource={(cue, sourceUs, span) => onSeek(spanSequenceUs(span, Math.max(sourceUs, span.sourceStartUs)), cue.id)}

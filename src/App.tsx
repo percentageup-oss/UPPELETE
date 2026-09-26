@@ -11,6 +11,9 @@ import { diagnosticSummary } from './core/exportDiagnostic'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from 'react'
 import { validateCaptions, type ValidationIssue } from './core/captionCommands'
+import { applyTranslatedLayers, cuesForLanguage, displayedCues, projectLanguages, shownLanguage, type TranslatedLayerResult } from './core/captionLanguages'
+import type { TranslationFailure } from './TranslateCaptions'
+import type { TranslationTarget } from './core/transcription'
 import { applyEditCommand, type CommandContext, type EditCommand } from './core/commands'
 import { validateItems } from './core/itemCommands'
 import { summarizeCue, summarizeProject, type AgentRequest, type CommandOutcome, type ProjectSummary } from './core/agentProtocol'
@@ -21,7 +24,7 @@ import { writeCube } from './color/cube'
 import { bakeMatch, deriveMatch } from './color/referenceMatch'
 import { useAgentBridge, type AgentBridgeHandlers } from './agent/useAgentBridge'
 import {
-  activeClipsAt, activeCueAt, captionClips, clipEndUs, clipLengthUs, cuesInSequence, firstSequenceUsOf, sequenceDurationUs, sourceUsOfAssetAt,
+  activeClipsAt, activeCueAt, captionClips, clipEndUs, clipLengthUs, cuesInSequence, firstSequenceUsOf, sequenceDurationUs, sourceUsAt, sourceUsOfAssetAt,
   spansInSequence, trackLabel, videoUnderPlayhead, type ActiveClip,
 } from './core/timelineModel'
 import type { Selection } from './core/timelineItems'
@@ -45,8 +48,9 @@ import type { SilenceDetectionOptions } from './core/silenceRemoval'
 import { loadTranscriptionDefaults, saveTranscriptionDefaults } from './core/transcriptionDefaults'
 import { providerLabel, type ProviderKeyStatuses, type TranscriptionDefaults } from './core/transcriptionProviders'
 import type { MenuCommand } from './core/menuCommands'
-import { describeJob, type ApplyTranscript } from './TranscriptionPanel'
-import { applyTranscription } from './core/transcriptionApply'
+import { describeJob, type ApplyTranscript, type TranscribeContext, type TranscribeOpenRequest } from './TranscriptionPanel'
+import { captionGapAt, formatRangeTime, sourceRangeForSequenceRange, sourceUsForAssetAt, type SourceRange } from './core/transcriptionRange'
+import { applyTranscription, rebuildableRun, rebuildOriginalCues } from './core/transcriptionApply'
 import { translationTargetLabel } from './core/translationLanguages'
 import { Timeline, type TimelineMenuTarget } from './Timeline'
 import { ContextMenu } from './ContextMenu'
@@ -274,7 +278,8 @@ export default function App() {
     }
     stage.addEventListener('wheel', onWheel, { passive: false })
     return () => stage.removeEventListener('wheel', onWheel)
-  }, [])
+    // The stage only mounts outside the home view, so re-attach whenever the view changes.
+  }, [view])
   const cueButtonRefs = useRef(new Map<string, HTMLElement>())
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>('edit')
   // The left rail's active panel. `initial` (module scope) never has media, so 'media' is always
@@ -293,6 +298,7 @@ export default function App() {
   const setEditMode = (mode: EditMode) => { setEditModeState(mode); try { localStorage.setItem(EDIT_MODE_STORAGE_KEY, mode) } catch { /* a convenience only */ } }
   // The video transcription, alignment and silence removal work on: `null` follows the playhead.
   const [pickedVideoId, setPickedVideoId] = useState<string | null>(null)
+  const [transcribeRequest, setTranscribeRequest] = useState<TranscribeOpenRequest | null>(null)
   useEffect(() => {
     const none = { configured: false, source: 'keychain' as const }
     void window.captionStudio?.providerKeyStatuses().then(setProviderKeys).catch(() => setProviderKeys({ gemini: none, openai: none, elevenlabs: none }))
@@ -344,8 +350,22 @@ export default function App() {
   // The output frame (`project.format`) fixes the caption composition, so captions never re-layout
   // when the playhead crosses into a video of a different aspect.
   const captionComposition = useMemo(() => compositionFor(formatAspect(project.format)), [project.format])
-  const visibleCues = useMemo(() => dragPreview ? project.cues.map((cue) => cue.id === dragPreview.id ? dragPreview : cue) : project.cues, [project.cues, dragPreview])
-  const selected = visibleCues.find((cue) => cue.id === selectedCueId) ?? null
+  // Only the language shown on video (`displayedCues`); every consumer of on-screen captions reads this list.
+  const previewedCues = useMemo(() => dragPreview ? project.cues.map((cue) => cue.id === dragPreview.id ? dragPreview : cue) : project.cues, [project.cues, dragPreview])
+  const visibleCues = useMemo(() => displayedCues(previewedCues, project.shownTranslation), [previewedCues, project.shownTranslation])
+  const timelineCues = useMemo(() => displayedCues(project.cues, project.shownTranslation), [project.cues, project.shownTranslation])
+  // The Captions panel's active language tab (`null` = original). It follows the language shown on video and the
+  // language of a cue picked elsewhere; a tab whose language no longer exists falls back to the original.
+  const [languageTab, setLanguageTab] = useState<TranslationTarget | null>(project.shownTranslation ?? null)
+  const languages = useMemo(() => projectLanguages(project), [project.cues, project.transcriptionRuns])
+  const captionLanguageTab = languageTab !== null && languages.translations.includes(languageTab) ? languageTab : null
+  const panelCues = useMemo(() => cuesForLanguage(previewedCues, captionLanguageTab), [previewedCues, captionLanguageTab])
+  useEffect(() => { setLanguageTab(project.shownTranslation ?? null) }, [project.shownTranslation])
+  useEffect(() => {
+    const cue = selectedCueId ? projectRef.current.cues.find((item) => item.id === selectedCueId) : undefined
+    if (cue) setLanguageTab(cue.translationLanguage ?? null)
+  }, [selectedCueId])
+  const selected = previewedCues.find((cue) => cue.id === selectedCueId) ?? null
   const [shapeDraft, setShapeDraft] = useState<{ id: string; geometry: Shape['geometry'] } | null>(null)
   // A group drag or resize previews by applying the same command the release will commit.
   const [groupDraft, setGroupDraft] = useState<{ command: GroupCommand; rect: CompositionRect; base: CompositionRect } | null>(null)
@@ -438,6 +458,13 @@ export default function App() {
   const underElement = () => (under && underAssetId ? playback.transport.elementFor(under.clip.trackId, underAssetId) as HTMLVideoElement | null : null)
   const colorFrame = useColorFrame(railTab === 'color', underElement, [Math.round(currentUs), under?.clip.id, playback.poolVersion])
   const pickedVideo = (pickedVideoId ? assetById.get(pickedVideoId) : undefined) ?? underAsset ?? primary
+  // The playhead is rounded to 100 ms so the context is not rebuilt on every playback frame.
+  const playheadTenthUs = Math.round(currentUs / 100_000) * 100_000
+  const transcribeContext = useMemo((): TranscribeContext => ({
+    durationUs: pickedVideo?.metadata?.durationUs ?? null,
+    playheadSourceUs: pickedVideo ? sourceUsForAssetAt(playheadTenthUs, pickedVideo.id, project.clips) : null,
+    inOutSourceRange: pickedVideo && activeRange ? sourceRangeForSequenceRange(activeRange, pickedVideo.id, project.clips) : null,
+  }), [pickedVideo, project.clips, playheadTenthUs, activeRange?.startUs, activeRange?.endUs])
   const activeCue = activeCueAt(currentUs, project.tracks, project.clips, visibleCues)?.cue
   const timelineDisplay: CaptionDisplay = project.timelineDisplay ?? 'line'
   const captionDisplay: CaptionDisplay = project.captionDisplay ?? 'line'
@@ -763,24 +790,45 @@ export default function App() {
   // One undoable history step; human-authored captions are only replaced by an explicit choice (applyTranscription).
   const applyTranscript: ApplyTranscript = (result, choice) => {
     try {
-      const { run, transcript, translation, assetId } = result
-      const applied = applyTranscription(projectRef.current, transcript, run, choice, () => crypto.randomUUID(), translation, assetId)
+      const { run, transcript, translations, translationFailures, assetId, partial } = result
+      const applied = applyTranscription(projectRef.current, transcript, run, choice, () => crypto.randomUUID(), translations, assetId, { partial })
       setHistory((state) => commitHistory(state, { ...applied.project, updatedAt: new Date().toISOString() }))
       setSelectedId(applied.project.cues.find((cue) => cue.transcriptionRunId === run.id)?.id ?? selectedCueId)
       const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
       const parts = [transcript.segments.length ? `added ${plural(applied.summary.added, 'caption')}` : 'no speech was recognized, so no captions were added']
       if (applied.summary.removed) parts.push(`replaced ${plural(applied.summary.removed, 'existing caption')}`)
+      if (applied.summary.boundaryKept) parts.push(`kept ${plural(applied.summary.boundaryKept, 'caption')} crossing the range edge`)
       if (applied.summary.skippedOverlapping) parts.push(`skipped ${plural(applied.summary.skippedOverlapping, 'segment')} overlapping kept captions`)
       if (run.adjustedSegmentCount) parts.push(`${plural(run.adjustedSegmentCount, 'caption')} with adjusted timing marked Needs review`)
-      if (translation) parts.push(`translated to ${translationTargetLabel(translation.targetLanguage)} (${translation.model}), word timing estimated and marked Needs review`)
+      const uncovered = 'provider' in run ? run.uncoveredRanges ?? [] : []
+      if (uncovered.length) {
+        const shown = uncovered.slice(0, 3).map((gap) => `${formatClock(gap.startUs)}–${formatClock(gap.endUs)}`).join(', ')
+        parts.push(`${plural(uncovered.length, 'stretch')} of 10 s or more inside speech got no words from the provider, so captions may be missing (${shown}${uncovered.length > 3 ? ', …' : ''})`)
+      }
+      if (translations.length) parts.push(`translated to ${translations.map((entry) => `${translationTargetLabel(entry.targetLanguage)} (${entry.model})`).join(', ')}, ${translations[0] ? `${translationTargetLabel(translations[0].targetLanguage)} shown on video` : ''}; the original captions are kept too; translated word timing estimated and marked Needs review`)
+      if (translationFailures.length) parts.push(`${translationFailures.map((failure) => `${translationTargetLabel(failure.target)} failed (${failure.message})`).join('; ')}; the transcript and original captions were kept. Use + Translate… in the Captions tab to retry a failed language without transcribing again`)
       const language = run.language ? `, language ${run.language}` : ''
       const name = assetById.get(assetId)?.name
+      const part = partial ? ` ${formatClock(transcript.sourceRange.startUs)}–${formatClock(transcript.sourceRange.endUs)} of` : ''
       const how = 'provider' in run
-        ? `Transcribed${name ? ` ${name}` : ''} with ${providerLabel(run.provider)} (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
-        : `Transcribed${name ? ` ${name}` : ''} locally (${run.engine.id} ${run.engine.version}, ${run.model.fileName}, ${run.backends.join(' + ') || 'recognizer not run'}${language})`
-      setNotice({ tone: applied.summary.skippedOverlapping || run.adjustedSegmentCount || translation ? 'warning' : 'info', text: `${how}: ${parts.join('; ')}.` })
+        ? `Transcribed${part}${name ? ` ${name}` : ''} with ${providerLabel(run.provider)} (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
+        : `Transcribed${part}${name ? ` ${name}` : ''} locally (${run.engine.id} ${run.engine.version}, ${run.model.fileName}, ${run.backends.join(' + ') || 'recognizer not run'}${language})`
+      setNotice({ tone: applied.summary.skippedOverlapping || applied.summary.boundaryKept || run.adjustedSegmentCount || uncovered.length || translations.length || translationFailures.length ? 'warning' : 'info', text: `${how}: ${parts.join('; ')}.` })
       return { ok: true }
     } catch (error) { return { ok: false, message: errorText(error) } }
+  }
+
+  // Text-only translation of existing captions: every successful language lands in one undo step; failed ones are reported for retry.
+  const applyTranslations = ({ assetId, sourceLanguage, originals, results, failures }: { assetId: string; sourceLanguage: string | null; originals: Cue[]; results: TranslatedLayerResult[]; failures: TranslationFailure[] }) => {
+    const failureText = failures.map((failure) => `${translationTargetLabel(failure.target)} failed (${failure.message})`).join('; ')
+    if (!results.length) { setNotice({ tone: 'error', text: `No language was added: ${failureText}. Pick it again to retry.` }); return }
+    try {
+      const applied = applyTranslatedLayers(projectRef.current, assetId, sourceLanguage, originals, results, () => crypto.randomUUID())
+      setHistory((state) => commitHistory(state, { ...applied.project, updatedAt: new Date().toISOString() }))
+      setLanguageTab(results[0].target)
+      const added = applied.summaries.map((summary) => `${translationTargetLabel(summary.target)} (${summary.added} caption${summary.added === 1 ? '' : 's'}${summary.keptEdited ? `, kept ${summary.keptEdited} you edited` : ''})`).join(', ')
+      setNotice({ tone: 'warning', text: `Added ${added}. Translated captions are marked Needs review with estimated word timing; what is shown on video is unchanged.${failureText ? ` ${failureText}. Pick it again to retry.` : ''}` })
+    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
 
   const applyAlignedTiming = (transcript: Parameters<typeof applyAlignment>[1], run: Parameters<typeof applyAlignment>[2], snapshot: { id: string; startUs: number; endUs: number; text: string }[], assetId: string) => {
@@ -1496,7 +1544,7 @@ export default function App() {
     // time — what the viewer of the *exported* video actually sees. An In/Out export is the same
     // thing for the cropped project, so it starts at zero and only holds what that video shows.
     const source = inRange && activeRange ? projectInRange(project, activeRange) : project
-    const cues = cuesInSequence(source.cues, inRange && activeRange ? captionClips(source.tracks, source.clips) : captionVideo)
+    const cues = cuesInSequence(displayedCues(source.cues, project.shownTranslation), inRange && activeRange ? captionClips(source.tracks, source.clips) : captionVideo)
     const result = await window.captionStudio.saveText({ content: serializeSrt(cues), defaultName: `${project.title}${inRange && activeRange ? '-range' : ''}.srt` })
     if (result) setNotice({ tone: 'info', text: `Exported SRT to ${result.path}` })
   }
@@ -1687,10 +1735,11 @@ export default function App() {
   const seekBy = (deltaUs: number) => seekTo(Math.max(0, Math.min(durationUs, currentUs + deltaUs)))
 
   const selectAdjacentCue = (direction: -1 | 1) => {
-    if (!project.cues.length) return
-    const selectedIndex = project.cues.findIndex((cue) => cue.id === selectedCueId)
-    const nextIndex = selectedIndex < 0 ? (direction > 0 ? 0 : project.cues.length - 1) : Math.max(0, Math.min(project.cues.length - 1, selectedIndex + direction))
-    const cue = project.cues[nextIndex]
+    const cues = cuesForLanguage(project.cues, captionLanguageTab)
+    if (!cues.length) return
+    const selectedIndex = cues.findIndex((cue) => cue.id === selectedCueId)
+    const nextIndex = selectedIndex < 0 ? (direction > 0 ? 0 : cues.length - 1) : Math.max(0, Math.min(cues.length - 1, selectedIndex + direction))
+    const cue = cues[nextIndex]
     seek(cue)
     setFocusCueId(cue.id)
   }
@@ -1751,7 +1800,7 @@ export default function App() {
     const limitUs = under ? under.clip.sourceEndUs : durationUs
     if (startUs >= limitUs) { setNotice({ tone: 'error', text: 'Move the playhead before the end of the media to add a cue.' }); return }
     const endUs = Math.min(startUs + lengthUs, limitUs)
-    runCommand({ type: 'add', cue: { id: crypto.randomUUID(), ...(underAssetId ? { mediaAssetId: underAssetId } : {}), startUs, endUs, text: '', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] } })
+    runCommand({ type: 'add', cue: { id: crypto.randomUUID(), ...(underAssetId ? { mediaAssetId: underAssetId } : {}), ...(captionLanguageTab ? { translationLanguage: captionLanguageTab } : {}), startUs, endUs, text: '', timingSource: 'manual', needsReview: false, textSource: 'user', words: [] } })
   }
   const addWord = () => addCue(600_000)
 
@@ -2171,7 +2220,19 @@ export default function App() {
       case 'effect': return [{ id: 'ctx-effect-delete', label: 'Delete', onSelect: () => runCommand({ type: 'effect-delete', effectId: target.id }), shortcut: 'Del' }]
       case 'empty': {
         const gap = target.trackId ? gapsOnTrack(project.clips, target.trackId).find((entry) => target.atUs >= entry.startUs && target.atUs < entry.endUs) : undefined
+        const captionGap = target.captionLane ? (() => {
+          const clicked = videoUnderPlayhead(target.atUs, project.tracks, project.clips)
+          const assetId = clicked ? assetIdOf(clicked.clip) : null
+          const durationUs = assetId ? assetById.get(assetId)?.metadata?.durationUs : undefined
+          if (!clicked || !assetId || !durationUs) return null
+          const range = captionGapAt(project.cues, assetId, durationUs, Math.round(sourceUsAt(clicked.clip, target.atUs)))
+          return range ? { assetId, range } : null
+        })() : null
         return [
+          ...(captionGap ? [
+            { id: 'ctx-transcribe-gap', label: `Transcribe this gap (${formatRangeTime(captionGap.range.startUs)}–${formatRangeTime(captionGap.range.endUs)})…`, onSelect: () => requestTranscribeGap(captionGap.assetId, captionGap.range) },
+            { id: 'ctx-sep-transcribe', separator: true as const },
+          ] : []),
           ...(gap && target.trackId ? [{ id: 'ctx-close-gap', label: 'Close gap', onSelect: () => runCommand({ type: 'gap-close', trackId: target.trackId!, atUs: gap.startUs }) }] : []),
           { id: 'ctx-split-all', label: 'Split all clips at playhead', onSelect: () => runCommand({ type: 'clip-split', atUs: Math.round(currentUs), idPrefix: crypto.randomUUID() }, () => null), disabledReason: canSplitClips ? null : 'No clip under the playhead', shortcut: shortcutLabel('B') },
           { id: 'ctx-sep-add', separator: true },
@@ -2183,6 +2244,11 @@ export default function App() {
         ]
       }
     }
+  }
+  const requestTranscribeGap = (assetId: string, range: SourceRange) => {
+    setPickedVideoId(assetId)
+    setRailTab('captions')
+    setTranscribeRequest({ assetId, range, nonce: Date.now() })
   }
   const summaryAsset = underAsset ?? primary
 
@@ -2279,7 +2345,15 @@ export default function App() {
           onImportFiles={() => void importAssetFiles()} onDropFiles={(files) => inspectAndAdd(files)}
           onAddVideo={(asset) => addVideoClip(asset)} onAddOverlayAtPlayhead={addOverlayAtPlayhead} onAddSfxAtPlayhead={addSfxAtPlayhead}
           onRemoveAsset={removeAsset} onRelinkAsset={(assetId) => void relinkAsset(assetId)} />}
-        {railTab === 'captions' && <CaptionsPanel cueCount={project.cues.length} visibleCues={visibleCues} selectedCueId={selectedCueId}
+        {railTab === 'captions' && <CaptionsPanel allCues={project.cues} onTranslated={applyTranslations} cueCount={panelCues.length} totalCueCount={project.cues.length} visibleCues={panelCues} selectedCueId={selectedCueId}
+          languageTab={captionLanguageTab} languages={languages} shownTranslation={shownLanguage(project.cues, project.shownTranslation)}
+          onLanguageTab={setLanguageTab} onShowOnVideo={(language) => runCommand({ type: 'set-shown-translation', language })}
+          onRebuildOriginal={pickedVideo && rebuildableRun(project, pickedVideo.id) ? () => {
+            const rebuilt = rebuildOriginalCues(projectRef.current, pickedVideo.id, () => crypto.randomUUID())
+            if (!rebuilt) return
+            commit(() => rebuilt)
+            setNotice({ tone: 'info', text: 'Rebuilt the original captions from the saved recognition.' })
+          } : null}
           selectedWordId={selectedWord?.id ?? null} warningCueIds={warningCueIds}
           notInSequence={(cue) => hasVideo && (!cue.mediaAssetId || spansInSequence(cue, cue.mediaAssetId, captionVideo).length === 0)}
           videoNameOf={(cue) => cue.mediaAssetId ? assetById.get(cue.mediaAssetId)?.name ?? null : null}
@@ -2290,9 +2364,9 @@ export default function App() {
           onPlacementOverride={(override) => selected && runCommand({ type: 'set-placement-override', cueId: selected.id, override })}
           onEstimate={() => selected && runCommand({ type: 'estimate-words', cueId: selected.id, idPrefix: crypto.randomUUID() })}
           onGroup={(options, all) => runCommand(all
-            ? { type: 'regroup-many', cueIds: project.cues.map((cue) => cue.id), idPrefix: crypto.randomUUID(), estimateMissing: false, options }
+            ? { type: 'regroup-many', cueIds: panelCues.map((cue) => cue.id), idPrefix: crypto.randomUUID(), estimateMissing: false, options }
             : selected ? { type: 'regroup', cueId: selected.id, idPrefix: crypto.randomUUID(), estimateMissing: false, options } : { type: 'regroup-many', cueIds: [], idPrefix: crypto.randomUUID(), estimateMissing: false, options })}
-          onSelect={seek} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text, estimateIfUntimed: crypto.randomUUID() })} onSelectWord={onSelectSpan}
+          onSelect={seek} onApplyEdits={(edits) => runCommand({ type: 'update-text-many', edits, estimateIfUntimed: crypto.randomUUID() }, () => ({ tone: 'info', text: `Updated ${edits.length} caption${edits.length === 1 ? '' : 's'}.` }))} onUpdateText={(cueId, text) => runCommand({ type: 'update-text', cueId, text, estimateIfUntimed: crypto.randomUUID() })} onSelectWord={onSelectSpan}
           onWordAction={(cueId, type, span) => {
             const command = wordActionCommand(cueId, type, span, () => crypto.randomUUID())
             if (command) runCommand(command)
@@ -2301,14 +2375,15 @@ export default function App() {
           onEstimateMissing={() => selected && runCommand({ type: 'estimate-words', cueId: selected.id, idPrefix: crypto.randomUUID(), missingOnly: true })}
           cueButtonRefs={cueButtonRefs}
           videos={videoAssets(project)} pickedVideo={pickedVideo} onPickVideo={setPickedVideoId} mediaReady={pickedReady} onApplyTranscript={applyTranscript}
-          providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={() => setSettingsTab('transcription')} onImportSrt={() => void importSrt()} />}
+          providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={() => setSettingsTab('transcription')} onImportSrt={() => void importSrt()} transcribeContext={transcribeContext}
+          runs={project.transcriptionRuns} openRequest={transcribeRequest} onOpenRequestIgnored={() => setNotice({ tone: 'info', text: 'A transcription is already running; the gap was not opened.' })} />}
         {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
           onImportAndAdd={() => void importImageOverlay()} mediaReady onAddShape={addShapeAtPlayhead} onAddTemplate={(id, glass) => void addTemplateAtPlayhead(id, glass)} />}
         {railTab === 'titles' && <TitlesPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []} selectedText={selectedText} target={selectedText ? 'text' : 'captions'}
           onApplyTemplate={applyTemplate} onCommitMotion={(motion) => commitStyle({ ...effectiveStyle, motion, titleMotion: undefined })}
           onSavePreset={savePreset} onApplyPreset={applyPreset} onDeletePreset={deletePreset}
           onEstimate={selectedText ? undefined : activeCue ? () => runCommand({ type: 'estimate-words', cueId: activeCue.id, idPrefix: crypto.randomUUID() }) : undefined}
-          onAddText={addTextAtPlayhead} />}
+          onAddText={() => addTextAtPlayhead()} />}
         {railTab === 'effects' && <EffectsPanel onAddAtPlayhead={addEffectPreset} onAddBackground={(look) => addBackground(look, Math.round(currentUs))} />}
         {railTab === 'color' && <ColorPanel lutAssets={lutAssetsList} lutIssues={media.issues} frame={colorFrame} captureSource={() => captureFrame(underElement(), 320)}
           onSaveMatch={saveMatchLut} onAddAtPlayhead={(grade) => addAdjustment(grade, Math.round(currentUs), null)} onImportLut={() => void importLut()} onRelinkLut={(assetId) => void relinkLut(assetId)} />}
@@ -2534,7 +2609,7 @@ export default function App() {
       </aside>
     </section>
 
-    <Timeline cues={project.cues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} shapes={project.shapes} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
+    <Timeline cues={timelineCues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} shapes={project.shapes} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
       selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
       warningCueIds={warningCueIds} waveforms={waveforms}
       waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
@@ -2690,10 +2765,25 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
   const [textStageFrame, setTextStageFrame] = useState<{ id: string; frame: CaptionFrame | null } | null>(null)
   const captureTextStageFrame = (id: string, frame: CaptionFrame | null) => setTextStageFrame((current) =>
     current?.id === id && current.frame?.layout === frame?.layout ? current : { id, frame })
+  // A press on an unselected title selects it and is handed to the selected title's stage editor as a
+  // pending move, so select-and-drag is one gesture. Cleared on release if the drag never started.
+  const [pendingPress, setPendingPress] = useState<{ textId: string; clientX: number; clientY: number; pointerId: number } | null>(null)
+  useEffect(() => {
+    if (!pendingPress) return
+    const clear = () => setPendingPress(null)
+    window.addEventListener('pointerup', clear); window.addEventListener('pointercancel', clear)
+    return () => { window.removeEventListener('pointerup', clear); window.removeEventListener('pointercancel', clear) }
+  }, [pendingPress])
+  const titleHitsAt = (clientX: number, clientY: number) => document.elementsFromPoint(clientX, clientY)
+    .flatMap((element) => { const id = element.getAttribute('data-text-overlay-hit'); return id ? [id] : [] })
+  const beginTitlePress = (textId: string, event: { button: number; clientX: number; clientY: number; pointerId: number }) => {
+    onSelectText(textId)
+    if (event.button === 0) setPendingPress({ textId, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId })
+  }
   const textActor = (item: TextOverlay) => <TextOverlayActor key={item.id} item={item} timestampUs={frameUs} composition={composition}
     onFrame={item.id === selectedTextId ? (frame) => captureTextStageFrame(item.id, frame) : undefined} editing={item.id === editingTextId}
     onLayout={item.groupId ? (frame) => onTextLayout(item.id, frame) : undefined}
-    onPointerDown={() => onSelectText(item.id)} onDoubleClick={() => onEditText(item.id)} />
+    onPointerDown={(event) => beginTitlePress(item.id, event)} onDoubleClick={() => onEditText(item.id)} />
   const shapeActor = (item: Shape) => <ShapeActor key={item.id} shape={item} timestampUs={frameUs} composition={composition}
     onPointerDown={() => onSelectShape(item.id)} onDoubleClick={() => onSelectShapePart(item.id)} />
   // Text and shapes interleave by one shared layer order, the same sort the export host uses.
@@ -2739,11 +2829,22 @@ function CaptionStage({ clock, cues, dragPreview, composition, style, display, t
       overCaption={<>{aboveText}{fadeLayer}</>} />
     {selectedStageText ? <CaptionStageEditor frame={selectedTextFrame} composition={composition} appearance={selectedStageText.style.appearance}
       selected onSelect={() => onSelectText(selectedStageText.id)} onDoubleClick={() => onEditText(selectedStageText.id)} fixedScope="project"
+      pendingPress={pendingPress?.textId === selectedStageText.id ? pendingPress : null} onPressConsumed={() => setPendingPress(null)}
+      onClickThrough={(clientX, clientY) => {
+        const ids = titleHitsAt(clientX, clientY)
+        if (ids.length > 1) onSelectText(ids[(Math.max(0, ids.indexOf(selectedStageText.id)) + 1) % ids.length])
+      }}
       onDraft={(patch) => onStyleDraft({ ...selectedStageText.style, appearance: { ...selectedStageText.style.appearance, ...patch } })}
       onCommit={(patch) => onStyleCommit({ ...selectedStageText.style, appearance: { ...selectedStageText.style.appearance, ...patch } })} />
       : <CaptionStageEditor frame={stageFrame} composition={composition} appearance={resolvedStyle.appearance}
         selected={lineCue !== null && selectedCueId === lineCue.id}
-        onSelect={() => lineCue && onSelectCue(lineCue.id)} onDraft={draftPlacement} onCommit={commitPlacement} />}
+        onSelect={() => lineCue && onSelectCue(lineCue.id)} onDraft={draftPlacement} onCommit={commitPlacement}
+        onPressThrough={(event) => {
+          const [textId] = titleHitsAt(event.clientX, event.clientY)
+          if (!textId) return false
+          beginTitlePress(textId, event)
+          return true
+        }} />}
     {editingTextItem && <TextStageInput key={editingTextItem.id} item={editingTextItem} frame={editingFrame} composition={composition}
       selectAll={editingTextSelectAll} onFinish={onFinishTextEdit} onCommit={(text) => onCommitText(editingTextItem.id, text)} />}
     {fallback && <span role="status" data-word-display-notice style={{ position: 'absolute', bottom: 8, right: 8, maxWidth: '40%',

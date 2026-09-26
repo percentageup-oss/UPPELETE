@@ -264,10 +264,35 @@ export async function transcribeWithWhisper(whisperPath: string, task: Transcrib
   }
 }
 
+/** Shorter pauses than the 2 s gating silence, used only as preferred split points inside over-long speech. */
+const SPLIT_PAUSE_MS = 250
+
+/**
+ * Splits a speech span into parts of at most `maxSamples`. Each cut goes to the middle of the pause nearest the limit
+ * within the last half of the part, so it lands between words; with no such pause it falls back to a fixed cut.
+ */
+export function splitAtPauses(span: SampleSpan, maxSamples: number, pauses: readonly SampleSpan[]): SampleSpan[] {
+  const parts: SampleSpan[] = []
+  let start = span.startSample
+  while (span.endSample - start > maxSamples) {
+    const limit = start + maxSamples
+    const floor = start + Math.floor(maxSamples / 2)
+    let cut = limit
+    for (const pause of pauses) {
+      const middle = Math.floor((pause.startSample + pause.endSample) / 2)
+      if (middle > floor && middle <= limit && (cut === limit || middle > cut)) cut = middle
+    }
+    parts.push({ startSample: start, endSample: cut })
+    start = cut
+  }
+  parts.push({ startSample: start, endSample: span.endSample })
+  return parts
+}
+
 /**
  * The same long-silence gating whisper.cpp uses, for engines that take whole files (cloud transcription): each padded
- * speech region, further split at `maxChunkUs`, is written to its own WAV in `outputDirectory`. A fixed split can
- * fall inside a word; it only happens for speech with no 2-second pause for `maxChunkUs`. Times are relative to the
+ * speech region, further split at `maxChunkUs`, is written to its own WAV in `outputDirectory`. Splits prefer a short
+ * pause near the limit and only fall inside a word for speech with no such pause. Times are relative to the
  * extracted audio and bounded by its window.
  */
 export async function writeSpeechChunks(task: SpeechChunksTask, signal: AbortSignal, progress: Progress): Promise<Extract<MediaResult, { operation: 'speechChunks' }>> {
@@ -280,18 +305,17 @@ export async function writeSpeechChunks(task: SpeechChunksTask, signal: AbortSig
   const source = await open(task.audioPath, 'r')
   try {
     const detector = new LongSilenceDetector({ sampleRate })
-    await forEachSampleBlock(source, info, signal, (samples) => detector.push(samples))
+    const pauseDetector = new LongSilenceDetector({ sampleRate, minSilenceMs: SPLIT_PAUSE_MS })
+    await forEachSampleBlock(source, info, signal, (samples) => { detector.push(samples); pauseDetector.push(samples) })
     const { totalSamples, silences } = detector.finish()
+    const pauses = pauseDetector.finish().silences
     const toUs = (span: SampleSpan) => ({
       startUs: Math.min(samplesToUs(span.startSample, sampleRate), task.durationUs),
       endUs: Math.min(samplesToUs(span.endSample, sampleRate), task.durationUs),
     })
     const maxSamples = Math.max(1, Math.floor(task.maxChunkUs * sampleRate / 1_000_000))
-    const spans = planSpeechChunks(totalSamples, silences, { sampleRate }).flatMap((span) => {
-      const parts: SampleSpan[] = []
-      for (let start = span.startSample; start < span.endSample; start += maxSamples) parts.push({ startSample: start, endSample: Math.min(span.endSample, start + maxSamples) })
-      return parts
-    }).filter((span) => { const range = toUs(span); return range.endUs > range.startUs })
+    const spans = planSpeechChunks(totalSamples, silences, { sampleRate }).flatMap((span) => splitAtPauses(span, maxSamples, pauses))
+      .filter((span) => { const range = toUs(span); return range.endUs > range.startUs })
     const chunks = []
     for (const [index, span] of spans.entries()) {
       const chunkPath = path.join(task.outputDirectory, `speech-${String(index).padStart(5, '0')}.wav`)

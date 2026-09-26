@@ -22,7 +22,7 @@ When text changes, keep unchanged token IDs/timings where safe and mark affected
 
 ## Transcription
 Extract audio with source-time mapping. Let user choose language and local model. Show download size and disk location, model removal, device, progress/cancellation and actionable errors. Support CPU fallback. Store engine/model metadata. Distinguish recognition, word alignment and readable phrase grouping. Maintain original time offsets through silence detection/chunking so long pauses do not drift. Never fill silence with invented transcript.
-Benchmark Malayalam/English clips before choosing model defaults. Optional Gemini-powered translation into a chosen target language is supported for either engine (see below); Manglish transliteration is deferred.
+Benchmark Malayalam/English clips before choosing model defaults. Optional Gemini-powered translation into a chosen target language is supported for either engine (see below); Hinglish and Manglish (Latin-script transliteration) are offered as Gemini targets on caption text only, with estimated timing and Needs review.
 
 ## SRT
 Import video plus SRT as an independent workflow. Cue-level animation works immediately. Word animation requires model-derived/manual timing or explicitly labeled estimates. Optional audio alignment must not rewrite imported text. Export SRT contains plain captions/timestamps; visual styles and animations live in project files and rendered video.
@@ -49,4 +49,4 @@ A user may explicitly enable a loopback-only MCP server so a local Claude client
 A stacked multi-track timeline (schema 5, [EDITING.md](EDITING.md)): several videos in one project, each with its sound on a linked audio lane (link/unlink, linked cut/move/trim, mute/solo/volume per audio track, disable a clip), named video and audio tracks, clips at any position with gaps, trim/split/move/ripple, picture-in-picture, images over the video, music and sound effects in sequence time, per-video transcription, and export of the whole timeline.
 
 ## Deferred
-Transitions and crossfades, freeze frame/reverse/frame-interpolated slow motion, general keyframed or tracked effects, nested sequences, audio ducking, additional cloud providers, accounts, collaboration, diarization, AI emojis/keywords, Manglish transliteration, marketplace and batch export. Per-clip speed (constant or a ramp curve) is supported. Zoom regions are the narrow static-target exception: they have eased entry/exit ramps, not keyframes or tracking.
+Transitions and crossfades, freeze frame/reverse/frame-interpolated slow motion, general keyframed or tracked effects, nested sequences, audio ducking, additional cloud providers, accounts, collaboration, diarization, AI emojis/keywords, marketplace and batch export. Per-clip speed (constant or a ramp curve) is supported. Zoom regions are the narrow static-target exception: they have eased entry/exit ramps, not keyframes or tracking.

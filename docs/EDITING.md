@@ -1281,3 +1281,11 @@ The Overlays panel has a **Templates** section: category tabs (Chat, Callouts, C
 - **Card limits:** the Volume slider's fill fades in (shapes have no vertical reveal); the Progress bar and chapter line grow along x only. Subscribe pill, Like button, Search bar, Post card, iOS notification, Price tag and Lower third position their parts from insert-time measurements and do not refit when their text is edited. The Timer chip and Pill tag do refit. Tiles whose template can be glass carry a "Liquid Glass" tag; whether glass looks right has not been seen.
 - **Limits:** the Quote card, DM notification and Sticky note size their shapes from the measured text at insert time only (no `fitTo` for the parts that hold several titles); the quote card refits to the quote body, with fixed padding that leaves room for the glyph and attribution. Sample copy is English; retype it in the inspector.
 - **Agents:** `list_creative_options` lists `overlayTemplates` (ids, member keys, text keys); insert with the `edit` command `template-insert`.
+
+## Caption languages (schema 24)
+
+A cue is either an original-language cue (no `translationLanguage`) or belongs to one translation (`translationLanguage`, an ISO 639 code). The project keeps `shownTranslation` (absent = the original is shown) and `translationRuns` (Gemini translation provenance; the legacy `transcriptionRuns[].translation` stays readable but is no longer written).
+
+Everything that decides what is on screen (preview, export manifests, the layer stack, the timeline, SRT export) passes its cues through `displayedCues` (`src/core/captionLanguages.ts`) before `activeCueAt`, so `activeCueAt` itself is unchanged. If the shown language has no cues left, the original is shown. `validateCaptions` groups by video and language, so an original and its translation never raise overlap warnings; `merge-next` and the word-move commands only join cues of the same language. `set-shown-translation { language | null }` chooses the shown language and is undoable.
+
+Migration 23 to 24 (`migrateV23.ts`) tags the cues of every run that has a legacy `translation` with its target language and sets `shownTranslation`, so old translated projects render as before.

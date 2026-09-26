@@ -1,14 +1,16 @@
-import type { LanguageCode } from './transcription'
+import type { TranslationTarget } from './transcription'
 
 /**
- * Curated translation targets offered in the Transcribe dialog's "Translate to" dropdown.
- * Every code is a plain ISO 639-1 code (never a locale tag), so it satisfies
- * `languageCodeSchema` and, where the script check declares one, `EXPECTED_SCRIPT`.
+ * Curated translation targets offered in the Transcribe dialog and the translate dialog. Plain codes are ISO 639-1
+ * spoken languages (they satisfy `languageCodeSchema` and, where declared, `EXPECTED_SCRIPT`). `hi-latn` and
+ * `ml-latn` are transliteration targets: the same language written in Latin letters with English words kept.
  */
-export const TRANSLATION_TARGETS: { code: LanguageCode; label: string }[] = [
+export const TRANSLATION_TARGETS: { code: TranslationTarget; label: string; hint?: string }[] = [
   { code: 'en', label: 'English' },
   { code: 'ml', label: 'Malayalam' },
+  { code: 'ml-latn', label: 'Manglish (Latin script)', hint: 'Malayalam in English letters, English words kept' },
   { code: 'hi', label: 'Hindi' },
+  { code: 'hi-latn', label: 'Hinglish (Latin script)', hint: 'Hindi in English letters, English words kept' },
   { code: 'ta', label: 'Tamil' },
   { code: 'kn', label: 'Kannada' },
   { code: 'te', label: 'Telugu' },
@@ -25,4 +27,12 @@ export const TRANSLATION_TARGETS: { code: LanguageCode; label: string }[] = [
 
 export function translationTargetLabel(code: string): string {
   return TRANSLATION_TARGETS.find((entry) => entry.code === code)?.label ?? code
+}
+
+export function isRomanizedTarget(code: string): code is 'hi-latn' | 'ml-latn' {
+  return code === 'hi-latn' || code === 'ml-latn'
+}
+
+export function romanizedBase(code: 'hi-latn' | 'ml-latn'): 'hi' | 'ml' {
+  return code === 'hi-latn' ? 'hi' : 'ml'
 }

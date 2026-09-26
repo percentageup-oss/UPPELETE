@@ -12,6 +12,7 @@ import type { ExportOutcome, ExportStartRequest } from './export/ipc'
 
 import type { ManagedModelId, ModelListing, ModelState } from './core/modelCatalog'
 import type { TranscriptionAvailability, TranscriptionOutcome, TranscriptionProgress, TranscriptionStartRequest } from './core/transcriptionIpc'
+import type { CaptionTranslationOutcome, CaptionTranslationProgress, CaptionTranslationRequest } from './core/captionTranslationIpc'
 import type { MenuCommand } from './core/menuCommands'
 import type { AlignmentOutcome, AlignmentProgress, AlignmentSettingsStatus, AlignmentStartRequest } from './core/alignmentIpc'
 import type { CloudProviderId, ProviderKeyStatuses } from './core/transcriptionProviders'
@@ -42,6 +43,9 @@ declare global {
       startTranscription(request: TranscriptionStartRequest): Promise<TranscriptionOutcome>
       cancelTranscription(requestId: string): Promise<void>
       onTranscriptionProgress(callback: (message: TranscriptionProgress) => void): () => void
+      translateCaptions(request: CaptionTranslationRequest): Promise<CaptionTranslationOutcome>
+      cancelCaptionTranslation(requestId: string): Promise<void>
+      onCaptionTranslationProgress(callback: (message: CaptionTranslationProgress) => void): () => void
       alignmentSettingsStatus(): Promise<AlignmentSettingsStatus>
       saveGeminiApiKey(apiKey: string): Promise<AlignmentSettingsStatus>
       removeGeminiApiKey(): Promise<AlignmentSettingsStatus>

@@ -12,6 +12,7 @@ import type { ProxyCreateRequest, ProxySupport, PlaybackProxyEnsureRequest, Play
 
 import { modelStateSchema, type ManagedModelId, type ModelListing, type ModelState } from '../src/core/modelCatalog'
 import { transcriptionProgressSchema, type TranscriptionAvailability, type TranscriptionOutcome, type TranscriptionProgress, type TranscriptionStartRequest } from '../src/core/transcriptionIpc'
+import { captionTranslationProgressSchema, type CaptionTranslationOutcome, type CaptionTranslationProgress, type CaptionTranslationRequest } from '../src/core/captionTranslationIpc'
 import { exportProgressSchema, type ExportOutcome, type ExportProgress, type ExportStartRequest } from '../src/export/ipc'
 import type { ExportSupport } from '../src/core/exportSupport'
 import { isMenuCommand, type MenuCommand } from '../src/core/menuCommands'
@@ -69,6 +70,16 @@ contextBridge.exposeInMainWorld('captionStudio', {
     }
     ipcRenderer.on('transcription:progress', listener)
     return () => ipcRenderer.removeListener('transcription:progress', listener)
+  },
+  translateCaptions: (request: CaptionTranslationRequest): Promise<CaptionTranslationOutcome> => ipcRenderer.invoke('captions:translate', request),
+  cancelCaptionTranslation: (requestId: string): Promise<void> => ipcRenderer.invoke('captions:translate:cancel', requestId),
+  onCaptionTranslationProgress: (callback: (message: CaptionTranslationProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = captionTranslationProgressSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('captions:translate:progress', listener)
+    return () => ipcRenderer.removeListener('captions:translate:progress', listener)
   },
   alignmentSettingsStatus: (): Promise<AlignmentSettingsStatus> => ipcRenderer.invoke('alignment:settings-status'),
   saveGeminiApiKey: (apiKey: string): Promise<AlignmentSettingsStatus> => ipcRenderer.invoke('alignment:settings-save', apiKey),

@@ -308,7 +308,17 @@ even when the engine is whisper.cpp — only the recognized **text**, never audi
 
 Limitations: no live request has been run from this code (see STATUS.md). The offered target languages are a
 curated list of 15 ISO 639-1 codes (`src/core/translationLanguages.ts`), not the full set Gemini could plausibly
-translate into. Transliteration (writing text in a non-native script) remains out of scope.
+translate into.
+
+### Hinglish and Manglish targets
+
+Two extra targets, `hi-latn` (Hinglish) and `ml-latn` (Manglish), are **transliteration, not translation**: the
+caption text is rewritten in Latin letters as people type it in chat, English words are kept as written, and the
+meaning is not changed. They use the same Gemini text call, the same translation layer (tab, "Show on video", SRT
+export, `needsReview` cues with estimated word timing) and send caption text only, never audio. `translationTargetSchema`
+accepts them wherever a target is stored or requested; recognition-side `languageCodeSchema` is unchanged. The script
+check expects Latin for these targets and fails as a retryable `UNEXPECTED_SCRIPT` when the model returns the native
+script (Devanagari or Malayalam) untransliterated. Quality on real clips is not yet verified.
 
 ## What is deliberately not here
 

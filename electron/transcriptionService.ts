@@ -5,8 +5,9 @@ import { AUDIO_EXTRACTION_VERSION } from '../src/core/audioExtraction'
 import { jobFailure, type JobSnapshot } from '../src/core/jobs'
 import type { TranscriptionRun } from '../src/core/model'
 import { MODEL_CATALOG, type ManagedModelId } from '../src/core/modelCatalog'
-import type { LanguageCode, SourceTimedTranscript, TranslatedTranscript } from '../src/core/transcription'
-import type { TranscriptionAvailability, TranscriptionDevice } from '../src/core/transcriptionIpc'
+import type { TranslationTarget, SourceTimedTranscript } from '../src/core/transcription'
+import type { TranscriptionAvailability, TranscriptionDevice, TranslationFailure } from '../src/core/transcriptionIpc'
+import type { TranslationWithUsage } from '../src/core/transcriptionApply'
 import type { MediaWorkerClient } from '../workers/media/client'
 import { runTranscription } from '../workers/transcription/run'
 import type { JobContext, JobHandle, JobScheduler } from './jobScheduler'
@@ -43,8 +44,9 @@ export type TranscriptionRequest = {
   modelId: ManagedModelId
   language: string
   device: TranscriptionDevice
-  translateTo: LanguageCode | null
-  /** Required only when `translateTo` is set; whisper.cpp itself never sees or needs a key. */
+  /** Empty means no translation; each target is one text-only call after the single audio pass. */
+  translateTo: TranslationTarget[]
+  /** Required only when `translateTo` is non-empty; whisper.cpp itself never sees or needs a key. */
   apiKey?: string
 }
 
@@ -56,10 +58,10 @@ export type CloudTranscriptionRequest = {
   /** Absent means the provider's catalog default. */
   model?: string
   language: CloudLanguageChoice
-  translateTo: LanguageCode | null
+  translateTo: TranslationTarget[]
   /** The key of `engine`. */
   apiKey: string
-  /** Translation always uses Gemini; needed only when `translateTo` is set and `engine` is not Gemini. */
+  /** Translation always uses Gemini; needed only when `translateTo` is non-empty and `engine` is not Gemini. */
   translationApiKey?: string
 }
 
@@ -69,7 +71,7 @@ const CLOUD_ENGINES: Record<CloudProviderId, Omit<CloudAdapterConfig, 'model'>> 
   elevenlabs: { engineId: ELEVENLABS_ENGINE_ID, engineVersion: ELEVENLABS_ENGINE_VERSION, maxChunkUs: ELEVENLABS_MAX_CHUNK_US },
 }
 
-export type TranscriptionJobValue = { transcript: SourceTimedTranscript; run: TranscriptionRun; translation: TranslatedTranscript | null }
+export type TranscriptionJobValue = { transcript: SourceTimedTranscript; run: TranscriptionRun; translations: TranslationWithUsage[]; translationFailures: TranslationFailure[] }
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -175,12 +177,12 @@ export class TranscriptionService {
       const report = adapter.lastRun
       if (!report) throw jobFailure('INTERNAL_ERROR', 'The whisper.cpp run report is missing.')
 
-      const translated = request.translateTo ? await this.translate(request.translateTo, request.apiKey!, transcript, ctx) : null
+      const translated = await this.translateAll(request.translateTo, request.apiKey, transcript, ctx)
 
       if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Transcription was cancelled before its captions were delivered.')
       return {
         transcript,
-        translation: translated?.translation ?? null,
+        ...translated,
         run: {
           id: randomUUID(),
           createdAt: (this.options.now?.() ?? new Date()).toISOString(),
@@ -198,7 +200,6 @@ export class TranscriptionService {
           segmentCount: transcript.segments.length,
           adjustedSegmentCount: transcript.segments.filter((segment) => segment.timingAdjustment !== null).length,
           droppedSegments: report.dropped,
-          ...(translated ? { translation: this.translationProvenance(translated) } : {}),
         },
       }
     } finally {
@@ -206,22 +207,32 @@ export class TranscriptionService {
     }
   }
 
-  /** Shared by both engines: translate the recognized text with Gemini, reporting a dedicated progress phase. */
-  private async translate(target: LanguageCode, apiKey: string, transcript: SourceTimedTranscript, ctx: JobContext) {
-    const translator = (this.options.geminiTranslator ?? geminiTranslator)(apiKey)
-    const result = await translateTranscript(translator, transcript, target, ctx.signal, ctx.reportProgress)
-    return { target, ...result }
-  }
-
-  private translationProvenance({ target, translation, usage }: { target: LanguageCode; translation: TranslatedTranscript; usage: { inputTokens?: number; outputTokens?: number } }) {
-    return {
-      provider: 'gemini' as const,
-      model: translation.model,
-      targetLanguage: target,
-      segmentCount: translation.segments.length,
-      ...(usage.inputTokens ? { inputTokens: usage.inputTokens } : {}),
-      ...(usage.outputTokens ? { outputTokens: usage.outputTokens } : {}),
+  /**
+   * Shared by both engines: translate the recognized text with Gemini, one target at a time. A target that fails is
+   * reported and skipped so the transcript (the expensive part) and the other languages are kept; cancellation
+   * still aborts the whole job. Progress spans all targets so the bar never rewinds, and names the current one.
+   */
+  private async translateAll(targets: readonly TranslationTarget[], apiKey: string | undefined, transcript: SourceTimedTranscript, ctx: JobContext) {
+    const translations: TranslationWithUsage[] = []
+    const translationFailures: TranslationFailure[] = []
+    if (!targets.length) return { translations, translationFailures }
+    const translator = (this.options.geminiTranslator ?? geminiTranslator)(apiKey!)
+    for (const [index, target] of targets.entries()) {
+      if (ctx.signal.aborted) throw jobFailure('CANCELLED', 'Transcription was cancelled.')
+      ctx.reportProgress({ kind: 'indeterminate', phase: 'translating', detail: target })
+      try {
+        const { translation, usage } = await translateTranscript(translator, transcript, target, ctx.signal, (value) => {
+          ctx.reportProgress(value.kind === 'measured' && value.phase === 'translating'
+            ? { ...value, completed: index * value.total + value.completed, total: targets.length * value.total, detail: target }
+            : value)
+        })
+        translations.push({ ...translation, usage })
+      } catch (error) {
+        if (ctx.signal.aborted) throw jobFailure('CANCELLED', 'Transcription was cancelled.')
+        translationFailures.push({ target, message: messageOf(error).slice(0, 500) })
+      }
     }
+    return { translations, translationFailures }
   }
 
   private recognizerFor(request: CloudTranscriptionRequest, model: string): CloudRecognizer {
@@ -235,7 +246,7 @@ export class TranscriptionService {
   private async runCloud(request: CloudTranscriptionRequest, ctx: JobContext): Promise<TranscriptionJobValue> {
     const model = request.model ?? cloudProvider(request.engine).defaultModel
     const translationKey = request.engine === 'gemini' ? request.apiKey : request.translationApiKey
-    if (request.translateTo && !translationKey) throw jobFailure('INVALID_INPUT', 'Add a Gemini API key in Settings before translating captions.')
+    if (request.translateTo.length && !translationKey) throw jobFailure('INVALID_INPUT', 'Add a Gemini API key in Settings before translating captions.')
     const directory = await mkdtemp(path.join(this.options.temporaryRoot, 'caption-studio-transcription-'))
     try {
       const durationUs = request.sourceRange.endUs - request.sourceRange.startUs
@@ -263,12 +274,12 @@ export class TranscriptionService {
       const report = adapter.lastRun
       if (!report) throw jobFailure('INTERNAL_ERROR', 'The cloud transcription run report is missing.')
 
-      const translated = request.translateTo ? await this.translate(request.translateTo, translationKey!, transcript, ctx) : null
+      const translated = await this.translateAll(request.translateTo, translationKey, transcript, ctx)
 
       if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Transcription was cancelled before its captions were delivered.')
       return {
         transcript,
-        translation: translated?.translation ?? null,
+        ...translated,
         run: {
           id: randomUUID(),
           createdAt: (this.options.now?.() ?? new Date()).toISOString(),
@@ -287,9 +298,9 @@ export class TranscriptionService {
           wordCount: transcript.segments.reduce((sum, segment) => sum + segment.words.length, 0),
           droppedWordCount: report.droppedWords,
           droppedAnnotationCount: report.droppedAnnotations,
+          ...(report.uncovered.length ? { uncoveredRanges: report.uncovered.slice(0, 1000).map((gap) => ({ startUs: audio.sourceStartUs + gap.startUs, endUs: audio.sourceStartUs + gap.endUs })) } : {}),
           ...(report.inputTokens ? { inputTokens: report.inputTokens } : {}),
           ...(report.outputTokens ? { outputTokens: report.outputTokens } : {}),
-          ...(translated ? { translation: this.translationProvenance(translated) } : {}),
         },
       }
     } finally {

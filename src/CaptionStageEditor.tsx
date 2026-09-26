@@ -16,7 +16,7 @@ const CORNERS = ['nw', 'ne', 'sw', 'se'] as const
 type CornerHandle = (typeof CORNERS)[number]
 const CURSOR_FOR_CORNER: Record<CornerHandle, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize' }
 
-type MoveDrag = { kind: 'move'; scope: PlacementScope; base: CaptionAppearancePlacement; baseBounds: Rect; baseSafeRect: Rect; startClientX: number; startClientY: number; pointerId: number }
+type MoveDrag = { kind: 'move'; scope: PlacementScope; base: CaptionAppearancePlacement; baseBounds: Rect; baseSafeRect: Rect; startClientX: number; startClientY: number; pointerId: number; fresh?: boolean }
 type ResizeDrag = { kind: 'resize'; scope: PlacementScope; base: CaptionAppearancePlacement; centerClientX: number; centerClientY: number; startClientX: number; startClientY: number; pointerId: number }
 type RotateDrag = { kind: 'rotate'; scope: PlacementScope; base: CaptionAppearancePlacement; centerClientX: number; centerClientY: number; startClientX: number; startClientY: number; pointerId: number; snap: boolean }
 type DragState = MoveDrag | ResizeDrag | RotateDrag
@@ -39,7 +39,7 @@ type DragState = MoveDrag | ResizeDrag | RotateDrag
  * it to `scope: 'cue'` for the caption showing right now — fixed for the whole gesture, exactly like
  * `ClipStageEditor`'s Alt-clone decision at pointerdown.
  */
-export function CaptionStageEditor({ frame, composition, appearance, selected, onSelect, onDraft, onCommit, fixedScope, onDoubleClick }: {
+export function CaptionStageEditor({ frame, composition, appearance, selected, onSelect, onDraft, onCommit, fixedScope, onDoubleClick, pendingPress, onPressConsumed, onClickThrough, onPressThrough }: {
   frame: CaptionFrame | null
   composition: Size
   appearance: CaptionAppearancePlacement
@@ -49,6 +49,13 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
   onCommit: (patch: CaptionPlacementPatch, scope: PlacementScope) => void
   fixedScope?: PlacementScope
   onDoubleClick?: (event: ReactMouseEvent<HTMLElement>) => void
+  /** A press that selected this item from the stage's title layer: the move drag continues it once the block's bounds are known, so select-and-drag is one gesture. */
+  pendingPress?: { clientX: number; clientY: number; pointerId: number } | null
+  onPressConsumed?: () => void
+  /** A click (no movement) on the already-selected block: lets the parent pick the layer underneath. */
+  onClickThrough?: (clientX: number, clientY: number) => void
+  /** Called on a press while this block is not selected; return true when another layer under the pointer took the press instead. */
+  onPressThrough?: (event: ReactPointerEvent<HTMLElement>) => boolean
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
@@ -57,6 +64,7 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
   // re-adds the window listeners — only a change of `drag` itself does.
   const draftRef = useRef(onDraft); draftRef.current = onDraft
   const commitRef = useRef(onCommit); commitRef.current = onCommit
+  const clickThroughRef = useRef(onClickThrough); clickThroughRef.current = onClickThrough
 
   const projection = useCompositionProjection(rootRef, composition)
   const scopeFor = (altKey: boolean): PlacementScope => fixedScope ?? (altKey ? 'cue' : 'project')
@@ -89,6 +97,7 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
       if (event.pointerId !== drag.pointerId) return
       setDrag(null)
       if (commit) commitRef.current(patchFor(drag.kind, placementAt(event)), drag.scope)
+      if (commit && drag.kind === 'move' && !drag.fresh && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < 3) clickThroughRef.current?.(event.clientX, event.clientY)
       else draftRef.current(patchFor(drag.kind, drag.base), drag.scope)
     }
     const up = (event: PointerEvent) => end(event, true)
@@ -121,6 +130,7 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
 
   const beginMove = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !bounds || !safeRect) return
+    if (!selected && onPressThrough?.(event)) { event.preventDefault(); event.stopPropagation(); return }
     event.preventDefault()
     event.stopPropagation()
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -128,6 +138,13 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
     setDrag({ kind: 'move', scope: scopeFor(event.altKey), base: appearance, baseBounds: bounds, baseSafeRect: safeRect,
       startClientX: event.clientX, startClientY: event.clientY, pointerId: event.pointerId })
   }
+
+  useEffect(() => {
+    if (!pendingPress || drag || !bounds || !safeRect) return
+    setDrag({ kind: 'move', scope: fixedScope ?? 'project', base: appearance, baseBounds: bounds, baseSafeRect: safeRect,
+      startClientX: pendingPress.clientX, startClientY: pendingPress.clientY, pointerId: pendingPress.pointerId, fresh: true })
+    onPressConsumed?.()
+  }, [pendingPress, bounds, safeRect])
 
   const beginResize = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !bounds) return

@@ -6,21 +6,21 @@ const fingerprint = { algorithm: 'sha256-sampled-v1', value: 'a'.repeat(64), siz
 const requestId = '6f1c1d9e-8a3b-4c2d-9e7f-1a2b3c4d5e6f'
 
 it('accepts whisper and Gemini start requests and never a key, path or device for Gemini', () => {
-  expect(transcriptionStartRequestSchema.parse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: null }).engine).toBe('whisper')
-  expect(transcriptionStartRequestSchema.parse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: null }).engine).toBe('gemini')
-  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: null, apiKey: 'x' }).success).toBe(false)
-  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: null, device: 'cpu' }).success).toBe(false)
-  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ta', translateTo: null }).success).toBe(false)
-  expect(transcriptionStartRequestSchema.safeParse({ requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: null }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.parse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: [] }).engine).toBe('whisper')
+  expect(transcriptionStartRequestSchema.parse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: [] }).engine).toBe('gemini')
+  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: [], apiKey: 'x' }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: [], device: 'cpu' }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ta', translateTo: [] }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.safeParse({ requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: [] }).success).toBe(false)
 })
 
 it('requires translateTo and accepts a target language code for either engine, but never a locale tag or "auto"', () => {
   expect(transcriptionStartRequestSchema.safeParse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu' }).success).toBe(false)
   expect(transcriptionStartRequestSchema.safeParse({ engine: 'gemini', requestId, fingerprint, language: 'ml' }).success).toBe(false)
-  expect(transcriptionStartRequestSchema.parse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: 'en' }).translateTo).toBe('en')
-  expect(transcriptionStartRequestSchema.parse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: 'en' }).translateTo).toBe('en')
-  expect(transcriptionStartRequestSchema.safeParse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: 'auto' }).success).toBe(false)
-  expect(transcriptionStartRequestSchema.safeParse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: 'en-US' }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.parse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: ['en'] }).translateTo).toEqual(['en'])
+  expect(transcriptionStartRequestSchema.parse({ engine: 'gemini', requestId, fingerprint, language: 'ml', translateTo: ['en'] }).translateTo).toEqual(['en'])
+  expect(transcriptionStartRequestSchema.safeParse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: ['auto'] }).success).toBe(false)
+  expect(transcriptionStartRequestSchema.safeParse({ engine: 'whisper', requestId, fingerprint, modelId: 'whisper-base', language: 'auto', device: 'cpu', translateTo: ['en-US'] }).success).toBe(false)
 })
 
 it('keeps existing whisper run records valid and accepts Gemini run records, with or without translation provenance', () => {

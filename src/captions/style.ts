@@ -51,8 +51,8 @@ export const captionAppearanceSchema = z.strictObject({
   emphasisGradientFrom: color.default('#c8ff3d'), emphasisGradientTo: color.default('#ffffff'),
   // Static size multiplier for emphasized words (independent of the word-pop animation scale).
   emphasisScale: z.number().min(1).max(2).default(1),
-  // Emphasis-only glow; radius reuses the base glowRadius below.
-  emphasisGlowEnabled: z.boolean().default(false), emphasisGlowColor: color.default('#ffffff'),
+  // Emphasis-only glow with its own radius.
+  emphasisGlowEnabled: z.boolean().default(false), emphasisGlowColor: color.default('#ffffff'), emphasisGlowRadius: z.number().min(0).max(40).default(12),
   // 'none' follows the base textTransform; emphasisUnderline is OR-ed with the base underline.
   emphasisTextTransform: z.enum(TEXT_TRANSFORMS).default('none'), emphasisUnderline: z.boolean().default(false),
   // Format
@@ -114,7 +114,7 @@ export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
     fontWeight: 700, fontItalic: false,
     emphasisFontFamily: '', emphasisMotion: 'pop', emphasisWeight: 700, emphasisItalic: false, emphasisMode: 'emphasize',
     emphasisGradientEnabled: false, emphasisGradientFrom: '#c8ff3d', emphasisGradientTo: '#ffffff',
-    emphasisScale: 1, emphasisGlowEnabled: false, emphasisGlowColor: '#ffffff',
+    emphasisScale: 1, emphasisGlowEnabled: false, emphasisGlowColor: '#ffffff', emphasisGlowRadius: 12,
     emphasisTextTransform: 'none', emphasisUnderline: false,
     textTransform: 'none', underline: false, alignment: 'center',
     letterSpacing: 0, wordSpacing: 0, lineHeight: 1.6,
@@ -157,7 +157,7 @@ export const RESET_KEYS = {
   position: ['horizontal', 'vertical'], positionX: ['horizontal'], positionY: ['vertical'], rotation: ['rotation'],
   color: ['gradientEnabled', 'primaryColor', 'gradientFrom', 'gradientTo', 'gradientAngle'],
   emphasis: ['emphasisMode', 'emphasisGradientEnabled', 'secondaryColor', 'emphasisGradientFrom', 'emphasisGradientTo'],
-  emphasisSize: ['emphasisScale'], emphasisGlow: ['emphasisGlowEnabled', 'emphasisGlowColor'],
+  emphasisSize: ['emphasisScale'], emphasisGlow: ['emphasisGlowEnabled', 'emphasisGlowColor', 'emphasisGlowRadius'],
   emphasisStyles: ['emphasisTextTransform', 'emphasisUnderline'],
   spacing: ['letterSpacing', 'wordSpacing', 'lineHeight'],
   shadow: ['shadowEnabled', 'shadowColor', 'shadowBlur', 'shadowOffset'],
@@ -180,16 +180,16 @@ export function captionStyleInputs(style: CaptionStyle, viewport: Size) {
       readiness: 'loading' as const, revision: 'system' }
     : undefined
   // Depth/drop-shadow layers are shared; only the glow layer can differ between the base line and
-  // emphasized words (emphasis glow reuses the base glowRadius, never a separate radius field).
-  const shadowFor = (glowOn: boolean, glowColor: string) => {
+  // emphasized words (emphasis glow has its own radius).
+  const shadowFor = (glowOn: boolean, glowColor: string, glowRadius: number) => {
     const layers: string[] = []
     if (a.depthEnabled) for (let i = 1; i <= a.depthAmount; i++) layers.push(`${i * scale}px ${i * scale}px 0 ${a.depthColor}`)
-    if (glowOn) { const r = a.glowRadius * scale; layers.push(`0 0 ${r}px ${glowColor}`, `0 0 ${r}px ${glowColor}`, `0 0 ${r * 2}px ${glowColor}`) }
+    if (glowOn) { const r = glowRadius * scale; layers.push(`0 0 ${r}px ${glowColor}`, `0 0 ${r}px ${glowColor}`, `0 0 ${r * 2}px ${glowColor}`) }
     if (a.shadowEnabled && (a.shadowBlur || a.shadowOffset)) layers.push(`0 ${a.shadowOffset * scale}px ${a.shadowBlur * scale}px ${a.shadowColor}`)
     return layers.length ? layers.join(', ') : 'none'
   }
-  const shadow = shadowFor(a.glowEnabled, a.glowColor)
-  const emphasisShadowComposed = shadowFor(a.emphasisGlowEnabled || a.glowEnabled, a.emphasisGlowEnabled ? a.emphasisGlowColor : a.glowColor)
+  const shadow = shadowFor(a.glowEnabled, a.glowColor, a.glowRadius)
+  const emphasisShadowComposed = shadowFor(a.emphasisGlowEnabled || a.glowEnabled, a.emphasisGlowEnabled ? a.emphasisGlowColor : a.glowColor, a.emphasisGlowEnabled ? a.emphasisGlowRadius : a.glowRadius)
   return { ...inputs,
     ...(style.titleMotion ? { titleMotion: style.titleMotion } : {}),
     font: { ...inputs.font, stack: `"${a.fontFamily}", ${DEFAULT_FONT_STACK}`, size: a.fontSize * scale,

@@ -12,7 +12,7 @@ export function TextOverlayActor({ item, timestampUs, composition, onFrame, onLa
   item: TextOverlay; timestampUs: number; composition: Size
   onFrame?: Parameters<typeof CaptionPreview>[0]['onFrame']
   onLayout?: (frame: CaptionFrame) => void
-  onPointerDown?: () => void; onDoubleClick?: () => void
+  onPointerDown?: (event: React.PointerEvent<HTMLElement>) => void; onDoubleClick?: () => void
   editing?: boolean
 }) {
   const motion = textMotionAt(item, timestampUs)
@@ -42,7 +42,7 @@ export function TextOverlayActor({ item, timestampUs, composition, onFrame, onLa
       role="button" tabIndex={0} aria-label={`Select title: ${item.text}`} data-text-overlay-hit={item.id}
       style={{ left: frame.layout.bounds.x, top: frame.layout.bounds.y, width: frame.layout.bounds.width, height: frame.layout.bounds.height,
         transform: `rotate(${item.style.appearance.rotation}deg)`, transformOrigin: 'center' } as CSSProperties}
-      onPointerDown={(event) => { event.stopPropagation(); onPointerDown?.() }}
+      onPointerDown={(event) => { event.stopPropagation(); onPointerDown?.(event) }}
       onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onDoubleClick?.() }}
       onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onDoubleClick?.() } }} />}
   </div>

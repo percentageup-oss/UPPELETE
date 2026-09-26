@@ -3,23 +3,35 @@ import type { JobProgressPhase, JobSnapshot } from './core/jobs'
 import type { ProjectAsset } from './core/edit'
 import type { Cue, TranscriptionRun } from './core/model'
 import type { ManagedModelId } from './core/modelCatalog'
-import type { SourceTimedTranscript, TranslatedTranscript } from './core/transcription'
+import type { TranslationTarget, SourceTimedTranscript } from './core/transcription'
 import { TRANSLATION_TARGETS, translationTargetLabel } from './core/translationLanguages'
-import { captionsOverlappingRange, describeExistingCaptions, type TranscriptionApplyChoice } from './core/transcriptionApply'
-import type { TranscriptionAvailability, TranscriptionDevice, TranscriptionEngine } from './core/transcriptionIpc'
+import { describeExistingCaptions, replaceableCaptionsInRange, type TranscriptionApplyChoice, type TranslationWithUsage } from './core/transcriptionApply'
+import { MAX_TRANSLATION_TARGETS, type TranscriptionAvailability, type TranscriptionDevice, type TranscriptionEngine, type TranslationFailure } from './core/transcriptionIpc'
+import { captionGaps, formatRangeTime, parseRangeInput, transcriptionRangeProblem, type SourceRange } from './core/transcriptionRange'
 import { CLOUD_PROVIDERS, cloudProvider, providerLabel, type CloudLanguageChoice, type CloudProviderId, type ProviderKeyStatuses, type TranscriptionDefaults } from './core/transcriptionProviders'
 
 /** `assetId` is the video that was transcribed, captured when the job started — the picker may have
  * moved on to another video by the time the result arrives. */
-type Delivered = { transcript: SourceTimedTranscript; run: TranscriptionRun; translation: TranslatedTranscript | null; assetId: string }
+type Delivered = { transcript: SourceTimedTranscript; run: TranscriptionRun; translations: TranslationWithUsage[]; translationFailures: TranslationFailure[]; assetId: string; partial: boolean }
 type Phase =
   | { kind: 'setup' }
-  | { kind: 'running'; requestId: string; job: JobSnapshot | null; engine: TranscriptionEngine; translateTo: string | null }
+  | { kind: 'running'; requestId: string; job: JobSnapshot | null; engine: TranscriptionEngine; translateTo: TranslationTarget[]; range: SourceRange | null }
   | { kind: 'choose'; result: Delivered }
   | { kind: 'error'; message: string; diagnostic: string | null }
   | { kind: 'cancelled' }
 
-export type ApplyTranscript = (result: Delivered, choice: TranscriptionApplyChoice | null) => { ok: true } | { ok: false; message: string }
+/** Where the picked video sits on the timeline; all times are in the video's own (source) time. */
+export type TranscribeContext = {
+  durationUs: number | null
+  playheadSourceUs: number | null
+  inOutSourceRange: SourceRange | null
+}
+export const NO_TRANSCRIBE_CONTEXT: TranscribeContext = { durationUs: null, playheadSourceUs: null, inOutSourceRange: null }
+
+type Scope = 'whole' | 'inout' | 'part'
+const rangeLabel = (range: SourceRange) => `${formatRangeTime(range.startUs)}–${formatRangeTime(range.endUs)}`
+
+export type ApplyTranscript =(result: Delivered, choice: TranscriptionApplyChoice | null) => { ok: true } | { ok: false; message: string }
 
 const deviceLabels: Record<TranscriptionDevice, string> = { cpu: 'CPU', metal: 'Metal GPU', cuda: 'CUDA GPU', vulkan: 'Vulkan GPU' }
 const phaseLabels: Record<JobProgressPhase, string> = {
@@ -59,11 +71,16 @@ function storedCloudLanguage(): CloudLanguage {
   } catch { return 'auto' }
 }
 const TRANSLATE_STORAGE_KEY = 'caption-studio.transcription-translate'
-function storedTranslateTo(): string | null {
+/** A JSON array; an older single-code value reads as a one-item array, anything absent or malformed as none. */
+function storedTranslateTo(): TranslationTarget[] {
   try {
     const value = localStorage.getItem(TRANSLATE_STORAGE_KEY)
-    return value && TRANSLATION_TARGETS.some((target) => target.code === value) ? value : null
-  } catch { return null }
+    if (!value) return []
+    let parsed: unknown
+    try { parsed = JSON.parse(value) } catch { parsed = value }
+    const codes = Array.isArray(parsed) ? parsed : typeof parsed === 'string' ? [parsed] : []
+    return [...new Set(codes)].filter((code): code is TranslationTarget => TRANSLATION_TARGETS.some((target) => target.code === code)).slice(0, MAX_TRANSLATION_TARGETS)
+  } catch { return [] }
 }
 
 /** Only Gemini is documented to switch language mid-sentence; other providers get an honest, weaker hint. */
@@ -86,9 +103,19 @@ export function describeJob(job: JobSnapshot | null): { label: string; percent: 
   return job.progress.kind === 'measured' ? { label, percent: Math.floor(job.progress.completed * 100 / job.progress.total) } : { label, percent: null }
 }
 
-export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary = false, providerKeys = null, transcriptionDefaults = { provider: 'whisper', models: {} }, onNeedGeminiKey }: {
+/** A request from outside the dialog (the timeline menu) to open it on `assetId` with `range` filled in. */
+export type TranscribeOpenRequest = { assetId: string; range: SourceRange; nonce: number }
+const MAX_GAP_ROWS = 8
+
+export function TranscriptionPanel({ media, mediaReady, cues, runs = [], openRequest = null, onOpenRequestIgnored, onApply, primary = false, providerKeys = null, transcriptionDefaults = { provider: 'whisper', models: {} }, onNeedGeminiKey, context = NO_TRANSCRIBE_CONTEXT }: {
   media: ProjectAsset | null; mediaReady: boolean; cues: Cue[]; onApply: ApplyTranscript; primary?: boolean
   providerKeys?: ProviderKeyStatuses | null; transcriptionDefaults?: TranscriptionDefaults; onNeedGeminiKey?: () => void
+  context?: TranscribeContext
+  /** Earlier runs of the picked video, for the provider's uncovered stretches. */
+  runs?: readonly TranscriptionRun[]
+  openRequest?: TranscribeOpenRequest | null
+  /** Called when `openRequest` could not open the dialog because a job or a review is in progress. */
+  onOpenRequestIgnored?: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -113,7 +140,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   const geminiKeyConfigured = keyConfigured('gemini')
   const engineKeyMissing = cloud !== null && !keyConfigured(cloud)
   const [cloudLanguage, setCloudLanguageState] = useState<CloudLanguage>(storedCloudLanguage)
-  const [translateTo, setTranslateToState] = useState<string | null>(storedTranslateTo)
+  const [translateTo, setTranslateToState] = useState<TranslationTarget[]>(storedTranslateTo)
   const setEngine = (next: TranscriptionEngine) => {
     setEngineState(next)
     setCloudModel(undefined)
@@ -123,11 +150,59 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
     setCloudLanguageState(next)
     try { localStorage.setItem(GEMINI_LANGUAGE_STORAGE_KEY, next) } catch { /* remembering the choice is only a convenience */ }
   }
-  const setTranslateTo = (next: string | null) => {
+  const setTranslateTo = (next: TranslationTarget[]) => {
     setTranslateToState(next)
-    try { if (next) localStorage.setItem(TRANSLATE_STORAGE_KEY, next); else localStorage.removeItem(TRANSLATE_STORAGE_KEY) } catch { /* remembering the choice is only a convenience */ }
+    try { if (next.length) localStorage.setItem(TRANSLATE_STORAGE_KEY, JSON.stringify(next)); else localStorage.removeItem(TRANSLATE_STORAGE_KEY) } catch { /* remembering the choice is only a convenience */ }
   }
   const api = window.captionStudio
+  const [scope, setScope] = useState<Scope>('whole')
+  const [partStart, setPartStart] = useState('')
+  const [partEnd, setPartEnd] = useState('')
+  const inOut = context.inOutSourceRange
+  const activeScope: Scope = scope === 'inout' && !inOut ? 'whole' : scope
+  const chosenRange: SourceRange | null = activeScope === 'inout' ? inOut : activeScope === 'part' ? (() => {
+    const startUs = parseRangeInput(partStart)
+    const endUs = parseRangeInput(partEnd)
+    return startUs === null || endUs === null ? null : { startUs, endUs }
+  })() : null
+  const rangeProblem = activeScope === 'whole' ? null
+    : chosenRange ? transcriptionRangeProblem(chosenRange, context.durationUs)
+    : 'Enter a start and end time, like 0:22.5.'
+  const chooseScope = (next: Scope) => {
+    setScope(next)
+    if (next === 'part' && !partStart.trim() && !partEnd.trim() && inOut) { setPartStart(formatRangeTime(inOut.startUs)); setPartEnd(formatRangeTime(inOut.endUs)) }
+  }
+
+  const gapRows = (() => {
+    if (!media || context.durationUs === null) return []
+    const durationUs = context.durationUs
+    const rows: { range: SourceRange; note: string }[] = captionGaps(cues, media.id, durationUs).map((range) => ({ range, note: 'no captions' }))
+    const anyGaps = captionGaps(cues, media.id, durationUs, 1)
+    for (const run of runs) {
+      if (!('provider' in run) || run.mediaAssetId !== media.id) continue
+      for (const range of run.uncoveredRanges ?? []) {
+        const overlaps = (gap: SourceRange) => gap.startUs < range.endUs && gap.endUs > range.startUs
+        if (anyGaps.some(overlaps) && !rows.some((row) => overlaps(row.range))) rows.push({ range, note: `${providerLabel(run.provider)} returned no words` })
+      }
+    }
+    return rows
+  })()
+  const pickGap = (range: SourceRange) => { setScope('part'); setPartStart(formatRangeTime(range.startUs)); setPartEnd(formatRangeTime(range.endUs)) }
+
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
+  const handledNonce = useRef<number | null>(null)
+  useEffect(() => {
+    if (!openRequest || handledNonce.current === openRequest.nonce) return
+    handledNonce.current = openRequest.nonce
+    const current = phaseRef.current
+    if (current.kind === 'running' || current.kind === 'choose') { onOpenRequestIgnored?.(); return }
+    setPhase({ kind: 'setup' })
+    pickGap(openRequest.range)
+    if (!dialog.current?.open) dialog.current?.showModal()
+    if (engine === 'whisper') void refresh()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openRequest?.nonce])
 
   // A new Settings default re-selects the provider; a run in progress or a reviewed result is left alone.
   useEffect(() => { setEngineState(transcriptionDefaults.provider); setCloudModel(undefined) }, [transcriptionDefaults.provider])
@@ -170,7 +245,11 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
 
   const openDialog = () => {
     if (!dialog.current?.open) dialog.current?.showModal()
-    if (phase.kind === 'setup' || phase.kind === 'error' || phase.kind === 'cancelled') { setPhase({ kind: 'setup' }); if (engine === 'whisper') void refresh() }
+    if (phase.kind === 'setup' || phase.kind === 'error' || phase.kind === 'cancelled') {
+      setPhase({ kind: 'setup' })
+      setScope(inOut ? 'inout' : 'whole')
+      if (engine === 'whisper') void refresh()
+    }
   }
 
   const finish = (result: Delivered, choice: TranscriptionApplyChoice | null) => {
@@ -182,17 +261,19 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   const start = async () => {
     if (!api || !media?.fingerprint) return
     if (engine === 'whisper' && (!modelId || !availability?.available || !device)) return
-    if (engineKeyMissing || (translateTo !== null && !geminiKeyConfigured)) return
+    if (engineKeyMissing || (translateTo.length > 0 && !geminiKeyConfigured)) return
+    if (rangeProblem) return
+    const range = chosenRange
     const requestId = crypto.randomUUID()
-    setPhase({ kind: 'running', requestId, job: null, engine, translateTo })
+    setPhase({ kind: 'running', requestId, job: null, engine, translateTo, range })
     try {
       const outcome = await api.startTranscription(engine !== 'whisper'
-        ? { engine, requestId, fingerprint: media.fingerprint, model: effectiveModel ?? undefined, language: cloudLanguage, translateTo }
-        : { engine, requestId, fingerprint: media.fingerprint, modelId: modelId!, language, device: device!, translateTo })
+        ? { engine, requestId, fingerprint: media.fingerprint, model: effectiveModel ?? undefined, language: cloudLanguage, translateTo, ...(range ? { range } : {}) }
+        : { engine, requestId, fingerprint: media.fingerprint, modelId: modelId!, language, device: device!, translateTo, ...(range ? { range } : {}) })
       if (outcome.state === 'cancelled') { setPhase({ kind: 'cancelled' }); return }
       if (outcome.state === 'failed') { setPhase({ kind: 'error', message: outcome.error.message, diagnostic: outcome.error.diagnostic ?? null }); return }
-      const result = { transcript: outcome.transcript, run: outcome.run, translation: outcome.translation, assetId: media.id }
-      if (captionsOverlappingRange(cuesRef.current, result.transcript.sourceRange, result.assetId).length > 0) {
+      const result = { transcript: outcome.transcript, run: outcome.run, translations: outcome.translations, translationFailures: outcome.translationFailures, assetId: media.id, partial: range !== null }
+      if (replaceableCaptionsInRange(cuesRef.current, result.transcript.sourceRange, result.assetId, result.partial).length > 0) {
         setPhase({ kind: 'choose', result })
         if (!dialog.current?.open) dialog.current?.showModal()
         return
@@ -201,12 +282,21 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
     } catch (error) { setPhase({ kind: 'error', message: errorText(error), diagnostic: null }) }
   }
 
+  const translatePicker = <fieldset className="transcription-translate">
+    <legend>Translate to (optional)</legend>
+    {TRANSLATION_TARGETS.map((target) => {
+      const checked = translateTo.includes(target.code)
+      return <label key={target.code} title={target.hint}><input type="checkbox" checked={checked} disabled={!checked && translateTo.length >= MAX_TRANSLATION_TARGETS}
+        onChange={() => setTranslateTo(checked ? translateTo.filter((code) => code !== target.code) : [...translateTo, target.code])} /> {target.label}{target.hint && <small className="transcription-hint"> {target.hint}</small>}</label>
+    })}
+    <p className="transcription-hint">Audio is transcribed once. Each extra language is a small text call. Leave all unticked to keep the spoken language only (up to {MAX_TRANSLATION_TARGETS}).</p>
+  </fieldset>
   const described = phase.kind === 'running' ? describeJob(phase.job) : null
   const running = described && phase.kind === 'running' && phase.engine !== 'whisper' && phase.job?.progress?.phase === 'recognizing'
     ? { ...described, label: `Uploading speech to ${providerLabel(phase.engine)} and transcribing…` } : described
-  const needsKey = engineKeyMissing || (translateTo !== null && !geminiKeyConfigured)
+  const needsKey = engineKeyMissing || (translateTo.length > 0 && !geminiKeyConfigured)
   const needKey = () => { dialog.current?.close(); onNeedGeminiKey?.() }
-  const choiceCounts = phase.kind === 'choose' ? describeExistingCaptions(captionsOverlappingRange(cues, phase.result.transcript.sourceRange, phase.result.assetId)) : null
+  const choiceCounts = phase.kind === 'choose' ? describeExistingCaptions(replaceableCaptionsInRange(cues, phase.result.transcript.sourceRange, phase.result.assetId, phase.result.partial)) : null
 
   return <>
     <button ref={trigger} className={running ? 'job-pill-button' : primary && phase.kind !== 'choose' ? 'accent' : phase.kind === 'choose' ? 'attention' : undefined} onClick={openDialog} title={mediaReady ? 'Transcribe this video’s audio' : 'Open a video to transcribe its audio'}>
@@ -221,10 +311,31 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
         <p>Readable captions are grouped after recognition. This backend supplies segment timing only: word timing is estimated, not audio-aligned, and marked Needs review. Original recognition is retained in the project.</p>
         <p>Runs whisper.cpp on this computer with a verified local model. Audio never leaves the device. Long silences are detected first and never sent to the recognizer, and every caption keeps its source-media time.</p>
       </>}
-      {(phase.kind === 'running' ? phase.translateTo : translateTo) !== null && <p>Translation sends only the recognized caption text (never audio) to Gemini. Translated captions get estimated word timing and are marked Needs review; the original-language recognition is kept in the project.</p>}
+      {(phase.kind === 'running' ? phase.translateTo : translateTo).length > 0 && <p>Translation sends only the recognized caption text (never audio) to Gemini. Translated captions get estimated word timing and are marked Needs review; the original-language recognition is kept in the project.</p>}
 
       {phase.kind === 'setup' && <>
         {!mediaReady && <p role="alert">Open or relink a video in this session before transcribing.</p>}
+        <fieldset className="transcription-scope">
+          <legend>What to transcribe</legend>
+          <label><input type="radio" name="transcription-scope" checked={activeScope === 'whole'} onChange={() => chooseScope('whole')} /> Whole video{context.durationUs !== null && ` — 0:00.0–${formatRangeTime(context.durationUs)}`}</label>
+          {inOut && <label><input type="radio" name="transcription-scope" checked={activeScope === 'inout'} onChange={() => chooseScope('inout')} /> In–Out range — {rangeLabel(inOut)} of the video</label>}
+          <label><input type="radio" name="transcription-scope" checked={activeScope === 'part'} onChange={() => chooseScope('part')} /> Part of the video</label>
+          {gapRows.length > 0 && <ul className="transcription-gaps" aria-label="Stretches without captions">
+            {gapRows.slice(0, MAX_GAP_ROWS).map((row) => <li key={`${row.range.startUs}-${row.range.endUs}`}>
+              <button type="button" onClick={() => pickGap(row.range)}>{rangeLabel(row.range)} · {row.note}</button></li>)}
+            {gapRows.length > MAX_GAP_ROWS && <li className="transcription-hint">and {gapRows.length - MAX_GAP_ROWS} more</li>}
+          </ul>}
+          {activeScope === 'part' && <div className="transcription-part">
+            {([['Start', partStart, setPartStart], ['End', partEnd, setPartEnd]] as const).map(([label, value, setValue]) => <div key={label}>
+              <label htmlFor={`transcription-part-${label}`}>{label}</label>
+              <input id={`transcription-part-${label}`} inputMode="decimal" placeholder="0:00.0" value={value} onChange={(event) => setValue(event.target.value)} />
+              <button type="button" disabled={context.playheadSourceUs === null} title={context.playheadSourceUs === null ? 'The playhead is not over this video' : `Use the playhead (${formatRangeTime(context.playheadSourceUs)})`}
+                onClick={() => { if (context.playheadSourceUs !== null) setValue(formatRangeTime(context.playheadSourceUs)) }}>Playhead</button>
+            </div>)}
+          </div>}
+          <p className="transcription-hint">Times are positions in this video file. Captions inside the range are handled by your choice below; captions outside it, or crossing its edge, are never changed.</p>
+          {rangeProblem && <p role="alert">{rangeProblem}</p>}
+        </fieldset>
         <div className="transcription-form">
           <label htmlFor="transcription-engine">Engine</label>
           <select id="transcription-engine" value={engine} onChange={(event) => setEngine(event.target.value as TranscriptionEngine)}>
@@ -242,11 +353,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
               {cloudLanguages.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
             </select>
             <p className="style-hint">{languageHint(engine, cloudLanguage)}</p>
-            <label htmlFor="transcription-translate-gemini">Translate to</label>
-            <select id="transcription-translate-gemini" value={translateTo ?? ''} onChange={(event) => setTranslateTo(event.target.value || null)}>
-              <option value="">None — keep spoken language</option>
-              {TRANSLATION_TARGETS.map((target) => <option key={target.code} value={target.code}>{target.label}</option>)}
-            </select>
+            {translatePicker}
           </>}
           {engine === 'whisper' && <>
           <label htmlFor="transcription-model">Model</label>
@@ -260,11 +367,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
               {availability.autoDetectLanguage && <option value="auto">Detect automatically</option>}
               {sortedLanguages(availability.languages).map((code) => <option key={code} value={code}>{languageLabel(code)}</option>)}
             </select>
-            <label htmlFor="transcription-translate-whisper">Translate to</label>
-            <select id="transcription-translate-whisper" value={translateTo ?? ''} onChange={(event) => setTranslateTo(event.target.value || null)}>
-              <option value="">None — keep spoken language</option>
-              {TRANSLATION_TARGETS.map((target) => <option key={target.code} value={target.code}>{target.label}</option>)}
-            </select>
+            {translatePicker}
             <label htmlFor="transcription-device">Device</label>
             <select id="transcription-device" value={device ?? 'cpu'} onChange={(event) => setDevice(event.target.value as TranscriptionDevice)}>
               {availability.devices.map((entry) => <option key={entry} value={entry}>{deviceLabels[entry]}{entry === 'cpu' ? ' (fallback)' : ''}</option>)}
@@ -279,24 +382,28 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
         {engine === 'whisper' && !checking && availability && !availability.available && <p role="alert">{availability.reason}</p>}
         {engine === 'whisper' && availability?.available && language === 'auto' && <p className="transcription-hint">Automatic detection identifies one language from the longest speech section and uses it for the whole video. Mixed Malayalam/English speech is recognized under that single language.</p>}
         <div className="model-actions">
-          <button className="accent" disabled={!mediaReady || needsKey || (engine === 'whisper' && (checking || !availability?.available || !device))} onClick={() => void start()}>
-            {translateTo !== null ? 'Transcribe and translate' : cloud ? `Transcribe with ${providerLabel(cloud)}` : 'Start transcription'}
+          <button className="accent" disabled={!mediaReady || needsKey || rangeProblem !== null || (engine === 'whisper' && (checking || !availability?.available || !device))} onClick={() => void start()}>
+            {(() => {
+              const span = chosenRange && !rangeProblem ? ` ${rangeLabel(chosenRange)}` : ''
+              return translateTo.length > 0 ? `Transcribe${span} and translate` : cloud ? `Transcribe${span} with ${providerLabel(cloud)}` : span ? `Transcribe${span}` : 'Start transcription'
+            })()}
           </button>
           {engine === 'whisper' && <button disabled={checking} onClick={() => void refresh()}>Recheck</button>}
         </div>
       </>}
 
       {phase.kind === 'running' && running && <div className="transcription-progress" role="status" aria-live="polite">
-        <p>{running.label}{running.percent !== null && ` ${running.percent}%`}</p>
+        <p>{running.label}{running.percent !== null && ` ${running.percent}%`}{phase.range && ` (${rangeLabel(phase.range)})`}</p>
         {running.percent === null ? <progress aria-label="Transcription progress (not measured in this phase)" /> : <progress aria-label="Transcription progress" value={running.percent} max={100} />}
         {phase.job?.progress?.phase === 'recognizing' && running.percent !== null && <p className="transcription-hint">{phase.engine !== 'whisper' ? `Percent of speech sections ${providerLabel(phase.engine)} has returned.` : 'Percent of detected speech audio processed, as reported by whisper.cpp.'}</p>}
-        {phase.job?.progress?.phase === 'translating' && running.percent !== null && <p className="transcription-hint">Percent of caption batches translated to {translationTargetLabel(phase.translateTo ?? '')}.</p>}
+        {phase.job?.progress?.phase === 'translating' && phase.job.progress.detail && <p className="transcription-hint">Translating to {translationTargetLabel(phase.job.progress.detail)}…</p>}
+        {phase.job?.progress?.phase === 'translating' && running.percent !== null && <p className="transcription-hint">Percent of caption batches translated across {phase.translateTo.length === 1 ? 'the target language' : `all ${phase.translateTo.length} target languages`}.</p>}
         <button disabled={phase.job?.cancelRequested} onClick={() => void api?.cancelTranscription(phase.requestId)}>Cancel transcription</button>
       </div>}
 
       {phase.kind === 'choose' && choiceCounts && <section className="transcription-choice" aria-labelledby="transcription-choice-title">
-        <h3 id="transcription-choice-title">Existing captions overlap this transcript</h3>
-        <p>The new transcript has {phase.result.transcript.segments.length} timed segment(s). {choiceCounts.total} existing caption(s) are in the transcribed range: {choiceCounts.authored} imported or edited, {choiceCounts.untouchedModel} unedited model caption(s). Nothing has changed yet.</p>
+        <h3 id="transcription-choice-title">{phase.result.partial ? 'Existing captions in this range' : 'Existing captions overlap this transcript'}</h3>
+        <p>The new transcript has {phase.result.transcript.segments.length} timed segment(s). {choiceCounts.total} existing caption(s) are {phase.result.partial ? `in ${rangeLabel(phase.result.transcript.sourceRange)}` : 'in the transcribed range'}: {choiceCounts.authored} imported or edited, {choiceCounts.untouchedModel} unedited model caption(s). Nothing has changed yet.</p>
         <button className="accent" onClick={() => finish(phase.result, 'keep-authored')}>Keep imported and edited captions; replace only unedited model captions</button>
         <p className="transcription-hint">New segments that overlap a kept caption are skipped, never merged into its text.</p>
         <button className="danger" onClick={() => finish(phase.result, 'replace-all')}>Replace all {choiceCounts.total} caption(s) in range, including edits</button>

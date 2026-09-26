@@ -5,7 +5,7 @@ import type { MediaFingerprint, ProjectMedia } from '../src/core/media'
 import { createProject } from '../src/core/model'
 import { modelIdSchema, type ManagedModelId } from '../src/core/modelCatalog'
 import { applyTranscription } from '../src/core/transcriptionApply'
-import { transcriptionStartRequestSchema, type TranscriptionOutcome } from '../src/core/transcriptionIpc'
+import { MIN_TRANSCRIPTION_RANGE_US, transcriptionStartRequestSchema, type TranscriptionOutcome } from '../src/core/transcriptionIpc'
 import { getJobScheduler } from './jobs'
 import { getMediaWorker, whisperCliConfigured } from './mediaWorker'
 import { getModelManager } from './modelIpc'
@@ -40,7 +40,12 @@ export function registerTranscriptionIpc(lookupMedia: (fingerprint: MediaFingerp
     if (!durationUs) return failed('Transcription needs the media duration reported by the media probe.')
     const key = `${event.sender.id}:${request.requestId}`
     if (activeRequests.has(key)) return failed('This transcription request is already running.')
-    const sourceRange = { startUs: 0, endUs: durationUs }
+    // The probe duration can be a few µs off the audio length, so the end is clamped rather than rejected.
+    const sourceRange = request.range ? { startUs: request.range.startUs, endUs: Math.min(request.range.endUs, durationUs) } : { startUs: 0, endUs: durationUs }
+    if (request.range) {
+      if (sourceRange.startUs >= durationUs) return failed('The range starts after the end of this video.')
+      if (sourceRange.endUs - sourceRange.startUs < MIN_TRANSCRIPTION_RANGE_US) return failed('Pick a range of at least 1 second to transcribe.')
+    }
     // Keys are read here in the main process only. Translation always uses Gemini, whatever engine recognized the audio.
     const loadKey = async (provider: 'gemini' | 'openai' | 'elevenlabs', purpose: string): Promise<string | { error: string }> => {
       let value: string | null
@@ -54,7 +59,7 @@ export function registerTranscriptionIpc(lookupMedia: (fingerprint: MediaFingerp
       if (typeof key !== 'string') return failed(key.error)
       engineKey = key
     }
-    if (request.translateTo !== null) {
+    if (request.translateTo.length > 0) {
       const key = request.engine === 'gemini' ? engineKey! : await loadKey('gemini', 'translating captions')
       if (typeof key !== 'string') return failed(key.error)
       geminiKeyForTranslation = key
@@ -68,7 +73,7 @@ export function registerTranscriptionIpc(lookupMedia: (fingerprint: MediaFingerp
     event.sender.once('destroyed', cancelForDestroyedRenderer)
     try {
       const outcome = await handle.outcome
-      if (outcome.state === 'succeeded') return { state: 'succeeded', transcript: outcome.value.transcript, run: outcome.value.run, translation: outcome.value.translation }
+      if (outcome.state === 'succeeded') return { state: 'succeeded', transcript: outcome.value.transcript, run: outcome.value.run, translations: outcome.value.translations, translationFailures: outcome.value.translationFailures }
       return outcome.state === 'failed' ? { state: 'failed', error: outcome.error } : { state: 'cancelled' }
     } finally {
       activeRequests.delete(key)
@@ -89,7 +94,7 @@ export async function runTranscriptionSmoke(mediaPath: string, media: ProjectMed
   const availability = await getService().availability(modelId)
   if (!availability.available) throw new Error(availability.reason)
   const device = availability.devices.find((entry) => entry !== 'cpu') ?? 'cpu'
-  const handle = getService().start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language: availability.autoDetectLanguage ? 'auto' : 'en', device, translateTo: null }, () => {})
+  const handle = getService().start({ mediaPath, sourceRange: { startUs: 0, endUs: durationUs }, modelId, language: availability.autoDetectLanguage ? 'auto' : 'en', device, translateTo: [] }, () => {})
   const outcome = await handle.outcome
   if (outcome.state !== 'succeeded') throw new Error(`Transcription ${outcome.state}: ${JSON.stringify(outcome)}`)
   const applied = applyTranscription(createProject(), outcome.value.transcript, outcome.value.run, null, randomUUID)
