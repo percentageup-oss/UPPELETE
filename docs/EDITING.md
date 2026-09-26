@@ -1016,9 +1016,12 @@ rectangle/ellipse/pen; enable, shape (converting keeps the footprint), invert, f
 radius; *Edit on preview*, *Reset to layer*, *Delete mask*. Sliders draft live and commit once. On the
 preview (`MaskStageEditor.tsx`): the outside of the mask is tinted red; a rect/ellipse is moved and resized
 by its box; a pen path is drawn by clicking corners and click-dragging smooth points (click the first point
-or Enter closes, Backspace removes the last, Esc cancels), then edited by dragging anchors and handles,
-Alt-click (corner/smooth), double-click the outline (add a point) and Delete (remove one). `penPath.ts`
-holds the geometry.
+or Enter closes, Backspace removes the last, clicking an earlier point removes it, Esc cancels). While drawing,
+the outline stays open with a dashed rubber-band to the cursor, and once there are three points the layer
+previews the mask live (as a draft, so nothing is committed until the path closes); a hint bar on the stage
+says what each click does. An existing path is edited by dragging anchors and handles, clicking an anchor
+without moving it (deletes it, never below three), Alt-click (corner/smooth), double-click the outline (add a
+point) and Delete. `penPath.ts` holds the geometry.
 
 **Fix that shipped with it.** `layerPlan`'s frame signature ignored authored text, so a title animating
 over otherwise-static frames could re-send a stale PNG; text actors' motion is now part of the signature.

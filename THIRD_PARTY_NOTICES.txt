@@ -1,4 +1,4 @@
-KathaCut - third-party components shipped in this installer
+KathaCut is licensed under GPL-3.0-or-later (see LICENSE). This installer also includes the following third-party components:
 
 Electron / Chromium - MIT and various open-source licenses (see LICENSES.chromium.html next to the app).
 

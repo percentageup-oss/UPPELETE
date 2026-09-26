@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { formatSize } from './core/format'
 import { formatClock } from './core/time'
 import { RangeInput } from './style/controls'
 import type { SequenceFormat } from './core/edit'
@@ -41,9 +42,6 @@ function loadSettings(): ExportSettings {
     if (parsed.success) return parsed.data
   } catch { /* storage unavailable: fall back to the defaults */ }
   return DEFAULT_EXPORT_SETTINGS
-}
-function formatSize(bytes: number): string {
-  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
 }
 export const rateText = (rate: SequenceFormat['frameRate']) => `${Number((rate.numerator / rate.denominator).toFixed(2))} fps`
 export const nearest = <T,>(stops: Stop<T>[], value: T, distance: (a: T, b: T) => number) =>

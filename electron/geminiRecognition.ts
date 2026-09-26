@@ -8,7 +8,7 @@ export type GeminiUsage = { inputTokens?: number; outputTokens?: number }
  * type, missing text, or an invalid/non-positive offset) — visible instead of silently vanishing. */
 export type GeminiRecognition = { words: RecognizedWord[]; usage: GeminiUsage; droppedAnnotations: number }
 /** BCP-47 hints passed to Gemini. */
-export type GeminiLocale = 'ml-IN' | 'en-IN'
+export type GeminiLocale = 'ml-IN' | 'en-IN' | 'ta-IN' | 'hi-IN'
 /**
  * `locales`: empty lets Gemini detect the language and switch between languages mid-sentence, rather
  * than biasing it toward a fixed set. The transcription docs document `language_codes` as "If omitted
@@ -35,7 +35,7 @@ function offsetUs(value: unknown): number | null {
  * Uploads one WAV, requests verbatim word timestamps with response storage disabled, and best-effort deletes the
  * upload. Returns only timed word annotations (audio-relative microseconds), sorted; untimed text is ignored.
  */
-export function geminiRecognizer(apiKey: string, action: 'align' | 'transcribe'): GeminiRecognizer {
+export function geminiRecognizer(apiKey: string, action: 'align' | 'transcribe', model: string = GEMINI_TRANSCRIBE_MODEL): GeminiRecognizer {
   return async (audioPath, options, signal) => {
     const ai = new GoogleGenAI({ apiKey })
     let uploadedName: string | undefined
@@ -44,7 +44,7 @@ export function geminiRecognizer(apiKey: string, action: 'align' | 'transcribe')
       uploadedName = uploaded.name
       if (!uploaded.uri) throw new Error('Gemini did not return an uploaded audio URI.')
       const response = await ai.interactions.create({
-        model: GEMINI_TRANSCRIBE_MODEL,
+        model,
         input: [{ type: 'audio', uri: uploaded.uri, mime_type: 'audio/wav' }],
         generation_config: { transcription_config: {
           // Sending an empty list is not the same as omitting the key: the SDK only auto-detects

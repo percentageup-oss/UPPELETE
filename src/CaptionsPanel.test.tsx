@@ -15,7 +15,7 @@ const render = (cues: Cue[]) => renderToStaticMarkup(<CaptionsPanel
   onOverride={() => {}} onResetOverrides={() => {}} onPlacementOverride={() => {}} onEstimate={() => {}} onGroup={() => {}}
   onSelect={() => {}} onUpdateText={() => true} onSelectWord={() => {}} onWordAction={() => {}} onEstimateMissing={() => {}}
   cueButtonRefs={{ current: new Map() }} videos={[]} pickedVideo={null} onPickVideo={() => {}} mediaReady={false}
-  onApplyTranscript={(() => {}) as never} geminiKeyConfigured={false} onNeedGeminiKey={() => {}} onImportSrt={() => {}} />)
+  onApplyTranscript={(() => {}) as never} providerKeys={null} transcriptionDefaults={{ provider: 'whisper', models: {} }} onNeedGeminiKey={() => {}} onImportSrt={() => {}} />)
 
 const wordButtons = (html: string) => [...html.matchAll(/<button[^>]*class="transcript-word[^"]*"[^>]*>([^<]*)<\/button>/g)].map((match) => match[1])
 

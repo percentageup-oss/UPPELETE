@@ -1,6 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell } from 'electron'
 import { z } from 'zod'
-import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
+import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createReadStream } from 'node:fs'
@@ -32,8 +33,11 @@ import { exportSettingsSchema } from '../src/export/settings'
 import { logExport } from './exportLog'
 import { closeJobs, getJobScheduler } from './jobs'
 import { registerAlignmentIpc } from './alignmentIpc'
+import { registerProviderKeysIpc } from './providerKeysIpc'
 import { appMenuTemplate } from './appMenu'
 import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
+import { RecentProjectsStore, MANAGED_FOLDER_NAME, fileExists, uniqueProjectPath } from './projectLibrary'
+import { clipEndUs } from '../src/core/timelineModel'
 
 // Display name for menus, the About panel and the dock. userData stays at the original 'caption-studio' folder so
 // downloaded models, caches, logs and stored secrets survive the rename.
@@ -76,6 +80,7 @@ function fingerprintKey(fingerprint: NonNullable<ProjectMedia['fingerprint']>) {
 registerTranscriptionIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerExportIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
 registerAlignmentIpc((fingerprint) => inspectedMedia.get(fingerprintKey(fingerprint)))
+registerProviderKeysIpc()
 
 // dist-electron/main.cjs sits one level below the repo root, where assets/ lives.
 const appIconPath = path.join(__dirname, '../assets/icon.png')
@@ -399,6 +404,8 @@ ipcMain.handle('dialog:open-text', async () => {
 // Project paths the user chose through a native dialog this session. Dialog-free writes (autosave, ⌘S on a
 // named project) are only allowed to these, so the renderer can never direct a write at an arbitrary path.
 const knownProjectPaths = new Set<string>()
+const recents = new RecentProjectsStore(userDataPath)
+const projectDurationUs = (project: CaptionProject) => Math.max(0, ...project.clips.map(clipEndUs))
 
 async function writeProjectFile(project: CaptionProject, filePath: string) {
   const savedProject: CaptionProject = projectSchema.parse(projectForSave(project, filePath))
@@ -406,6 +413,7 @@ async function writeProjectFile(project: CaptionProject, filePath: string) {
   await writeFile(temporaryPath, JSON.stringify(savedProject, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' })
   await rename(temporaryPath, filePath)
   knownProjectPaths.add(filePath)
+  void recents.record(filePath, { title: savedProject.title, durationUs: projectDurationUs(savedProject) }, 'saved').catch(() => undefined)
   return { path: filePath, project: savedProject }
 }
 
@@ -418,7 +426,11 @@ ipcMain.handle('project:open', async () => {
     ],
   })
   if (result.canceled || !result.filePaths[0]) return null
-  const projectPath = result.filePaths[0]
+  return openProjectAt(result.filePaths[0])
+})
+
+/** Loads a project file, resolves its media and records it as recently opened. Shared by the Open dialog and the home screen. */
+async function openProjectAt(projectPath: string) {
   try {
     const loaded = loadProject(JSON.parse(await readFile(projectPath, 'utf8')))
     // Every asset — the video(s) included — resolves the same way: only a resolved (fingerprint-verified) asset
@@ -442,9 +454,91 @@ ipcMain.handle('project:open', async () => {
     }
     const project = { ...loaded.project, assets }
     knownProjectPaths.add(projectPath)
-    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, migrationNotes: loaded.migrationNotes, assets: assetResolutions, lutTexts }
+    void recents.record(projectPath, { title: project.title, durationUs: projectDurationUs(project) }, 'opened').catch(() => undefined)
+    // A migrated project must not silently lose its original file. Keep a one-time copy of the pre-migration
+    // bytes beside it (never overwritten), so autosave can start immediately without a manual Save first.
+    let migrationBackup: string | null = null
+    if (loaded.migratedFrom !== null) {
+      const backupPath = `${projectPath}.pre-schema-${loaded.migratedFrom}.bak`
+      try {
+        await copyFile(projectPath, backupPath, fsConstants.COPYFILE_EXCL)
+        migrationBackup = backupPath
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') migrationBackup = backupPath
+      }
+    }
+    return { ok: true as const, path: projectPath, project, migratedFrom: loaded.migratedFrom, migrationBackup, migrationNotes: loaded.migrationNotes, assets: assetResolutions, lutTexts }
   } catch (error) {
     return { ok: false as const, message: errorMessage(error) }
+  }
+}
+
+const recentPathSchema = z.strictObject({ path: z.string().min(1) })
+
+// Only projects the user already saved or opened (the recents list) can be opened, thumbnailed, renamed or trashed
+// without a dialog, so the renderer can never point these at an arbitrary path.
+async function requireRecent(value: unknown) {
+  const { path: projectPath } = recentPathSchema.parse(value)
+  if (!(await recents.has(projectPath))) throw new Error('That project is not in the recent projects list')
+  return projectPath
+}
+
+const managedProjectsDir = () => path.join(app.getPath('documents'), MANAGED_FOLDER_NAME)
+
+// New projects from the home screen live in Documents/KathaCut Projects and autosave from their first edit.
+ipcMain.handle('project:create-managed', async (_event, request: { project: unknown }) => {
+  const project = projectSchema.parse(request?.project)
+  const dir = managedProjectsDir()
+  await mkdir(dir, { recursive: true })
+  return writeProjectFile(project, await uniqueProjectPath(dir, project.title, fileExists))
+})
+
+ipcMain.handle('projects:list', () => recents.list())
+
+ipcMain.handle('project:open-recent', async (_event, request: unknown) => openProjectAt(await requireRecent(request)))
+
+ipcMain.handle('project:set-thumbnail', async (_event, request: { path: unknown; dataUrl: unknown }) => {
+  const projectPath = await requireRecent({ path: request?.path })
+  const match = typeof request.dataUrl === 'string' ? /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(request.dataUrl) : null
+  if (!match) throw new Error('Invalid thumbnail')
+  return recents.setThumbnail(projectPath, Buffer.from(match[1], 'base64'))
+})
+
+const recentActionSchema = z.discriminatedUnion('action', [
+  z.strictObject({ action: z.literal('show'), path: z.string().min(1) }),
+  z.strictObject({ action: z.literal('remove'), path: z.string().min(1) }),
+  z.strictObject({ action: z.literal('trash'), path: z.string().min(1) }),
+  z.strictObject({ action: z.literal('rename'), path: z.string().min(1), title: z.string().trim().min(1).max(120) }),
+])
+
+ipcMain.handle('project:recent-action', async (_event, value: unknown): Promise<{ ok: true } | { ok: false; message: string }> => {
+  const request = recentActionSchema.parse(value)
+  const projectPath = await requireRecent({ path: request.path })
+  try {
+    if (request.action === 'show') shell.showItemInFolder(projectPath)
+    else if (request.action === 'remove') await recents.remove(projectPath)
+    else if (request.action === 'trash') {
+      await shell.trashItem(projectPath) // the .cstudio file only; media files are never touched
+      await recents.remove(projectPath)
+    } else {
+      const loaded = loadProject(JSON.parse(await readFile(projectPath, 'utf8')))
+      if (loaded.migratedFrom !== null) return { ok: false, message: 'This project is from an older version. Open it once first, then rename it.' }
+      const renamed = await writeProjectFile({ ...loaded.project, title: request.title }, projectPath)
+      const dir = path.dirname(projectPath)
+      // Only files KathaCut created in its own folder follow the title; a file the user placed elsewhere keeps its name.
+      if (path.resolve(dir) === path.resolve(managedProjectsDir())) {
+        const nextPath = await uniqueProjectPath(dir, request.title, async (candidate) => candidate !== projectPath && await fileExists(candidate))
+        if (nextPath !== projectPath) {
+          await rename(projectPath, nextPath)
+          knownProjectPaths.add(nextPath)
+          await recents.move(projectPath, nextPath, renamed.project.title)
+          return { ok: true }
+        }
+      }
+    }
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) }
   }
 })
 

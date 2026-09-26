@@ -16,7 +16,7 @@ import { rowTops, timelineRows, trackAtY, trackRows, videoStackHeightPx, RULER_H
 import type { Selection } from './core/timelineItems'
 import { formatClock } from './core/time'
 import type { WaveformData } from './core/waveform'
-import { TimelineToolbar, type ClipTools, type TimelineActions } from './TimelineToolbar'
+import { TimelineToolbar, type ClipTools, type EditTools, type TimelineActions } from './TimelineToolbar'
 import type { CaptionDisplay } from './captions/wordDisplay'
 import { dropContent, type AssetDragPayload, type BackgroundDragPayload, type ColorDragPayload, type PresetDragPayload } from './core/dragPayload'
 import { DEFAULT_ADJUSTMENT_CLIP_US, DEFAULT_BACKGROUND_CLIP_US, DEFAULT_IMAGE_CLIP_US, dropTimeAt } from './core/timelineDrop'
@@ -176,10 +176,9 @@ type TimelineProps = {
   onSelectWord: (cue: Cue, word: CaptionWord) => void
   actions: TimelineActions
   clipTools: ClipTools
-  canSplit: boolean
+  edit: EditTools
   canMerge: boolean
   canAdd: boolean
-  hasSelectedWord: boolean
   /** A bin asset dragged onto the timeline, with the track under the pointer. */
   onDropAsset?: (payload: AssetDragPayload, sequenceUs: number, trackId: string | null) => void
   /** Files dragged in from Finder/Explorer. */
@@ -782,7 +781,7 @@ export function Timeline(props: TimelineProps) {
       zoom={zoom} zoomMin={ZOOM_MIN} zoomMax={ZOOM_MAX} onZoom={(next) => updateZoom(next)}
       expanded={expanded} onExpand={setExpanded}
       onCenterPlayhead={() => scrollPlayheadTo(.5, 'smooth')}
-      actions={actions} hasSelection={selectedCueId !== null && cues.some((cue) => cue.id === selectedCueId)} canMerge={props.canMerge} canSplit={props.canSplit} canAdd={props.canAdd} hasCues={cues.length > 0} hasSelectedWord={props.hasSelectedWord}
+      actions={actions} edit={props.edit} canMerge={props.canMerge} canAdd={props.canAdd} hasCues={cues.length > 0}
       editMode={props.editMode} onEditMode={props.onEditMode} clipTools={props.clipTools}
     />
     {/* --ruler-h is inherited by .gridlines and .snap-guide, which hang from below the ruler row. */}

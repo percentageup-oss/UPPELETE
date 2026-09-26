@@ -1,5 +1,109 @@
 # Status
 
+## 2026-09-26 — Settings cleanup: provider dropdown, friendly model tiers, shorter copy
+
+**Changes**
+- Transcription tab: default-provider select, then a single **Provider** dropdown (status shown per option) that reveals only that provider's compact key row (badge, one input, Save/Remove, "Get a key" link) and model picker, instead of three stacked sections.
+- Speech models tab: models are named by tier (Small, Small - English only, Medium, Large [Recommended], Extra large) with a one-line summary and a readable size (148 MB, 1.6 GB). One primary action per card (Download / Resume / Cancel / Remove); file name, languages, location and SHA-256 moved into a collapsed Details. The friendly names also show in the Transcribe dialog's model list.
+- Playback proxies and AI agents: one-line lead text and shorter mode hints. Shared `.settings-lead`, `.settings-badge`, `.settings-row` styles; `formatSize` now lives in `src/core/format.ts` (also used by the export dialog).
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). Not viewed in the running app.
+
+**Limitations:** `ModelArtifact` gained `summary` and `recommended`; the transcription benchmark script sets placeholders. Existing SettingsDialog tests were not re-run.
+
+**Next:** eyeball each Settings tab in `npm run dev`.
+
+## 2026-09-26 — Open-source preparation: GPL-3.0-or-later, README, CONTRIBUTING
+
+**Changes**
+- License: added `LICENSE` (GPL-3.0 text from gnu.org), `TRADEMARKS.md` (name/logo not licensed), `"license": "GPL-3.0-or-later"` and author in `package.json`, copyright in `electron-builder.yml`, `LICENSE` shipped in installer `extraResources`, GPL line at top of `THIRD_PARTY_NOTICES.txt`.
+- README rewritten for users and contributors: features, privacy, install, build, docs table, honest pre-1.0 status, Buy Me a Coffee. Removed the Codex/`START_HERE` instructions and stale status text.
+- `CONTRIBUTING.md` (ground rules, setup, architecture rules, checks, DCO sign-off, bug/security reporting) and `.github/FUNDING.yml` (Buy Me a Coffee sponsor button).
+- `docs/DEPENDENCIES.md` project-license paragraph; ROADMAP license/contributor item marked done.
+
+**Verification:** documentation and metadata only; nothing built or run. Not verified: that the bundled `LICENSE` lands in a packaged installer (`npm run dist:win`).
+
+**Limitations**
+- README uses real screenshots in `docs/media/` (`screen-3.png` editor, `screen-2.png` home). The editor shot shows English captions; a Malayalam-captioned shot would better show the main use case.
+- DCO chosen over a CLA; switch to a CLA before accepting outside PRs if dual-licensing/selling under other terms is wanted.
+- Issue/security contact is labs.vx@gmail.com (assumed from "labs.vx@gmail"; confirm). Git history not yet scanned for secrets; `START_HERE.md` is now unreferenced and can be deleted.
+- No in-app license/About link yet (GPL "appropriate legal notices").
+
+**Next:** run a secret scan (e.g. gitleaks) over full history, then create the public repository.
+
+## 2026-09-26 — Timeline toolbar: one Split / Trim / Delete set
+
+**Changes**
+- The caption and clip tool sets are merged. One Split, Trim start, Trim end and Delete group replaces the duplicate scissors, trim and trash buttons (13 buttons down to 11). With a caption selected they act on the caption (Trim start/end move that edge to the playhead); otherwise Split/Trim act on clips under the playhead. Delete uses `deleteSelection`, so it also works for text, shapes, regions and groups, and is a ripple delete for a clip in RIPPLE mode. Tooltips follow the target.
+- Layout: Prev · Next · Merge │ Split · Trim start · Trim end · Delete │ Snap · Overwrite/Ripple │ Mark In · Mark Out · Clear · Scroll to playhead │ Zoom.
+- The old "move the nearer boundary" caption trim is gone from the toolbar (`trimSelectedCue` replaced by `trimSelectedCueTo`). Shortcuts, menus and context menus are unchanged.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). Not exercised in the real window; Windows only.
+
+**Limitations:** the target follows the single selection, so with nothing or a clip selected the caption buttons are not reachable from the toolbar (use the caption's own selection first).
+
+**Next:** manual pass: caption vs clip selection, ripple delete, word delete, tooltips.
+
+
+## 2026-09-26 — Pen mask: click-to-delete, open outline, live preview
+
+**Changes**
+- Clicking an anchor of an existing pen mask (press that moves under 3 px) deletes it, like Photoshop's pen; dragging still moves it, Alt-click still toggles corner/smooth. The mask never drops below three points. Anchors get a "−" pen cursor.
+- While drawing, the outline is now open (`pathD(points, false)` skips the wrap-around segment) with a dashed rubber-band to the cursor; clicking an earlier point removes it; hovering the first point shows a close cursor/ring.
+- Live preview: with three or more points the layer shows the mask as a draft (`drawnMask`, shared with the final commit). Esc drops the draft (`onExit` also clears `maskDraft`).
+- On-stage hint bar for drawing and editing gestures.
+
+**Verification:** not tested, typecheck only (`npm run typecheck` clean). Not exercised in the real window; Windows only.
+
+**Limitations:** mask paths are always closed shapes; the live preview necessarily fills the implicit closing edge.
+
+**Next:** manual pass on a video clip: draw, remove points while drawing, close, click-delete, Esc mid-draw, undo.
+
+## 2026-09-26 — Multiple transcription providers, model choice, default provider
+
+**Changes**
+- Cloud transcription now works with **Gemini, OpenAI and ElevenLabs Scribe** next to local whisper.cpp. One provider-neutral `CloudTranscriptionAdapter` (`electron/cloudTranscription.ts`) serves all three; silence gating, per-chunk upload, source-time mapping and fail-closed validation are unchanged. `GeminiTranscriptionAdapter` is now a thin subclass.
+- Provider catalog `src/core/transcriptionProviders.ts`: label, key env var, upload disclosure and a curated model list per provider (every curated model returns word timestamps: `gemini-3.5-transcribe`, OpenAI `whisper-1`, ElevenLabs `scribe_v2`/`scribe_v1`). Settings and the Transcribe dialog also accept a validated **custom model ID**.
+- New recognizers: `electron/openaiRecognition.ts` (`/v1/audio/transcriptions`, `verbose_json` + word granularity, 10-minute sections for the 25 MB limit) and `electron/elevenlabsRecognition.ts` (`/v1/speech-to-text`, word timestamps, audio events and diarization off), sharing `electron/cloudHttp.ts` (multipart POST, error mapping, no key in diagnostics). A provider-reported language is recorded when it is `ml` or `en`; otherwise `auto` is recorded as `ml`, as before.
+- **Settings → Transcription** (was "Gemini API key"): default provider, a model picker per provider, and one key section per provider. The default is stored in localStorage (`caption-studio.transcription-defaults`, validated) and only pre-selects the Transcribe dialog; first run is whisper.cpp. Changing provider or model in the dialog applies to that run only.
+- Keys: `electron/providerSecretStore.ts` replaces `geminiSecretStore.ts`. `secrets.json` is now `{ version: 2, keys: {…} }`, still reads the old v1 Gemini file, and each provider has an env override (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `ELEVENLABS_API_KEY`). New IPC `providerKeys:*`; alignment and translation still use the Gemini key through `geminiSecretStore()`.
+- IPC request: the cloud variant is `{ engine: gemini|openai|elevenlabs, model?, language, translateTo }`; main loads the key, the renderer never sees it. "Translate to" always uses the Gemini key, whichever engine recognized the audio, and reports a missing Gemini key by name.
+- Run records: `provider` is now `gemini | openai | elevenlabs`. Existing Gemini and whisper records are unchanged.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). No live request was made to OpenAI or ElevenLabs, so accuracy, Malayalam quality, response shapes and charges are unverified. ElevenLabs field names and `scribe_v2` were read from their public docs; the OpenAI docs page could not be fetched, so its request shape is from prior knowledge. Windows machine; no macOS check.
+
+**Limitations**
+- No schema bump: widening `provider` is additive, but an older app version will reject a project containing a run from OpenAI or ElevenLabs.
+- The whisper.cpp model is still chosen in the Transcribe dialog; Settings does not store a default local model.
+- OpenAI models without word timestamps (for example the gpt-4o transcribe family) are not offered; a custom ID for one fails the request rather than producing untimed captions.
+- Docs not yet updated beyond this entry: `docs/TRANSCRIPTION.md` still describes only Gemini for the cloud path.
+
+**Next:** run one short clip through each provider with a real key and record the result here; then update TRANSCRIPTION.md and DEPENDENCIES.md.
+
+## 2026-09-26 — Home screen (start page, recent projects, managed project folder)
+
+**Changes**
+- The app now opens on a CapCut-style Home page (`src/home/`): sidebar with Home and Templates (Templates says "coming soon", no fake controls), a Create-project banner, Open project…, and a searchable, sortable grid of projects with thumbnail, duration, last-edited time and file name.
+- Create project starts a blank editor; the first cue, clip or asset creates `Documents/KathaCut Projects/<title>.cstudio` (`project:create-managed`) and autosave takes over. Empty projects never leave a file. Save As still works for other locations.
+- Recents live in `userData/recent-projects.json` (`electron/projectLibrary.ts`, atomic writes, max 100). Every save and open records an entry. Opening, thumbnailing, renaming and trashing without a dialog is only allowed for paths already in that list.
+- Card actions (⋯ or right-click): Open, Rename (also renames the file when it is in the managed folder), Show in folder, Remove from list, Delete (moves only the .cstudio to the Recycle Bin/Trash; media is never touched). A card whose file is gone shows "File missing".
+- Thumbnails: while a project is open, a frame at 10% of the first video is captured through the existing thumbnails worker and stored in `userData/Cache/project-thumbnails`.
+- Home button in the top bar and File › Home close the open project (autosave is flushed first; the discard dialog only appears if something would still be lost). While Home shows, editor-only native menu commands are ignored.
+- `project:open` body is now `openProjectAt(path)`, shared by the dialog and the recent list.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean). Windows machine; not run in the app and no macOS check.
+
+**Limitations:** no crash-recovery copy yet; projects saved elsewhere before this change appear in the list only after they are opened or saved once; a project with no video shows a placeholder tile; Templates has no content; renaming a project from an older schema is refused until it has been opened once.
+
+**Next:** run `npm run dev` (unset `ELECTRON_RUN_AS_NODE`) and walk through create, import, Home, reopen, rename, delete.
+
+## 2026-09-26 — Autosave starts on open for migrated projects
+- Cause: opening any project saved in an older schema set `migrationPending`, which disabled autosave until an explicit Save. Since the schema moves often, most reopened projects hit this.
+- Fix: `project:open` (`electron/main.ts`) now copies the original file once to `<project>.pre-schema-<N>.bak` (never overwritten; `COPYFILE_EXCL`) and returns `migrationBackup`. `App.tsx` keeps autosave off only when the backup could not be made; otherwise autosave is live immediately and the notice names the backup. First write still happens on the first edit, not on open.
+- Verification (Windows 11 only): `npx tsc --noEmit -p .` clean. **Not tested**: no tests written or run, the app was not opened. macOS not tested.
+- Limitations: `.bak` files accumulate next to the project (one per source schema version); no UI to restore them.
+- Next: none.
+
 ## 2026-09-25 — Liquid glass 10: social/UI cards, labels and lower thirds (docs/plans/liquid-glass)
 - New `src/core/overlayTemplateCards.ts` (registered from `overlayTemplateCatalog.ts`) with 14 templates. Cards: Post card, iOS notification (glass tint 15%, blur 14), Subscribe pill, Like button, Search bar, Toggle switch (knob `slide`), Progress bar (`grow`), Control Centre tile, Volume slider. Labels: Lower third (slide in, fade out), Pill tag, Price tag, Step number, Chapter title bar (growing progress line), Timer chip (static, named as such). Categories `cards` and `labels` added to `TemplateCategory` and the panel tabs; `TemplateShapeSpec.glassTuning` overrides preset blur/tint.
 - `src/core/templateGlyphs.ts`: heart, bell (+ clapper), tick, circle and magnifier as own Bezier `path`/ellipse/line geometries. Tiles for glass-capable templates show a "Liquid Glass" tag (`OverlaysPanel.tsx`, `styles.css`). Glass export shipped (brief 04), so glass variants are real, but that pass is itself untested (see its entry).

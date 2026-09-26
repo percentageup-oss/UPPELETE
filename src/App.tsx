@@ -34,14 +34,16 @@ import { parseSrt, serializeSrt } from './core/srt'
 import { isValidRange, projectInRange, type SequenceRange } from './core/sequenceRange'
 import { formatClock, formatTimestamp, US_PER_SECOND } from './core/time'
 import { isEditableTarget, shortcutForEvent, type ShortcutAction } from './core/shortcuts'
-import { timelineViewSpanUs, trimToPlayhead, type CueDragMode } from './core/timeline'
+import { timelineViewSpanUs, type CueDragMode } from './core/timeline'
+import type { EditTools } from './TimelineToolbar'
 import type { PlaybackClock } from './core/playbackClock'
 import { MenuButton, type MenuEntry } from './MenuButton'
 import { SettingsDialog, type SettingsTab } from './SettingsDialog'
 import type { McpStatus } from '../electron/mcp/config'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
-import type { AlignmentSettingsStatus } from './core/alignmentIpc'
+import { loadTranscriptionDefaults, saveTranscriptionDefaults } from './core/transcriptionDefaults'
+import { providerLabel, type ProviderKeyStatuses, type TranscriptionDefaults } from './core/transcriptionProviders'
 import type { MenuCommand } from './core/menuCommands'
 import { describeJob, type ApplyTranscript } from './TranscriptionPanel'
 import { applyTranscription } from './core/transcriptionApply'
@@ -67,7 +69,7 @@ import { GroupInspector } from './GroupInspector'
 import { applyGroupCommand, groupMembers, groupSpan, type GroupCommand, type GroupMember } from './core/groupCommands'
 import { glassBounds } from './core/glassMap'
 import { defaultMaskBounds, itemStartUs, layerStackAt, type LayerRow } from './core/layerStack'
-import { defaultMask } from './core/layerMask'
+import { defaultMask, drawnMask } from './core/layerMask'
 import type { MaskTarget } from './core/maskCommands'
 import { assetIdOf, gradeSchema, type LayerMask, type MaskPathPoint, type MaskShape } from './core/edit'
 import { paintAt } from './core/fill'
@@ -112,6 +114,8 @@ import { usePlaybackProxies } from './app/usePlaybackProxies'
 import type { PlaybackProxyOverride, PlaybackProxyStatus } from './core/proxy'
 import { useProjectPlayback } from './app/useProjectPlayback'
 import { createThumbnailQueue } from './timeline/thumbnailQueue'
+import { HomeScreen } from './home/HomeScreen'
+import { HomeIcon } from './home/HomeIcons'
 import { DEFAULT_PAN_REGION_US, DEFAULT_ZOOM_REGION_US, defaultPanRects, defaultZoomRect, zoomRectAt } from './core/zoomRegion'
 import { applyZoomChanges, type ZoomRegionChanges } from './core/zoomRegionCommands'
 import { ZoomInspector } from './ZoomInspector'
@@ -189,7 +193,11 @@ export default function App() {
   const [pendingAssetRelink, setPendingAssetRelink] = useState<{ asset: ProjectAsset; candidate: MediaCandidate } | null>(null)
   // New Project / Open Project discard the current project outright; this holds which one is
   // pending confirmation while unsaved work exists (see `hasUnsavedWork` and `DiscardProjectReview`).
-  const [pendingReset, setPendingReset] = useState<{ kind: 'new' | 'open' } | null>(null)
+  const [pendingReset, setPendingReset] = useState<{ kind: 'new' | 'open' | 'home' } | null>(null)
+  // The start page shows until a project is created or opened; the editor state underneath is a blank project meanwhile.
+  const [view, setView] = useState<'home' | 'editor'>('home')
+  const viewRef = useRef(view)
+  viewRef.current = view
   // One draft clip substituted into the visible list, for the inspector's and the stage editor's
   // live rect/opacity/gain drafts — exactly `dragPreview`'s role for captions.
   const [clipDraft, setClipDraft] = useState<Clip | null>(null)
@@ -277,12 +285,18 @@ export default function App() {
   const [silenceDialogOpen, setSilenceDialogOpen] = useState(false)
   const [exportDialogOpen, setExportDialogOpen] = useState(false)
   const [sequenceSettingsOpen, setSequenceSettingsOpen] = useState(false)
-  const [geminiKey, setGeminiKey] = useState<AlignmentSettingsStatus | null>(null)
+  const [providerKeys, setProviderKeys] = useState<ProviderKeyStatuses | null>(null)
+  const geminiKey = providerKeys?.gemini ?? null
+  const [transcriptionDefaults, setTranscriptionDefaultsState] = useState<TranscriptionDefaults>(loadTranscriptionDefaults)
+  const setTranscriptionDefaults = (value: TranscriptionDefaults) => { setTranscriptionDefaultsState(value); saveTranscriptionDefaults(value) }
   const [editMode, setEditModeState] = useState<EditMode>(storedEditMode)
   const setEditMode = (mode: EditMode) => { setEditModeState(mode); try { localStorage.setItem(EDIT_MODE_STORAGE_KEY, mode) } catch { /* a convenience only */ } }
   // The video transcription, alignment and silence removal work on: `null` follows the playhead.
   const [pickedVideoId, setPickedVideoId] = useState<string | null>(null)
-  useEffect(() => { void window.captionStudio?.alignmentSettingsStatus().then(setGeminiKey).catch(() => setGeminiKey({ configured: false, source: 'keychain' })) }, [])
+  useEffect(() => {
+    const none = { configured: false, source: 'keychain' as const }
+    void window.captionStudio?.providerKeyStatuses().then(setProviderKeys).catch(() => setProviderKeys({ gemini: none, openai: none, elevenlabs: none }))
+  }, [])
   // Local agent control (docs/MCP.md): the top bar's "Agent connected" chip, driven live so a
   // client connecting or disconnecting shows up without reopening Settings.
   const [agentStatus, setAgentStatusState] = useState<McpStatus | null>(null)
@@ -481,7 +495,7 @@ export default function App() {
     const diagnostic = diagnosticSummary(error.diagnostic)
     return diagnostic ? `${error.message} — ${diagnostic}` : error.message
   }
-  const migrationNote = (from: 1 | 2 | 3 | 4 | null) => from ? ` and migrated from schema ${from} — autosave starts once you save it in the current format (⌘/Ctrl+S)` : ''
+  const migrationNote = (from: 1 | 2 | 3 | 4 | null, backup: string | null) => from ? (backup ? ` and migrated from schema ${from} — the original was kept as ${backup}` : ` and migrated from schema ${from} — autosave starts once you save it in the current format (⌘/Ctrl+S)`) : ''
   const describeMigration = (notes: MigrationNote[]) => {
     if (!notes.length) return ''
     const shown = notes.slice(0, 3).map((note) => note.message).join(' ')
@@ -762,7 +776,7 @@ export default function App() {
       const language = run.language ? `, language ${run.language}` : ''
       const name = assetById.get(assetId)?.name
       const how = 'provider' in run
-        ? `Transcribed${name ? ` ${name}` : ''} with Gemini (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
+        ? `Transcribed${name ? ` ${name}` : ''} with ${providerLabel(run.provider)} (${run.model.id}, ${plural(run.chunkCount, 'speech chunk')} uploaded${language})`
         : `Transcribed${name ? ` ${name}` : ''} locally (${run.engine.id} ${run.engine.version}, ${run.model.fileName}, ${run.backends.join(' + ') || 'recognizer not run'}${language})`
       setNotice({ tone: applied.summary.skippedOverlapping || run.adjustedSegmentCount || translation ? 'warning' : 'info', text: `${how}: ${parts.join('; ')}.` })
       return { ok: true }
@@ -1153,15 +1167,17 @@ export default function App() {
     setNotice({ tone: 'info', text: 'Started a new project. Open a video to transcribe it, or import an SRT file.' })
   }
 
-  const openProject = async () => {
+  const openProject = async (recentPath?: string) => {
     if (!window.captionStudio) return
     try {
-      const result = await window.captionStudio.openProject()
+      const result = recentPath ? await window.captionStudio.openRecentProject({ path: recentPath }) : await window.captionStudio.openProject()
       if (!result) return
       if (!result.ok) return setNotice({ tone: 'error', text: result.message })
       const opened = projectSchema.parse(result.project)
       resetForProject(opened, result.path)
-      setMigrationPending(result.migratedFrom !== null)
+      setView('editor')
+      // Autosave waits only when the original could not be preserved; otherwise the backup makes it safe to start.
+      setMigrationPending(result.migratedFrom !== null && !result.migrationBackup)
       // Every asset — every video included — resolves the same way. A resolved file gets its runtime
       // URL; a missing or mismatched one only gets an issue badge, and a mismatched video the timeline
       // plays opens the review dialog straight away (exactly like an explicit Relink…).
@@ -1187,10 +1203,61 @@ export default function App() {
         setPendingAssetRelink({ asset: opened.assets.find((asset) => asset.id === mismatched.id)!, candidate: mismatched.resolution.candidate })
         setNotice({ tone: 'warning', text: `A file on the timeline does not match this project. Review the differences before using it.${migration}` })
       } else if (missing.length) {
-        setNotice({ tone: 'warning', text: `Project loaded${migrationNote(result.migratedFrom)}, but ${missing.map((asset) => asset.name).join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. Relink from the media bin.${migration}` })
-      } else setNotice({ tone: result.migrationNotes.length ? 'warning' : 'info', text: `Project loaded${migrationNote(result.migratedFrom)}${opened.assets.length ? '; media fingerprints verified' : ''}.${migration}` })
+        setNotice({ tone: 'warning', text: `Project loaded${migrationNote(result.migratedFrom, result.migrationBackup)}, but ${missing.map((asset) => asset.name).join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing. Relink from the media bin.${migration}` })
+      } else setNotice({ tone: result.migrationNotes.length ? 'warning' : 'info', text: `Project loaded${migrationNote(result.migratedFrom, result.migrationBackup)}${opened.assets.length ? '; media fingerprints verified' : ''}.${migration}` })
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
+
+  // Home closes the open project: flush the autosave first, and only ask when something would still be lost.
+  const leaveToHome = () => { newProject(); setNotice(null); setView('home') }
+  const goHome = async () => {
+    if (projectPath && !migrationPending) await writeProject(projectPath, projectRef.current)
+    const current = projectRef.current
+    const unsaved = (current.cues.length > 0 || current.clips.length > 0 || current.assets.length > 0) && current !== lastSavedProject.current
+    if (unsaved) setPendingReset({ kind: 'home' }); else leaveToHome()
+  }
+  const startFromHome = () => {
+    setView('editor')
+    setNotice({ tone: 'info', text: 'Open a video to transcribe it, or import an SRT file. The project saves automatically once you add something.' })
+  }
+
+  // A project made from Home gets its file in the managed projects folder as soon as it holds anything, so autosave
+  // covers it from the first edit and an empty project never leaves a file behind.
+  const creatingProjectFile = useRef(false)
+  useEffect(() => {
+    if (view !== 'editor' || projectPath !== null || creatingProjectFile.current || !window.captionStudio) return
+    if (!(project.cues.length > 0 || project.clips.length > 0 || project.assets.length > 0)) return
+    creatingProjectFile.current = true
+    const snapshot = project
+    window.captionStudio.createManagedProject({ project: snapshot }).then((result) => {
+      if (viewRef.current !== 'editor') return
+      if (projectRef.current === snapshot) { lastSavedProject.current = result.project; setHistory((state) => ({ ...state, present: result.project })) }
+      else lastSavedProject.current = snapshot
+      setProjectPath(result.path)
+      setSaveStatus({ kind: 'saved', at: Date.now() })
+    }).catch((error) => setNotice({ tone: 'error', text: `Could not create the project file: ${errorText(error)}` }))
+      .finally(() => { creatingProjectFile.current = false })
+  }, [view, project, projectPath])
+
+  // The card image on the home screen: a frame from the first video, captured while its media is open here.
+  const posterAsset = view === 'editor' && projectPath ? primaryVideoAsset(project) : null
+  const posterReady = posterAsset ? Boolean(media.urlOf(posterAsset)) : false
+  const posterKey = useRef<string | null>(null)
+  useEffect(() => {
+    const api = window.captionStudio
+    const fingerprint = posterAsset?.fingerprint
+    const durationUs = posterAsset?.metadata?.durationUs
+    if (!api || !projectPath || !fingerprint || !durationUs || !posterReady || saveStatus?.kind !== 'saved') return
+    const key = `${projectPath}|${fingerprint.value}`
+    if (posterKey.current === key) return
+    const requestId = crypto.randomUUID()
+    let cancelled = false
+    void api.loadThumbnails({ requestId, fingerprint, timestampsUs: [Math.round(durationUs / 10)], width: 320 })
+      .then((result) => result.thumbnails[0] ? api.setProjectThumbnail({ path: projectPath, dataUrl: result.thumbnails[0].dataUrl }) : false)
+      .then((stored) => { if (stored && !cancelled) posterKey.current = key })
+      .catch(() => undefined)
+    return () => { cancelled = true; void api.cancelThumbnails(requestId).catch(() => undefined) }
+  }, [projectPath, posterAsset?.id, posterAsset?.fingerprint?.value, posterAsset?.metadata?.durationUs, posterReady, saveStatus?.kind])
 
   // The same reference check the autosave effect uses (App.tsx's autosave `useEffect`): a project
   // that has never diverged from what was last written — including a fresh, never-saved project with
@@ -1201,7 +1268,7 @@ export default function App() {
   const resumePendingReset = () => {
     const kind = pendingReset?.kind
     setPendingReset(null)
-    if (kind === 'new') newProject(); else if (kind === 'open') void openProject()
+    if (kind === 'new') newProject(); else if (kind === 'open') void openProject(); else if (kind === 'home') leaveToHome()
   }
   const saveThenResumePendingReset = async () => {
     if (await saveProject()) resumePendingReset()
@@ -1402,7 +1469,7 @@ export default function App() {
     setMaskEdit({ key: row.key, drawing: false })
   }
   const finishDrawnMask = (row: LayerRow, points: MaskPathPoint[]) => {
-    commitMask(row, { enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'path', points } })
+    commitMask(row, drawnMask(points))
     setMaskEdit({ key: row.key, drawing: false })
   }
   const resetMask = (row: LayerRow) => { if (row.mask) commitMask(row, { ...row.mask, shape: defaultMask(row.mask.shape.kind, defaultMaskBounds(row, project, captionComposition)).shape }) }
@@ -1652,11 +1719,10 @@ export default function App() {
     runCommand({ type: 'merge-next', cueId: selected.id })
   }
 
-  const trimSelectedCue = () => {
+  const trimSelectedCueTo = (edge: ClipEdge) => {
     if (!selected) return setNotice({ tone: 'error', text: 'Select a cue before trimming it.' })
     if (selectedSourceUs === null) return setNotice({ tone: 'error', text: 'Move the playhead over the caption’s video to trim it there.' })
-    const next = trimToPlayhead(selected, selectedSourceUs)
-    runCommand({ type: 'update-time', cueId: selected.id, startUs: next.startUs, endUs: next.endUs })
+    runCommand({ type: 'update-time', cueId: selected.id, startUs: edge === 'start' ? Math.round(selectedSourceUs) : selected.startUs, endUs: edge === 'end' ? Math.round(selectedSourceUs) : selected.endUs })
   }
 
   // A caption is added in the source time of the video under the playhead (or, with no video at
@@ -1664,6 +1730,20 @@ export default function App() {
   const canAddCue = hasVideo ? under !== null : currentUs < durationUs
   const canSplitSelected = selected !== null && selectedSourceUs !== null && selectedSourceUs > selected.startUs && selectedSourceUs < selected.endUs
   const canMergeSelected = selected !== null && project.cues.at(-1)?.id !== selected.id
+  // One Split / Trim / Delete set: it acts on the selected caption, otherwise on clips.
+  const rippleClipDelete = editMode === 'ripple' && selection?.kind === 'clip'
+  const editTools: EditTools = selected
+    ? {
+      split: splitSelectedCue, canSplit: canSplitSelected, splitLabel: 'Split caption at playhead (S)',
+      trimTo: trimSelectedCueTo, canTrim: canSplitSelected, trimLabels: { start: 'Trim caption start to playhead', end: 'Trim caption end to playhead' },
+      remove: () => deleteSelection(false), canRemove: true, removeLabel: selectedWord ? 'Delete selected word (Delete)' : 'Delete selected caption (Delete)',
+    }
+    : {
+      split: splitClips, canSplit: canSplitClips, splitLabel: 'Split clips at the playhead (Ctrl/⌘+B)',
+      trimTo: trimClipsTo, canTrim: canSplitClips, trimLabels: { start: 'Trim clip start to the playhead (Q)', end: 'Trim clip end to the playhead (W)' },
+      remove: () => deleteSelection(rippleClipDelete), canRemove: selection !== null,
+      removeLabel: rippleClipDelete ? 'Ripple delete the selected clip (Shift+Delete)' : selection?.kind === 'clip' ? 'Lift the selected clip, leaving a gap (Delete)' : 'Delete the selected item (Delete)',
+    }
 
   const addCue = (lengthUs = 2 * US_PER_SECOND) => {
     if (hasVideo && !under) { setNotice({ tone: 'error', text: 'Move the playhead over a video to add a caption there.' }); return }
@@ -1960,7 +2040,8 @@ export default function App() {
   // Native menu commands run whatever the handlers are on the latest render.
   const menuHandlers = useRef<Record<MenuCommand, () => void>>(null!)
   menuHandlers.current = {
-    'new-project': requestNewProject,
+    'go-home': () => { if (view === 'editor') void goHome() },
+    'new-project': () => view === 'home' ? startFromHome() : requestNewProject(),
     'open-video': () => void openVideo(), 'import-srt': () => void importSrt(), 'open-project': requestOpenProject,
     'save-project': () => void saveProject(), 'save-project-as': () => void saveProjectAs(),
     // The native accelerators fire even while typing; a focused field keeps its own edit history.
@@ -1972,7 +2053,11 @@ export default function App() {
     'restore-cuts': () => restoreCuts(),
     settings: () => setSettingsTab('models'), shortcuts: () => setSettingsTab('shortcuts'),
   }
-  useEffect(() => window.captionStudio?.onMenuCommand((command) => menuHandlers.current[command]()), [])
+  // Editor-only commands do nothing while the start page is showing.
+  useEffect(() => window.captionStudio?.onMenuCommand((command) => {
+    if (viewRef.current === 'home' && !(['new-project', 'open-project', 'settings', 'shortcuts'] as MenuCommand[]).includes(command)) return
+    menuHandlers.current[command]()
+  }), [])
 
   const pickedReady = Boolean(pickedVideo?.fingerprint && media.urlOf(pickedVideo))
   const exportVideoBlocker = exportState.kind === 'running' ? 'An export is already running' : exportState.kind === 'unsupported' ? exportState.reason
@@ -1985,6 +2070,7 @@ export default function App() {
     : null
   const shortcutLabel = (key: string) => `${navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl+'}${key}`
   const fileEntries: MenuEntry[] = [
+    { id: 'go-home', label: 'Home', onSelect: () => void goHome() },
     { id: 'new-project', label: 'New project', onSelect: requestNewProject, shortcut: shortcutLabel('N') },
     { id: 'sep-new', separator: true },
     { id: 'open-video', label: 'Import video…', onSelect: () => void openVideo(), shortcut: shortcutLabel('⇧O') },
@@ -2137,13 +2223,23 @@ export default function App() {
     setNotice({ tone: 'info', text: `${meta.width}×${meta.height} source: preview uses a lighter proxy once ready. View › Sequence settings changes the output size.` })
   }, [summaryAsset?.fingerprint?.value, summaryAsset?.metadata])
 
+  if (view === 'home') return <main className="home-shell">
+    <HomeScreen onCreate={startFromHome} onOpenFile={() => void openProject()} onOpenRecent={(path) => void openProject(path)}
+      onSettings={() => setSettingsTab('models')} onMessage={(tone, text) => setNotice({ tone, text })} />
+    <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} providerKeys={providerKeys} onProviderKeys={setProviderKeys} transcriptionDefaults={transcriptionDefaults} onTranscriptionDefaults={setTranscriptionDefaults}
+      playbackProxyMode={playbackProxies.mode} onPlaybackProxyMode={playbackProxies.setMode}
+      onMessage={(tone, text) => setNotice({ tone, text })} />
+    {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
+  </main>
+
   return <main className="app-shell">
     <header className="topbar">
-      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="KathaCut — Your local AI video toolkit." aria-label="KathaCut">Katha<span>Cut</span></strong><small title={project.title}>{project.title}</small></div></div>
+      <div className="topbar-left"><button className="icon-button" aria-label="Home" title="Home: all projects" onClick={() => void goHome()}><HomeIcon width={16} height={16} /></button>
+      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="KathaCut — Your local AI video toolkit." aria-label="KathaCut">Katha<span>Cut</span></strong><small title={project.title}>{project.title}</small></div></div></div>
       <div className="toolbar toolbar-workflow" role="group" aria-label="Captions">
         {pickedVideo && <AlignmentControls fingerprint={pickedVideo.fingerprint} mediaReady={pickedReady}
           cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}
-          onNeedKey={() => { setSettingsTab('gemini'); setNotice({ tone: 'info', text: 'Add a Gemini API key to align audio.' }) }}
+          onNeedKey={() => { setSettingsTab('transcription'); setNotice({ tone: 'info', text: 'Add a Gemini API key to align audio.' }) }}
           onApply={(transcript, run, snapshot) => applyAlignedTiming(transcript, run, snapshot, pickedVideo.id)} onMessage={(tone, text) => setNotice({ tone, text })} />}
         {exportState.kind === 'running' && <span className="job-pill" role="status" title="Uses the project as it was when the export started. You can keep editing.">
           <span>{describeExport(exportState.job, exportRate).label}</span>
@@ -2161,10 +2257,10 @@ export default function App() {
         <MenuButton label="Timeline" entries={timelineEntries} />
         <MenuButton label="View" entries={viewEntries} title="Sequence size and preview quality" />
         <MenuButton label="Export" className="accent" entries={exportEntries} />
-        <button className="icon-button" aria-label="Settings" title="Settings: speech models, playback proxies, Gemini API key, AI agents, shortcuts" onClick={() => setSettingsTab('models')}><SettingsIcon width={16} height={16} /></button>
+        <button className="icon-button" aria-label="Settings" title="Settings: speech models, transcription providers and API keys, playback proxies, AI agents, shortcuts" onClick={() => setSettingsTab('models')}><SettingsIcon width={16} height={16} /></button>
       </div>
     </header>
-    <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} geminiKey={geminiKey} onGeminiKey={setGeminiKey}
+    <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} providerKeys={providerKeys} onProviderKeys={setProviderKeys} transcriptionDefaults={transcriptionDefaults} onTranscriptionDefaults={setTranscriptionDefaults}
       playbackProxyMode={playbackProxies.mode} onPlaybackProxyMode={playbackProxies.setMode}
       onMessage={(tone, text) => setNotice({ tone, text })} />
     <ExportDialog open={exportDialogOpen} source={project.format ?? formatFromMedia(primaryVideoAsset(project)?.metadata)} durationUs={Math.max(0, ...project.clips.map(clipEndUs))} range={activeRange}
@@ -2205,7 +2301,7 @@ export default function App() {
           onEstimateMissing={() => selected && runCommand({ type: 'estimate-words', cueId: selected.id, idPrefix: crypto.randomUUID(), missingOnly: true })}
           cueButtonRefs={cueButtonRefs}
           videos={videoAssets(project)} pickedVideo={pickedVideo} onPickVideo={setPickedVideoId} mediaReady={pickedReady} onApplyTranscript={applyTranscript}
-          geminiKeyConfigured={Boolean(geminiKey?.configured)} onNeedGeminiKey={() => setSettingsTab('gemini')} onImportSrt={() => void importSrt()} />}
+          providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={() => setSettingsTab('transcription')} onImportSrt={() => void importSrt()} />}
         {railTab === 'overlays' && <OverlaysPanel assets={project.assets} assetUrls={media.assetUrls} onAddAtPlayhead={addOverlayAtPlayhead}
           onImportAndAdd={() => void importImageOverlay()} mediaReady onAddShape={addShapeAtPlayhead} onAddTemplate={(id, glass) => void addTemplateAtPlayhead(id, glass)} />}
         {railTab === 'titles' && <TitlesPanel style={effectiveStyle} cues={project.cues} activeCue={activeCue ?? null} presets={project.savedCaptionPresets ?? []} selectedText={selectedText} target={selectedText ? 'text' : 'captions'}
@@ -2286,7 +2382,7 @@ export default function App() {
             })()}
             {editingMask && focusedLayer && <MaskStageEditor composition={captionComposition} mask={focusedLayer.mask} drawing={editingMask.drawing}
               onDraft={(mask) => draftMask(focusedLayer, mask)} onCommit={(mask) => commitMask(focusedLayer, mask)}
-              onCommitDrawn={(points) => finishDrawnMask(focusedLayer, points)} onExit={() => setMaskEdit(null)} />}
+              onCommitDrawn={(points) => finishDrawnMask(focusedLayer, points)} onExit={() => { setMaskEdit(null); setMaskDraft(null) }} />}
             <div className="safe-area" />
           </div> : <Empty title="Your video appears here" body="Import a local video, then drag it from the Media tab to the timeline (or press Add). You can also continue from subtitles or a saved project. Media stays on this device." action={<div className="empty-actions">
             <button className="accent" onClick={() => void openVideo()}>Import video</button>
@@ -2462,9 +2558,10 @@ export default function App() {
       onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
       trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
       display={timelineDisplay} onDisplay={setTimelineDisplay} selectedWordId={selectedWord?.id ?? null} onSelectWord={onSelectWord}
-      actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1), delete: () => selectedWord ? deleteSelectedWord() : deleteSelectedCue(), split: splitSelectedCue, trim: trimSelectedCue }}
-      clipTools={{ split: splitClips, canSplit: canSplitClips, trimTo: trimClipsTo, canTrimTo: canSplitClips, markIn, markOut, clearRange, hasRange: activeRange !== null, remove: deleteClip, hasClip: clipBase !== null }}
-      canAdd={canAddCue} canSplit={canSplitSelected} canMerge={canMergeSelected} hasSelectedWord={selectedWord !== null}
+      actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1) }}
+      clipTools={{ markIn, markOut, clearRange, hasRange: activeRange !== null }}
+      edit={editTools}
+      canAdd={canAddCue} canMerge={canMergeSelected}
       onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} onDropPreset={(payload, sequenceUs) => addEffectPreset(payload.preset, sequenceUs)} onDropBackground={(payload, sequenceUs, trackId) => addBackground(payload, sequenceUs, trackId)}
       onDropColor={(payload, sequenceUs, trackId) => addAdjustment(payload.grade, sequenceUs, trackId)} thumbnailQueue={thumbnailQueue} />
     {pendingAssetRelink && <RelinkReview title={pendingAssetRelink.asset.kind === 'video' ? 'Replacement video does not match' : 'Replacement file does not match'} candidate={pendingAssetRelink.candidate}
@@ -2715,10 +2812,10 @@ function ReplaceCaptionsReview({ name, existingCount, importedCount, onCancel, o
 
 /** New Project / Open Project both discard the current project outright; shown only when it holds
  * work not yet written to disk (`hasUnsavedWork`). Undo cannot help here — the whole history resets. */
-function DiscardProjectReview({ kind, onCancel, onSaveFirst, onDiscard }: { kind: 'new' | 'open'; onCancel: () => void; onSaveFirst: () => void; onDiscard: () => void }) {
+function DiscardProjectReview({ kind, onCancel, onSaveFirst, onDiscard }: { kind: 'new' | 'open' | 'home'; onCancel: () => void; onSaveFirst: () => void; onDiscard: () => void }) {
   return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="discard-project-title">
-    <small>{kind === 'new' ? 'NEW PROJECT' : 'OPEN PROJECT'}</small><h2 id="discard-project-title">Discard unsaved work?</h2>
-    <p>{kind === 'new' ? 'Starting a new project' : 'Opening another project'} will close this one. Anything not yet saved will be lost; this cannot be undone.</p>
+    <small>{kind === 'new' ? 'NEW PROJECT' : kind === 'open' ? 'OPEN PROJECT' : 'BACK TO HOME'}</small><h2 id="discard-project-title">Discard unsaved work?</h2>
+    <p>{kind === 'new' ? 'Starting a new project' : kind === 'open' ? 'Opening another project' : 'Going back to Home'} will close this one. Anything not yet saved will be lost; this cannot be undone.</p>
     <div><button onClick={onCancel}>Cancel</button><button onClick={onSaveFirst}>Save first…</button><button className="accent" onClick={onDiscard}>Discard</button></div>
   </section></div>
 }

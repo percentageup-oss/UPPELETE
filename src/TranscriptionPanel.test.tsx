@@ -4,7 +4,7 @@ import { TranscriptionPanel } from './TranscriptionPanel'
 
 beforeEach(() => vi.stubGlobal('window', {}))
 afterEach(() => vi.unstubAllGlobals())
-const render = (geminiKeyConfigured: boolean) => renderToStaticMarkup(<TranscriptionPanel media={null} mediaReady cues={[]} onApply={() => ({ ok: true })} primary geminiKeyConfigured={geminiKeyConfigured} />)
+const render = (geminiKeyConfigured: boolean) => renderToStaticMarkup(<TranscriptionPanel media={null} mediaReady cues={[]} onApply={() => ({ ok: true })} primary providerKeys={{ gemini: { configured: geminiKeyConfigured, source: 'keychain' }, openai: { configured: false, source: 'keychain' }, elevenlabs: { configured: false, source: 'keychain' } }} />)
 const stubStorage = (values: Record<string, string>) => vi.stubGlobal('localStorage', { getItem: (key: string) => values[key] ?? null, setItem: () => {} })
 
 it('defaults to local whisper.cpp and states that audio stays on the device', () => {

@@ -1,6 +1,6 @@
 appId: com.vxlabs.kathacut
 productName: KathaCut
-copyright: KathaCut
+copyright: Copyright © 2026 Sadique P
 # The worker and export host are spawned by path and must live outside an ASAR archive.
 asar: false
 npmRebuild: false
@@ -22,6 +22,8 @@ extraResources:
     to: bin
   - from: docs/licenses
     to: licenses
+  - from: LICENSE
+    to: LICENSE
   - from: THIRD_PARTY_NOTICES.txt
     to: THIRD_PARTY_NOTICES.txt
 win:

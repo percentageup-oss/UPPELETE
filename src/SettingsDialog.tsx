@@ -1,25 +1,27 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { AlignmentSettingsStatus } from './core/alignmentIpc'
 import type { McpSettingsView } from '../electron/mcp/config'
 import type { PlaybackProxyMode } from './core/proxy'
 import { ModelManager } from './ModelManager'
+import { cloudModelIdSchema, CLOUD_PROVIDERS, cloudProvider, providerLabel, type CloudProviderEntry, type CloudProviderId, type ProviderKeyStatus, type ProviderKeyStatuses, type TranscriptionDefaults, type TranscriptionProviderId } from './core/transcriptionProviders'
 
-export type SettingsTab = 'models' | 'gemini' | 'agent' | 'playback' | 'shortcuts'
+export type SettingsTab = 'models' | 'transcription' | 'agent' | 'playback' | 'shortcuts'
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'models', label: 'Speech models' },
-  { id: 'gemini', label: 'Gemini API key' },
+  { id: 'transcription', label: 'Transcription' },
   { id: 'agent', label: 'AI agents' },
   { id: 'playback', label: 'Playback' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
 ]
 
 /** One settings surface for configuration that used to be three separate toolbar buttons. `tab === null` means closed. */
-export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, playbackProxyMode, onPlaybackProxyMode, onMessage }: {
+export function SettingsDialog({ tab, onTab, onClose, providerKeys, onProviderKeys, transcriptionDefaults, onTranscriptionDefaults, playbackProxyMode, onPlaybackProxyMode, onMessage }: {
   tab: SettingsTab | null
   onTab(tab: SettingsTab): void
   onClose(): void
-  geminiKey: AlignmentSettingsStatus | null
-  onGeminiKey(status: AlignmentSettingsStatus): void
+  providerKeys: ProviderKeyStatuses | null
+  onProviderKeys(statuses: ProviderKeyStatuses): void
+  transcriptionDefaults: TranscriptionDefaults
+  onTranscriptionDefaults(value: TranscriptionDefaults): void
   playbackProxyMode: PlaybackProxyMode
   onPlaybackProxyMode(mode: PlaybackProxyMode): void
   onMessage(tone: 'info' | 'error', text: string): void
@@ -53,7 +55,7 @@ export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, pl
       </div>
       <div role="tabpanel" id={`settings-panel-${tab}`} aria-labelledby={`settings-tab-${tab}`} className="settings-panel">
         {tab === 'models' && <ModelManager />}
-        {tab === 'gemini' && <GeminiKeySettings status={geminiKey} onStatus={onGeminiKey} onMessage={onMessage} />}
+        {tab === 'transcription' && <TranscriptionSettings keys={providerKeys} onKeys={onProviderKeys} defaults={transcriptionDefaults} onDefaults={onTranscriptionDefaults} onMessage={onMessage} />}
         {tab === 'agent' && <AgentSettings onMessage={onMessage} />}
         {tab === 'playback' && <PlaybackProxySettings mode={playbackProxyMode} onMode={onPlaybackProxyMode} />}
         {tab === 'shortcuts' && <ShortcutReference />}
@@ -62,50 +64,124 @@ export function SettingsDialog({ tab, onTab, onClose, geminiKey, onGeminiKey, pl
   </dialog>
 }
 
-export function GeminiKeySettings({ status, onStatus, onMessage }: {
-  status: AlignmentSettingsStatus | null
-  onStatus(status: AlignmentSettingsStatus): void
+const CUSTOM_MODEL = '__custom__'
+
+/** Curated models plus a validated free-text ID, so a newly released model works without an app update. */
+export function ModelPicker({ provider, value, onChange }: { provider: CloudProviderEntry; value: string | undefined; onChange(model: string | undefined): void }) {
+  const current = value ?? provider.defaultModel
+  const curated = provider.models.some((model) => model.id === current)
+  const [custom, setCustom] = useState(!curated)
+  const [draft, setDraft] = useState(curated ? '' : current)
+  const draftValid = cloudModelIdSchema.safeParse(draft.trim()).success
+  const selected = custom ? CUSTOM_MODEL : current
+  const note = provider.models.find((model) => model.id === selected)?.note
+  return <div className="provider-model">
+    <label>Model
+      <select value={selected} onChange={(event) => {
+        if (event.target.value === CUSTOM_MODEL) { setCustom(true); return }
+        setCustom(false); onChange(event.target.value === provider.defaultModel ? undefined : event.target.value)
+      }}>
+        {provider.models.map((model) => <option key={model.id} value={model.id}>{model.label}{model.id === provider.defaultModel ? ' (default)' : ''}</option>)}
+        <option value={CUSTOM_MODEL}>Custom model ID…</option>
+      </select>
+    </label>
+    {note && <p className="style-hint">{note}</p>}
+    {custom && <>
+      <label>Model ID<input type="text" autoComplete="off" spellCheck={false} value={draft} placeholder="Model ID from the provider’s documentation"
+        onChange={(event) => { setDraft(event.target.value); const id = event.target.value.trim(); if (cloudModelIdSchema.safeParse(id).success) onChange(id) }} /></label>
+      <p className="style-hint" role={draft && !draftValid ? 'alert' : undefined}>{draft && !draftValid ? 'Use letters, digits and . _ : / - only.' : 'The model must return word timestamps, or the request fails instead of producing untimed captions.'}</p>
+    </>}
+  </div>
+}
+
+export function ProviderKeySettings({ provider, status, onStatuses, onMessage }: {
+  provider: CloudProviderId
+  status: ProviderKeyStatus | null
+  onStatuses(statuses: ProviderKeyStatuses): void
   onMessage(tone: 'info' | 'error', text: string): void
 }) {
+  const entry = cloudProvider(provider)
   const [apiKey, setApiKey] = useState('')
   const save = async () => {
-    try { onStatus(await window.captionStudio!.saveGeminiApiKey(apiKey)); setApiKey(''); onMessage('info', 'Gemini API key saved securely.') }
+    try { onStatuses(await window.captionStudio!.saveProviderApiKey(provider, apiKey)); setApiKey(''); onMessage('info', `${entry.label} API key saved securely.`) }
     catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not save the API key.') }
   }
   const remove = async () => {
-    try { onStatus(await window.captionStudio!.removeGeminiApiKey()); onMessage('info', 'Gemini API key removed.') }
+    try { onStatuses(await window.captionStudio!.removeProviderApiKey(provider)); onMessage('info', `${entry.label} API key removed.`) }
     catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not remove the API key.') }
   }
-  return <section className="alignment-settings" aria-labelledby="gemini-key-heading">
-    <h3 id="gemini-key-heading">Gemini API key</h3>
-    <p>Optional. Your key is encrypted with the operating system’s credential store and never leaves this computer except in requests you start. It enables two cloud actions: <strong>Transcribe with Gemini</strong> uploads detected speech audio, and <strong>Align audio</strong> uploads only padded audio ranges covered by captions without replacing their text. Local transcription and editing work without it.</p>
-    <p role="status">{status?.configured ? status.source === 'environment' ? 'A key is supplied by the GEMINI_API_KEY environment variable.' : 'A key is saved.' : 'No key is saved.'}</p>
-    <label>Gemini API key<input type="password" autoComplete="off" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={status?.configured ? 'Replace the saved key' : 'Paste API key'} /></label>
-    <div className="dialog-actions">
+  const fromEnvironment = status?.configured && status.source === 'environment'
+  return <section className="settings-row" aria-labelledby={`${provider}-key-heading`}>
+    <div className="settings-subheading">
+      <h4 id={`${provider}-key-heading`} style={{ margin: 0, fontSize: 'inherit' }}>{entry.label} API key</h4>
+      <span className={`settings-badge ${status?.configured ? 'ok' : 'warn'}`} role="status">{fromEnvironment ? `From ${entry.envVar}` : status?.configured ? 'Key saved' : 'No key'}</span>
+    </div>
+    <p className="style-hint">{provider === 'gemini'
+      ? <>Used for <strong>Transcribe with Gemini</strong>, Translate to and <strong>Align audio</strong>. </>
+      : <>Used for cloud transcription with {entry.label}. </>}Stored encrypted on this computer.{' '}
+      <a href={entry.keyHelpUrl} target="_blank" rel="noreferrer">Get a key</a></p>
+    <div className="settings-key-row">
+      <input type="password" autoComplete="off" aria-label={`${entry.label} API key`} value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder={status?.configured ? 'Replace the saved key' : 'Paste API key'} />
       <button className="accent" onClick={() => void save()} disabled={!apiKey.trim()}>Save key</button>
       {status?.configured && status.source !== 'environment' && <button onClick={() => void remove()}>Remove key</button>}
     </div>
   </section>
 }
 
+/** Default provider, then one cloud provider at a time (chosen from a dropdown) with its key and model. Defaults only pre-select the Transcribe dialog. */
+export function TranscriptionSettings({ keys, onKeys, defaults, onDefaults, onMessage }: {
+  keys: ProviderKeyStatuses | null
+  onKeys(statuses: ProviderKeyStatuses): void
+  defaults: TranscriptionDefaults
+  onDefaults(value: TranscriptionDefaults): void
+  onMessage(tone: 'info' | 'error', text: string): void
+}) {
+  const setModel = (provider: TranscriptionProviderId, model: string | undefined) => {
+    const models = { ...defaults.models }
+    if (model) models[provider] = model; else delete models[provider]
+    onDefaults({ ...defaults, models })
+  }
+  const providers: TranscriptionProviderId[] = ['whisper', ...CLOUD_PROVIDERS.map((entry) => entry.id)]
+  const [selected, setSelected] = useState<CloudProviderId>(defaults.provider !== 'whisper' ? defaults.provider : CLOUD_PROVIDERS[0].id)
+  const entry = cloudProvider(selected)
+  return <section aria-labelledby="transcription-defaults-heading">
+    <h3 id="transcription-defaults-heading">Transcription</h3>
+    <p className="settings-lead">Choose what Transcribe uses by default. whisper.cpp runs on this computer; cloud providers need your own API key.</p>
+    <div className="settings-row">
+      <label htmlFor="transcription-default-provider">Default provider</label>
+      <select id="transcription-default-provider" value={defaults.provider} onChange={(event) => onDefaults({ ...defaults, provider: event.target.value as TranscriptionProviderId })}>
+        {providers.map((id) => <option key={id} value={id}>{providerLabel(id)}{id !== 'whisper' && !keys?.[id]?.configured ? ' — no API key yet' : ''}</option>)}
+      </select>
+    </div>
+    <h3 className="settings-subheading">Cloud provider keys</h3>
+    <div className="settings-row">
+      <label htmlFor="transcription-key-provider">Provider</label>
+      <select id="transcription-key-provider" value={selected} onChange={(event) => setSelected(event.target.value as CloudProviderId)}>
+        {CLOUD_PROVIDERS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label} — {keys?.[provider.id]?.configured ? 'key saved' : 'no key'}</option>)}
+      </select>
+    </div>
+    <div className="provider-settings" key={entry.id}>
+      <ProviderKeySettings provider={entry.id} status={keys?.[entry.id] ?? null} onStatuses={onKeys} onMessage={onMessage} />
+      <ModelPicker provider={entry} value={defaults.models[entry.id]} onChange={(model) => setModel(entry.id, model)} />
+    </div>
+  </section>
+}
+
 const PLAYBACK_PROXY_MODES: { id: PlaybackProxyMode; label: string; hint: string }[] = [
-  { id: 'off', label: 'Off', hint: 'Preview always plays the original file, whatever its size.' },
-  { id: 'auto', label: 'Auto (recommended)', hint: 'A lighter local copy is generated in the background for video above 1080p or that the player cannot decode (e.g. iPhone ProRes), and used for preview once ready.' },
-  { id: 'always', label: 'Always', hint: 'A lighter local copy is generated in the background for every video, however small.' },
+  { id: 'off', label: 'Off', hint: 'Always play the original file.' },
+  { id: 'auto', label: 'Auto (recommended)', hint: 'Only for video above 1080p or that the player can’t decode (e.g. iPhone ProRes).' },
+  { id: 'always', label: 'Always', hint: 'For every video.' },
 ]
 
 /**
- * Large source video (a 4K import edited for a 1080p delivery) decodes at full size in preview even
- * though the sequence and export target something smaller — this is the setting for the fix: a
- * background-generated, disk-cached proxy that preview plays instead. It never touches export,
- * transcription, waveform extraction, thumbnails or export parity, which always use the original
- * file; the per-clip "Preview: proxy/original quality" toggle over the video preview overrides this
- * per session to check full-quality framing.
+ * A background-generated, disk-cached lighter copy that preview plays instead of large source video.
+ * Export, transcription, waveform extraction and thumbnails always use the original file; the per-clip
+ * "Preview: proxy/original quality" toggle overrides this per session.
  */
 export function PlaybackProxySettings({ mode, onMode }: { mode: PlaybackProxyMode; onMode(mode: PlaybackProxyMode): void }) {
-  return <section className="alignment-settings" aria-labelledby="playback-proxy-heading">
+  return <section aria-labelledby="playback-proxy-heading">
     <h3 id="playback-proxy-heading">Playback proxies</h3>
-    <p>Large source video (e.g. a 4K import) can be sluggish to scrub and play back in preview even when the sequence and export target something smaller. This generates a lighter local copy in the background and plays that in preview only — export, transcription and waveform extraction always use the original file, and nothing is uploaded or sent anywhere.</p>
+    <p className="settings-lead">Play a lighter local copy of large videos in the preview. Export always uses the original.</p>
     <div role="radiogroup" aria-labelledby="playback-proxy-heading" className="playback-proxy-modes">
       {PLAYBACK_PROXY_MODES.map((entry) => <label key={entry.id}>
         <input type="radio" name="playback-proxy-mode" checked={mode === entry.id} onChange={() => onMode(entry.id)} />
@@ -151,7 +227,7 @@ export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error',
 
   return <section className="agent-settings" aria-labelledby="agent-settings-heading">
     <h3 id="agent-settings-heading">AI agents</h3>
-    <p>Optional and off by default. Enabling this lets a Claude client (Claude Code or Claude Desktop) on this computer read and edit the open project through the same commands the editor itself uses — undoable, and visible here as it happens. Nothing leaves this computer: the server only listens on 127.0.0.1 and requires the token below.</p>
+    <p className="settings-lead">Let Claude Code or Claude Desktop on this computer edit the open project. Off by default; local only, and a token is required.</p>
     <label className="agent-enable"><input type="checkbox" checked={settings?.enabled ?? false} disabled={busy || !settings} onChange={(event) => void setEnabled(event.target.checked)} /> Allow agent access</label>
     {settings?.enabled && <>
       <p role="status">{settings.running

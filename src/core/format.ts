@@ -44,3 +44,8 @@ export const DEFAULT_FORMAT_ASPECT = 16 / 9
 export function formatAspect(format: SequenceFormat | null | undefined): number {
   return format ? format.width / format.height : DEFAULT_FORMAT_ASPECT
 }
+
+/** Human-readable download/file size: "148 MB", "1.6 GB". */
+export function formatSize(bytes: number): string {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`
+}

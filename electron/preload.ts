@@ -15,15 +15,17 @@ import { transcriptionProgressSchema, type TranscriptionAvailability, type Trans
 import { exportProgressSchema, type ExportOutcome, type ExportProgress, type ExportStartRequest } from '../src/export/ipc'
 import type { ExportSupport } from '../src/core/exportSupport'
 import { isMenuCommand, type MenuCommand } from '../src/core/menuCommands'
+import type { CloudProviderId, ProviderKeyStatuses } from '../src/core/transcriptionProviders'
 import { alignmentProgressSchema, type AlignmentOutcome, type AlignmentProgress, type AlignmentSettingsStatus, type AlignmentStartRequest } from '../src/core/alignmentIpc'
 import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../src/core/agentProtocol'
 import type { McpSettingsView, McpStatus } from './mcp/config'
+import type { RecentProjectView } from './projectLibrary'
 
 export type OperationResult<T> = { ok: true } & T | { ok: false; message: string }
 export type OpenedVideo = OperationResult<{ candidate: MediaCandidate }>
 export type OpenedText = { path: string; content: string }
 export type SaveRequest = { content: string; defaultName: string }
-export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | 4 | null; migrationNotes: MigrationNote[]; assets: AssetResolution[]; lutTexts: Record<string, string> }>
+export type OpenedProject = OperationResult<{ path: string; project: CaptionProject; migratedFrom: 1 | 2 | 3 | 4 | null; migrationBackup: string | null; migrationNotes: MigrationNote[]; assets: AssetResolution[]; lutTexts: Record<string, string> }>
 export type ImportedAsset = OperationResult<{ media: ProjectMedia; url: string }>
 export type AssetRelinkResult = OperationResult<{ candidate: MediaCandidate }>
 /** A fresh "My LUTs" import or a relink of a missing/mismatched one — both go through the same
@@ -31,6 +33,7 @@ export type AssetRelinkResult = OperationResult<{ candidate: MediaCandidate }>
  * `asset-update`) the result becomes. */
 export type LutImportResult = OperationResult<{ candidate: MediaCandidate }>
 export type SavedProject = { path: string; project: CaptionProject }
+export type RecentProjectAction = { action: 'show' | 'remove' | 'trash'; path: string } | { action: 'rename'; path: string; title: string }
 export type WaveformProgress = { requestId: string; progress: ProgressMessage['progress'] }
 export type SilenceProgress = { requestId: string; progress: ProgressMessage['progress'] }
 export type ThumbnailsProgress = { requestId: string; progress: ProgressMessage['progress'] }
@@ -70,6 +73,9 @@ contextBridge.exposeInMainWorld('captionStudio', {
   alignmentSettingsStatus: (): Promise<AlignmentSettingsStatus> => ipcRenderer.invoke('alignment:settings-status'),
   saveGeminiApiKey: (apiKey: string): Promise<AlignmentSettingsStatus> => ipcRenderer.invoke('alignment:settings-save', apiKey),
   removeGeminiApiKey: (): Promise<AlignmentSettingsStatus> => ipcRenderer.invoke('alignment:settings-remove'),
+  providerKeyStatuses: (): Promise<ProviderKeyStatuses> => ipcRenderer.invoke('providerKeys:statuses'),
+  saveProviderApiKey: (provider: CloudProviderId, apiKey: string): Promise<ProviderKeyStatuses> => ipcRenderer.invoke('providerKeys:save', provider, apiKey),
+  removeProviderApiKey: (provider: CloudProviderId): Promise<ProviderKeyStatuses> => ipcRenderer.invoke('providerKeys:remove', provider),
   startAlignment: (request: AlignmentStartRequest): Promise<AlignmentOutcome> => ipcRenderer.invoke('alignment:start', request),
   cancelAlignment: (requestId: string): Promise<void> => ipcRenderer.invoke('alignment:cancel', requestId),
   onAlignmentProgress: (callback: (message: AlignmentProgress) => void) => {
@@ -86,6 +92,11 @@ contextBridge.exposeInMainWorld('captionStudio', {
   openProject: (): Promise<OpenedProject | null> => ipcRenderer.invoke('project:open'),
   saveProject: (request: { project: CaptionProject; defaultName: string }): Promise<SavedProject | null> => ipcRenderer.invoke('project:save', request),
   writeProject: (request: { project: CaptionProject; path: string }): Promise<SavedProject> => ipcRenderer.invoke('project:write', request),
+  createManagedProject: (request: { project: CaptionProject }): Promise<SavedProject> => ipcRenderer.invoke('project:create-managed', request),
+  listRecentProjects: (): Promise<RecentProjectView[]> => ipcRenderer.invoke('projects:list'),
+  openRecentProject: (request: { path: string }): Promise<OpenedProject> => ipcRenderer.invoke('project:open-recent', request),
+  setProjectThumbnail: (request: { path: string; dataUrl: string }): Promise<boolean> => ipcRenderer.invoke('project:set-thumbnail', request),
+  recentProjectAction: (request: RecentProjectAction): Promise<{ ok: true } | { ok: false; message: string }> => ipcRenderer.invoke('project:recent-action', request),
   editText: (action: 'undo' | 'redo'): Promise<void> => ipcRenderer.invoke('edit:text', action),
   importAsset: (kind: 'image' | 'audio'): Promise<ImportedAsset | null> => ipcRenderer.invoke('assets:import', kind),
   relinkAsset: (expected: ProjectAsset): Promise<AssetRelinkResult | null> => ipcRenderer.invoke('assets:relink', expected),

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { ProviderKeyStatuses, TranscriptionDefaults } from './core/transcriptionProviders'
 import type { MouseEvent as ReactMouseEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { formatClock, formatTimestamp } from './core/time'
@@ -21,7 +22,7 @@ export function CaptionsPanel({
   historyPastLength, historyFutureLength, onUndo, onRedo,
   effectiveStyle, selected, captionDisplay, onCaptionDisplay, onProjectStyle, onOverride, onResetOverrides, onPlacementOverride, onEstimate, onGroup,
   onSelect, onUpdateText, onSelectWord, onWordAction, onEstimateMissing, cueButtonRefs,
-  videos, pickedVideo, onPickVideo, mediaReady, onApplyTranscript, geminiKeyConfigured, onNeedGeminiKey, onImportSrt,
+  videos, pickedVideo, onPickVideo, mediaReady, onApplyTranscript, providerKeys, transcriptionDefaults, onNeedGeminiKey, onImportSrt,
 }: {
   cueCount: number
   visibleCues: readonly Cue[]
@@ -62,7 +63,8 @@ export function CaptionsPanel({
   onPickVideo: (assetId: string | null) => void
   mediaReady: boolean
   onApplyTranscript: ApplyTranscript
-  geminiKeyConfigured: boolean
+  providerKeys: ProviderKeyStatuses | null
+  transcriptionDefaults: TranscriptionDefaults
   onNeedGeminiKey: () => void
   onImportSrt: () => void
 }) {
@@ -83,7 +85,7 @@ export function CaptionsPanel({
       {videos.length > 1 && <VideoPicker videos={videos} picked={pickedVideo} onPick={onPickVideo} label="Transcribe" />}
       {offerTranscription && <div className="cue-list-empty">
         <TranscriptionPanel media={pickedVideo} mediaReady={mediaReady} cues={[...pickedCues]} onApply={onApplyTranscript} primary
-          geminiKeyConfigured={geminiKeyConfigured} onNeedGeminiKey={onNeedGeminiKey} />
+          providerKeys={providerKeys} transcriptionDefaults={transcriptionDefaults} onNeedGeminiKey={onNeedGeminiKey} />
         {!cueCount && <button type="button" onClick={onImportSrt}>Import SRT</button>}
       </div>}
       {visibleCues.map((cue, index) => <TranscriptCue key={cue.id} cue={cue} index={index} selected={cue.id === selectedCueId} warning={warningCueIds.has(cue.id)}

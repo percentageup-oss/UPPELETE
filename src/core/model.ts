@@ -140,11 +140,11 @@ export const whisperTranscriptionRunSchema = z.strictObject({
   translation: translationProvenanceSchema.optional(),
 })
 
-// Optional cloud transcription with the user's own key. No credential or raw provider response is stored.
+// Optional cloud transcription (Gemini, OpenAI or ElevenLabs) with the user's own key. No credential or raw provider response is stored.
 export const geminiTranscriptionRunSchema = z.strictObject({
   id: z.string().min(1).max(128),
   createdAt: z.string().min(1).max(64),
-  provider: z.literal('gemini'),
+  provider: z.enum(['gemini', 'openai', 'elevenlabs']),
   engine: z.strictObject({ id: z.string().min(1).max(128), version: z.string().min(1).max(128) }),
   model: z.strictObject({ id: z.string().min(1).max(256) }),
   mediaAssetId: z.string().min(1).max(128).optional(),

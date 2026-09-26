@@ -93,7 +93,7 @@ async function main() {
       const [{ size: sizeBytes }, sha256] = await Promise.all([stat(model.path), sha256File(model.path)])
       // Not a shipped ModelArtifact: id/url are placeholders for this run only. See file header.
       const artifact: ModelArtifact = {
-        id: model.label as ManagedModelId, name: model.label, fileName: path.basename(model.path), backend: 'whisper.cpp', format: 'GGML F16',
+        id: model.label as ManagedModelId, name: model.label, summary: '', recommended: false, fileName: path.basename(model.path), backend: 'whisper.cpp', format: 'GGML F16',
         languageCapability: 'Benchmark candidate, not a catalog entry', multilingual: true, sizeBytes, sha256, url: `file://${model.path}`,
         deviceModes: ['CPU (fallback)'],
       }

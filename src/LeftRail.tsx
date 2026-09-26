@@ -41,7 +41,7 @@ export function LeftRail({ active, onChange, onSettings }: { active: RailTab; on
         {tab.icon({})}<span>{tab.label}</span>
       </button>)}
     </div>
-    <button type="button" className="rail-settings" aria-label="Settings" title="Settings: speech models, Gemini API key, shortcuts" onClick={onSettings}>
+    <button type="button" className="rail-settings" aria-label="Settings" title="Settings: speech models, transcription providers, shortcuts" onClick={onSettings}>
       <SettingsIcon /><span>Settings</span>
     </button>
   </nav>

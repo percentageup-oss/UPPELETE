@@ -41,5 +41,5 @@ Gate (per slice): the feature works in the editor, an exported MP4 matches previ
 
 ## 5. Distribution
 - Validate macOS Apple Silicon and Windows x64 clean installation.
-- Dependencies/models/fonts license inventory, selected source license, contributor docs and public-release checklist.
+- Dependencies/models/fonts license inventory and public-release checklist. (Source license: GPL-3.0-or-later, see LICENSE; contributor docs: CONTRIBUTING.md — done.)
 - No repository publication until requested.

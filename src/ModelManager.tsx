@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import { type ManagedModelId, type ModelArtifact, type ModelState } from './core/modelCatalog'
+import { formatSize } from './core/format'
 
 const busy = (state: ModelState) => ['checking', 'downloading', 'verifying', 'removing'].includes(state.status)
-const labels: Record<ModelState['status'], string> = {
-  absent: 'Not installed', checking: 'Checking local files…', downloading: 'Downloading — inactive', verifying: 'Verifying SHA-256 — inactive', installed: 'Installed — checksum verified',
-  interrupted: 'Interrupted download — inactive', cancelled: 'Cancelled — inactive', failed: 'Failed — inactive', removing: 'Removing…',
+/** Only states the user needs to act on or wait for; "installed" and "absent" are shown by the badge and the button. */
+const statusText: Partial<Record<ModelState['status'], string>> = {
+  checking: 'Checking local files…', downloading: 'Downloading…', verifying: 'Verifying download…', removing: 'Removing…',
+  interrupted: 'Download interrupted — resume to continue.', cancelled: 'Download cancelled.', failed: 'Download failed.',
 }
+/** Multilingual models first, smallest to largest; English-only last so the Malayalam-capable path reads first. */
+const byTier = (a: ModelArtifact, b: ModelArtifact) => Number(b.multilingual) - Number(a.multilingual) || a.sizeBytes - b.sizeBytes
+
 /** Model catalog, download and verification controls. Rendered inside the Settings dialog's Speech models tab. */
 export function ModelManager() {
   const [catalog, setCatalog] = useState<readonly ModelArtifact[]>([])
@@ -36,37 +41,48 @@ export function ModelManager() {
     finally { if (operation !== 'cancelModelDownload') setPending(null) }
   }
   return <section aria-labelledby="models-heading">
-        <h3 id="models-heading">Local speech models</h3>
-        <p>Downloads start only when you choose Download or Resume. Verified models remain on this computer and can be used offline. {backendAvailable ? 'A local whisper-cli executable is configured; use Transcribe to run it.' : 'No local whisper-cli executable is configured, so transcription is unavailable.'}</p>
-        <p>Device modes below describe upstream support and build requirements. Devices actually initialized by the configured engine are shown in the Transcribe dialog. Only these exact GGML artifacts are managed; language support is not a quality or alignment guarantee.</p>
-        <button disabled={pending !== null || states.some(busy)} onClick={() => void refresh()}>Recheck local files</button>
-        {error && <p role="alert">{error}</p>}
-        {catalog.map((model) => {
-          const state = states.find((entry) => entry.id === model.id)
-          if (!state) return null
-          const blocked = busy(state) || pending !== null
-          const hasPartial = state.partialPresent
-          return <article className="model-card" key={model.id} aria-labelledby={`model-${model.id}`}>
-            <h3 id={`model-${model.id}`}>{model.name}</h3>
-            <dl>
-              <dt>Backend / format</dt><dd>{model.backend} / {model.format}</dd>
-              <dt>Languages</dt><dd>{model.languageCapability}</dd>
-              <dt>Download / installed size</dt><dd>{model.sizeBytes.toLocaleString()} bytes ({(model.sizeBytes / 1024 / 1024).toFixed(2)} MiB)</dd>
-              <dt>Disk location</dt><dd><code>{state.location}</code></dd>
-              <dt>Partial download</dt><dd><code>{state.partialLocation}</code></dd>
-              <dt>Trusted SHA-256</dt><dd><code>{model.sha256}</code></dd>
-              <dt>Supported device modes</dt><dd>{model.deviceModes.join('; ')}</dd>
-              <dt>State</dt><dd role="status">{labels[state.status]}{state.cancelRequested && ' — cancelling…'}</dd>
-            </dl>
-            {state.status === 'downloading' && <progress aria-label={`Downloaded bytes for ${model.name}`} value={state.downloadedBytes} max={model.sizeBytes} />}
-            {!state.installed && <p>{state.downloadedBytes.toLocaleString()} of {model.sizeBytes.toLocaleString()} bytes saved{hasPartial && '; Resume uses a byte range if supported, otherwise restarts.'}</p>}
-            {state.error && <p role="alert">{state.error.code}: {state.error.message}</p>}
-            <div className="model-actions">
-              {!state.installed && <button disabled={blocked} onClick={() => void action(model.id, 'downloadModel')}>{hasPartial ? 'Resume / retry download' : `Download (${(model.sizeBytes / 1024 / 1024).toFixed(2)} MiB)`}</button>}
-              {['checking', 'downloading', 'verifying'].includes(state.status) && <button disabled={state.cancelRequested} onClick={() => void action(model.id, 'cancelModelDownload')}>Cancel download / verification</button>}
-              <button disabled={blocked || (state.status === 'absent')} onClick={() => void action(model.id, 'removeModel')}>Remove model / partial…</button>
-            </div>
-          </article>
-        })}
+    <div className="settings-heading-row">
+      <h3 id="models-heading">Speech models</h3>
+      <button disabled={pending !== null || states.some(busy)} onClick={() => void refresh()}>Recheck files</button>
+    </div>
+    <p className="settings-lead">Download a model to transcribe offline. Larger models are more accurate, especially for Malayalam, but slower.</p>
+    {!backendAvailable && catalog.length > 0 && <p role="alert">Local transcription engine not found; downloaded models can’t be used yet.</p>}
+    {error && <p role="alert">{error}</p>}
+    {[...catalog].sort(byTier).map((model) => {
+      const state = states.find((entry) => entry.id === model.id)
+      if (!state) return null
+      const blocked = busy(state) || pending !== null
+      const hasPartial = state.partialPresent
+      const status = statusText[state.status]
+      return <article className="model-card" key={model.id} aria-labelledby={`model-${model.id}`}>
+        <div className="model-card-main">
+          <h4 id={`model-${model.id}`}>{model.name}
+            {model.recommended && <span className="settings-badge accent">Recommended</span>}
+            {state.installed && <span className="settings-badge ok">Installed</span>}
+          </h4>
+          <p className="model-summary">{model.summary}</p>
+        </div>
+        <div className="model-card-side">
+          <span className="model-size">{formatSize(model.sizeBytes)}</span>
+          <div className="model-actions">
+            {!state.installed && !['checking', 'downloading', 'verifying'].includes(state.status) && <button className="accent" disabled={blocked} onClick={() => void action(model.id, 'downloadModel')}>{hasPartial ? 'Resume' : `Download`}</button>}
+            {['checking', 'downloading', 'verifying'].includes(state.status) && <button disabled={state.cancelRequested} onClick={() => void action(model.id, 'cancelModelDownload')}>{state.cancelRequested ? 'Cancelling…' : 'Cancel'}</button>}
+            {(state.installed || hasPartial) && !['checking', 'downloading', 'verifying'].includes(state.status) && <button disabled={blocked} onClick={() => void action(model.id, 'removeModel')}>{state.installed ? 'Remove' : 'Discard partial'}</button>}
+          </div>
+        </div>
+        {state.status === 'downloading' && <progress aria-label={`Downloaded bytes for ${model.name}`} value={state.downloadedBytes} max={model.sizeBytes} />}
+        {(status || (!state.installed && hasPartial)) && <p className="model-status" role="status">{status}{!state.installed && state.downloadedBytes > 0 && ` ${formatSize(state.downloadedBytes)} of ${formatSize(model.sizeBytes)} saved.`}</p>}
+        {state.error && <p role="alert">{state.error.message}</p>}
+        <details className="model-details">
+          <summary>Details</summary>
+          <dl>
+            <dt>Languages</dt><dd>{model.languageCapability}</dd>
+            <dt>File</dt><dd><code>{model.fileName}</code></dd>
+            <dt>Location</dt><dd><code>{state.location}</code></dd>
+            <dt>SHA-256</dt><dd><code>{model.sha256}</code></dd>
+          </dl>
+        </details>
+      </article>
+    })}
   </section>
 }

@@ -7,6 +7,7 @@ import type { SourceTimedTranscript, TranslatedTranscript } from './core/transcr
 import { TRANSLATION_TARGETS, translationTargetLabel } from './core/translationLanguages'
 import { captionsOverlappingRange, describeExistingCaptions, type TranscriptionApplyChoice } from './core/transcriptionApply'
 import type { TranscriptionAvailability, TranscriptionDevice, TranscriptionEngine } from './core/transcriptionIpc'
+import { CLOUD_PROVIDERS, cloudProvider, providerLabel, type CloudLanguageChoice, type CloudProviderId, type ProviderKeyStatuses, type TranscriptionDefaults } from './core/transcriptionProviders'
 
 /** `assetId` is the video that was transcribed, captured when the job started — the picker may have
  * moved on to another video by the time the result arrives. */
@@ -42,21 +43,19 @@ function sortedLanguages(codes: string[]): string[] {
   const preferred = ['ml', 'en'].filter((code) => codes.includes(code))
   return [...preferred, ...codes.filter((code) => !preferred.includes(code)).sort((a, b) => languageLabel(a).localeCompare(languageLabel(b)))]
 }
-type GeminiLanguage = 'auto' | 'ml' | 'en'
-const geminiLanguages: { value: GeminiLanguage; label: string; hint: string }[] = [
+type CloudLanguage = CloudLanguageChoice
+const cloudLanguages: { value: CloudLanguage; label: string; hint: string }[] = [
   { value: 'auto', label: 'Automatic — mixed languages (recommended)', hint: 'Gemini detects the spoken language and handles switching mid-sentence, keeping Malayalam in Malayalam script and English in Latin script.' },
   { value: 'ml', label: 'Malayalam only', hint: 'Forces Malayalam script for everything, including spoken English words — they will be written phonetically in Malayalam, not kept in Latin script.' },
   { value: 'en', label: 'English only', hint: 'Forces English for everything, including spoken Malayalam words — they will be written phonetically in English, not kept in Malayalam script.' },
+  { value: 'ta', label: 'Tamil only', hint: 'Forces Tamil script for everything, including spoken English words — they will be written phonetically in Tamil, not kept in Latin script.' },
+  { value: 'hi', label: 'Hindi only', hint: 'Forces Hindi (Devanagari) script for everything, including spoken English words — they will be written phonetically in Devanagari, not kept in Latin script.' },
 ]
-const ENGINE_STORAGE_KEY = 'caption-studio.transcription-engine'
-function storedEngine(): TranscriptionEngine {
-  try { return localStorage.getItem(ENGINE_STORAGE_KEY) === 'gemini' ? 'gemini' : 'whisper' } catch { return 'whisper' }
-}
 const GEMINI_LANGUAGE_STORAGE_KEY = 'caption-studio.transcription-gemini-language'
-function storedGeminiLanguage(): GeminiLanguage {
+function storedCloudLanguage(): CloudLanguage {
   try {
     const value = localStorage.getItem(GEMINI_LANGUAGE_STORAGE_KEY)
-    return value === 'ml' || value === 'en' ? value : 'auto'
+    return cloudLanguages.some((entry) => entry.value === value) ? value as CloudLanguage : 'auto'
   } catch { return 'auto' }
 }
 const TRANSLATE_STORAGE_KEY = 'caption-studio.transcription-translate'
@@ -65,6 +64,14 @@ function storedTranslateTo(): string | null {
     const value = localStorage.getItem(TRANSLATE_STORAGE_KEY)
     return value && TRANSLATION_TARGETS.some((target) => target.code === value) ? value : null
   } catch { return null }
+}
+
+/** Only Gemini is documented to switch language mid-sentence; other providers get an honest, weaker hint. */
+function languageHint(engine: TranscriptionEngine, value: CloudLanguage): string | undefined {
+  if (engine !== 'whisper' && engine !== 'gemini' && value === 'auto') {
+    return `${providerLabel(engine)} detects the spoken language itself. It may commit to one language per speech section, so mixed Malayalam/English speech can need a review pass.`
+  }
+  return cloudLanguages.find((entry) => entry.value === value)?.hint
 }
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'The operation failed.'
@@ -79,9 +86,9 @@ export function describeJob(job: JobSnapshot | null): { label: string; percent: 
   return job.progress.kind === 'measured' ? { label, percent: Math.floor(job.progress.completed * 100 / job.progress.total) } : { label, percent: null }
 }
 
-export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary = false, geminiKeyConfigured = false, onNeedGeminiKey }: {
+export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary = false, providerKeys = null, transcriptionDefaults = { provider: 'whisper', models: {} }, onNeedGeminiKey }: {
   media: ProjectAsset | null; mediaReady: boolean; cues: Cue[]; onApply: ApplyTranscript; primary?: boolean
-  geminiKeyConfigured?: boolean; onNeedGeminiKey?: () => void
+  providerKeys?: ProviderKeyStatuses | null; transcriptionDefaults?: TranscriptionDefaults; onNeedGeminiKey?: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
@@ -97,16 +104,23 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   const [language, setLanguage] = useState('auto')
   const [device, setDevice] = useState<TranscriptionDevice | null>(null)
   const [phase, setPhase] = useState<Phase>({ kind: 'setup' })
-  const [engine, setEngineState] = useState<TranscriptionEngine>(storedEngine)
-  const [geminiLanguage, setGeminiLanguageState] = useState<GeminiLanguage>(storedGeminiLanguage)
+  // The Settings default pre-selects the provider and model; choosing another here applies to this run only.
+  const [engine, setEngineState] = useState<TranscriptionEngine>(transcriptionDefaults.provider)
+  const [cloudModel, setCloudModel] = useState<string | undefined>(undefined)
+  const cloud: CloudProviderId | null = engine === 'whisper' ? null : engine
+  const effectiveModel = cloud ? cloudModel ?? transcriptionDefaults.models[cloud] ?? cloudProvider(cloud).defaultModel : null
+  const keyConfigured = (provider: CloudProviderId) => Boolean(providerKeys?.[provider]?.configured)
+  const geminiKeyConfigured = keyConfigured('gemini')
+  const engineKeyMissing = cloud !== null && !keyConfigured(cloud)
+  const [cloudLanguage, setCloudLanguageState] = useState<CloudLanguage>(storedCloudLanguage)
   const [translateTo, setTranslateToState] = useState<string | null>(storedTranslateTo)
   const setEngine = (next: TranscriptionEngine) => {
     setEngineState(next)
-    try { localStorage.setItem(ENGINE_STORAGE_KEY, next) } catch { /* remembering the choice is only a convenience */ }
+    setCloudModel(undefined)
     if (next === 'whisper' && !models.length) void refresh()
   }
-  const setGeminiLanguage = (next: GeminiLanguage) => {
-    setGeminiLanguageState(next)
+  const setCloudLanguage = (next: CloudLanguage) => {
+    setCloudLanguageState(next)
     try { localStorage.setItem(GEMINI_LANGUAGE_STORAGE_KEY, next) } catch { /* remembering the choice is only a convenience */ }
   }
   const setTranslateTo = (next: string | null) => {
@@ -114,6 +128,9 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
     try { if (next) localStorage.setItem(TRANSLATE_STORAGE_KEY, next); else localStorage.removeItem(TRANSLATE_STORAGE_KEY) } catch { /* remembering the choice is only a convenience */ }
   }
   const api = window.captionStudio
+
+  // A new Settings default re-selects the provider; a run in progress or a reviewed result is left alone.
+  useEffect(() => { setEngineState(transcriptionDefaults.provider); setCloudModel(undefined) }, [transcriptionDefaults.provider])
 
   useEffect(() => api?.onTranscriptionProgress((message) => {
     setPhase((current) => current.kind === 'running' && current.requestId === message.requestId ? { ...current, job: message.job } : current)
@@ -165,12 +182,12 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   const start = async () => {
     if (!api || !media?.fingerprint) return
     if (engine === 'whisper' && (!modelId || !availability?.available || !device)) return
-    if ((engine === 'gemini' || translateTo !== null) && !geminiKeyConfigured) return
+    if (engineKeyMissing || (translateTo !== null && !geminiKeyConfigured)) return
     const requestId = crypto.randomUUID()
     setPhase({ kind: 'running', requestId, job: null, engine, translateTo })
     try {
-      const outcome = await api.startTranscription(engine === 'gemini'
-        ? { engine, requestId, fingerprint: media.fingerprint, language: geminiLanguage, translateTo }
+      const outcome = await api.startTranscription(engine !== 'whisper'
+        ? { engine, requestId, fingerprint: media.fingerprint, model: effectiveModel ?? undefined, language: cloudLanguage, translateTo }
         : { engine, requestId, fingerprint: media.fingerprint, modelId: modelId!, language, device: device!, translateTo })
       if (outcome.state === 'cancelled') { setPhase({ kind: 'cancelled' }); return }
       if (outcome.state === 'failed') { setPhase({ kind: 'error', message: outcome.error.message, diagnostic: outcome.error.diagnostic ?? null }); return }
@@ -185,9 +202,9 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
   }
 
   const described = phase.kind === 'running' ? describeJob(phase.job) : null
-  const running = described && phase.kind === 'running' && phase.engine === 'gemini' && phase.job?.progress?.phase === 'recognizing'
-    ? { ...described, label: 'Uploading speech to Gemini and transcribing…' } : described
-  const needsKey = engine === 'gemini' || translateTo !== null
+  const running = described && phase.kind === 'running' && phase.engine !== 'whisper' && phase.job?.progress?.phase === 'recognizing'
+    ? { ...described, label: `Uploading speech to ${providerLabel(phase.engine)} and transcribing…` } : described
+  const needsKey = engineKeyMissing || (translateTo !== null && !geminiKeyConfigured)
   const needKey = () => { dialog.current?.close(); onNeedGeminiKey?.() }
   const choiceCounts = phase.kind === 'choose' ? describeExistingCaptions(captionsOverlappingRange(cues, phase.result.transcript.sourceRange, phase.result.assetId)) : null
 
@@ -197,9 +214,9 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
     </button>
     <dialog className="model-dialog transcription-dialog" ref={dialog} aria-labelledby="transcription-title" onClose={() => trigger.current?.focus()} onKeyDown={(event) => event.stopPropagation()}>
       <div className="model-panel-heading"><h2 id="transcription-title">Transcribe video audio</h2><button onClick={() => dialog.current?.close()}>Close</button></div>
-      {(phase.kind === 'running' ? phase.engine : engine) === 'gemini' ? <>
-        <p>Uses Gemini with your own API key. Long silences are detected on this computer and never uploaded; each speech section is uploaded to Google, transcribed with word timestamps and response storage disabled, then deleted (best-effort). Provider charges may apply.</p>
-        <p>Readable captions are grouped from Gemini’s word timing. Original recognition is retained in the project, and every caption keeps its source-media time.</p>
+      {(phase.kind === 'running' ? phase.engine : engine) !== 'whisper' ? <>
+        <p>Uses {providerLabel(phase.kind === 'running' ? phase.engine : engine)} with your own API key. {cloudProvider((phase.kind === 'running' ? phase.engine : engine) as CloudProviderId).disclosure}</p>
+        <p>Readable captions are grouped from the provider’s word timing. Original recognition is retained in the project, and every caption keeps its source-media time.</p>
       </> : <>
         <p>Readable captions are grouped after recognition. This backend supplies segment timing only: word timing is estimated, not audio-aligned, and marked Needs review. Original recognition is retained in the project.</p>
         <p>Runs whisper.cpp on this computer with a verified local model. Audio never leaves the device. Long silences are detected first and never sent to the recognizer, and every caption keeps its source-media time.</p>
@@ -212,14 +229,19 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
           <label htmlFor="transcription-engine">Engine</label>
           <select id="transcription-engine" value={engine} onChange={(event) => setEngine(event.target.value as TranscriptionEngine)}>
             <option value="whisper">whisper.cpp — on this computer</option>
-            <option value="gemini">Gemini — cloud, uses your API key</option>
+            {CLOUD_PROVIDERS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label} — cloud, uses your API key</option>)}
           </select>
-          {engine === 'gemini' && <>
-            <label htmlFor="transcription-gemini-language">Spoken language</label>
-            <select id="transcription-gemini-language" value={geminiLanguage} onChange={(event) => setGeminiLanguage(event.target.value as GeminiLanguage)}>
-              {geminiLanguages.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
+          {cloud && <>
+            <label htmlFor="transcription-cloud-model">Model</label>
+            <select id="transcription-cloud-model" value={effectiveModel!} onChange={(event) => setCloudModel(event.target.value)}>
+              {!cloudProvider(cloud).models.some((model) => model.id === effectiveModel) && <option value={effectiveModel!}>{effectiveModel} (custom)</option>}
+              {cloudProvider(cloud).models.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
             </select>
-            <p className="style-hint">{geminiLanguages.find((entry) => entry.value === geminiLanguage)?.hint}</p>
+            <label htmlFor="transcription-cloud-language">Spoken language</label>
+            <select id="transcription-cloud-language" value={cloudLanguage} onChange={(event) => setCloudLanguage(event.target.value as CloudLanguage)}>
+              {cloudLanguages.map((entry) => <option key={entry.value} value={entry.value}>{entry.label}</option>)}
+            </select>
+            <p className="style-hint">{languageHint(engine, cloudLanguage)}</p>
             <label htmlFor="transcription-translate-gemini">Translate to</label>
             <select id="transcription-translate-gemini" value={translateTo ?? ''} onChange={(event) => setTranslateTo(event.target.value || null)}>
               <option value="">None — keep spoken language</option>
@@ -252,13 +274,13 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
           </>}
           </>}
         </div>
-        {needsKey && !geminiKeyConfigured && <p role="alert">{engine === 'gemini' ? 'Gemini transcription needs your API key.' : 'Translating captions needs your Gemini API key.'} <button onClick={needKey}>Add Gemini API key</button></p>}
+        {needsKey && <p role="alert">{engineKeyMissing ? `${providerLabel(engine)} transcription needs your API key.` : 'Translating captions needs your Gemini API key.'} <button onClick={needKey}>Add API key</button></p>}
         {engine === 'whisper' && checking && <p role="status">Verifying the model file and inspecting the speech engine…</p>}
         {engine === 'whisper' && !checking && availability && !availability.available && <p role="alert">{availability.reason}</p>}
         {engine === 'whisper' && availability?.available && language === 'auto' && <p className="transcription-hint">Automatic detection identifies one language from the longest speech section and uses it for the whole video. Mixed Malayalam/English speech is recognized under that single language.</p>}
         <div className="model-actions">
-          <button className="accent" disabled={!mediaReady || (needsKey && !geminiKeyConfigured) || (engine === 'whisper' && (checking || !availability?.available || !device))} onClick={() => void start()}>
-            {translateTo !== null ? 'Transcribe and translate' : engine === 'gemini' ? 'Transcribe with Gemini' : 'Start transcription'}
+          <button className="accent" disabled={!mediaReady || needsKey || (engine === 'whisper' && (checking || !availability?.available || !device))} onClick={() => void start()}>
+            {translateTo !== null ? 'Transcribe and translate' : cloud ? `Transcribe with ${providerLabel(cloud)}` : 'Start transcription'}
           </button>
           {engine === 'whisper' && <button disabled={checking} onClick={() => void refresh()}>Recheck</button>}
         </div>
@@ -267,7 +289,7 @@ export function TranscriptionPanel({ media, mediaReady, cues, onApply, primary =
       {phase.kind === 'running' && running && <div className="transcription-progress" role="status" aria-live="polite">
         <p>{running.label}{running.percent !== null && ` ${running.percent}%`}</p>
         {running.percent === null ? <progress aria-label="Transcription progress (not measured in this phase)" /> : <progress aria-label="Transcription progress" value={running.percent} max={100} />}
-        {phase.job?.progress?.phase === 'recognizing' && running.percent !== null && <p className="transcription-hint">{phase.engine === 'gemini' ? 'Percent of speech sections Gemini has returned.' : 'Percent of detected speech audio processed, as reported by whisper.cpp.'}</p>}
+        {phase.job?.progress?.phase === 'recognizing' && running.percent !== null && <p className="transcription-hint">{phase.engine !== 'whisper' ? `Percent of speech sections ${providerLabel(phase.engine)} has returned.` : 'Percent of detected speech audio processed, as reported by whisper.cpp.'}</p>}
         {phase.job?.progress?.phase === 'translating' && running.percent !== null && <p className="transcription-hint">Percent of caption batches translated to {translationTargetLabel(phase.translateTo ?? '')}.</p>}
         <button disabled={phase.job?.cancelRequested} onClick={() => void api?.cancelTranscription(phase.requestId)}>Cancel transcription</button>
       </div>}

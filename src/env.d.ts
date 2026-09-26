@@ -1,4 +1,4 @@
-import type { AssetRelinkResult, ExportProgressEvent, ImportedAsset, LutImportResult, OpenedProject, OpenedText, OpenedVideo, ProxyCreateResult, ProxyProgress, SaveRequest, SavedProject, SilenceProgress, ThumbnailsProgress, WaveformProgress } from '../electron/preload'
+import type { AssetRelinkResult, ExportProgressEvent, ImportedAsset, LutImportResult, OpenedProject, OpenedText, OpenedVideo, ProxyCreateResult, RecentProjectAction, ProxyProgress, SaveRequest, SavedProject, SilenceProgress, ThumbnailsProgress, WaveformProgress } from '../electron/preload'
 import type { CaptionProject } from './core/model'
 import type { ProjectMedia } from './core/media'
 import type { ProjectAsset } from './core/edit'
@@ -14,8 +14,10 @@ import type { ManagedModelId, ModelListing, ModelState } from './core/modelCatal
 import type { TranscriptionAvailability, TranscriptionOutcome, TranscriptionProgress, TranscriptionStartRequest } from './core/transcriptionIpc'
 import type { MenuCommand } from './core/menuCommands'
 import type { AlignmentOutcome, AlignmentProgress, AlignmentSettingsStatus, AlignmentStartRequest } from './core/alignmentIpc'
+import type { CloudProviderId, ProviderKeyStatuses } from './core/transcriptionProviders'
 import type { AgentRequest, AgentResponse } from './core/agentProtocol'
 import type { McpSettingsView, McpStatus } from '../electron/mcp/config'
+import type { RecentProjectView } from '../electron/projectLibrary'
 
 /** Chromium Local Font Access API (not yet in TS lib.dom). Offline, requires transient user
  * activation and the 'local-fonts' permission; no font is bundled, downloaded or sent anywhere. */
@@ -43,6 +45,9 @@ declare global {
       alignmentSettingsStatus(): Promise<AlignmentSettingsStatus>
       saveGeminiApiKey(apiKey: string): Promise<AlignmentSettingsStatus>
       removeGeminiApiKey(): Promise<AlignmentSettingsStatus>
+      providerKeyStatuses(): Promise<ProviderKeyStatuses>
+      saveProviderApiKey(provider: CloudProviderId, apiKey: string): Promise<ProviderKeyStatuses>
+      removeProviderApiKey(provider: CloudProviderId): Promise<ProviderKeyStatuses>
       startAlignment(request: AlignmentStartRequest): Promise<AlignmentOutcome>
       cancelAlignment(requestId: string): Promise<void>
       onAlignmentProgress(callback: (message: AlignmentProgress) => void): () => void
@@ -52,6 +57,11 @@ declare global {
       openProject(): Promise<OpenedProject | null>
       saveProject(request: { project: CaptionProject; defaultName: string }): Promise<SavedProject | null>
       writeProject(request: { project: CaptionProject; path: string }): Promise<SavedProject>
+      createManagedProject(request: { project: CaptionProject }): Promise<SavedProject>
+      listRecentProjects(): Promise<RecentProjectView[]>
+      openRecentProject(request: { path: string }): Promise<OpenedProject>
+      setProjectThumbnail(request: { path: string; dataUrl: string }): Promise<boolean>
+      recentProjectAction(request: RecentProjectAction): Promise<{ ok: true } | { ok: false; message: string }>
       editText(action: 'undo' | 'redo'): Promise<void>
       importAsset(kind: 'image' | 'audio'): Promise<ImportedAsset | null>
       relinkAsset(expected: ProjectAsset): Promise<AssetRelinkResult | null>

@@ -54,5 +54,6 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "author": "KathaCut"
+  "license": "GPL-3.0-or-later",
+  "author": "Sadique P"
 }

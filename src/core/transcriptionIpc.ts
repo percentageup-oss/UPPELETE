@@ -4,13 +4,14 @@ import { mediaFingerprintSchema } from './media'
 import type { TranscriptionRun } from './model'
 import { modelIdSchema, type ManagedModelId } from './modelCatalog'
 import { languageCodeSchema, type SourceTimedTranscript, type TranslatedTranscript } from './transcription'
+import { CLOUD_LANGUAGE_CODES, cloudModelIdSchema, cloudProviderIdSchema } from './transcriptionProviders'
 
 /** Renderer ↔ main transcription bridge. The renderer sends IDs and choices only — never paths, flags or executables. */
 
 export const transcriptionDeviceSchema = z.enum(['cpu', 'metal', 'cuda', 'vulkan'])
 export type TranscriptionDevice = z.infer<typeof transcriptionDeviceSchema>
 
-export const transcriptionEngineSchema = z.enum(['whisper', 'gemini'])
+export const transcriptionEngineSchema = z.enum(['whisper', 'gemini', 'openai', 'elevenlabs'])
 export type TranscriptionEngine = z.infer<typeof transcriptionEngineSchema>
 
 // Optional Gemini translation of the recognized text, offered for either engine. The main process
@@ -27,12 +28,14 @@ export const transcriptionStartRequestSchema = z.discriminatedUnion('engine', [
     device: transcriptionDeviceSchema,
     translateTo: translateToSchema,
   }),
-  // Optional cloud engine: the main process supplies the stored key; the renderer never sends or receives it.
+  // Optional cloud engines: the main process supplies the stored key; the renderer never sends or receives it.
+  // An absent model means the provider's catalog default.
   z.strictObject({
-    engine: z.literal('gemini'),
+    engine: cloudProviderIdSchema,
     requestId: z.uuid(),
     fingerprint: mediaFingerprintSchema,
-    language: z.enum(['auto', 'ml', 'en']),
+    model: cloudModelIdSchema.optional(),
+    language: z.enum(['auto', ...CLOUD_LANGUAGE_CODES]),
     translateTo: translateToSchema,
   }),
 ])

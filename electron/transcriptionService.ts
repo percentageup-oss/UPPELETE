@@ -11,8 +11,12 @@ import type { MediaWorkerClient } from '../workers/media/client'
 import { runTranscription } from '../workers/transcription/run'
 import type { JobContext, JobHandle, JobScheduler } from './jobScheduler'
 import { WhisperCppAdapter, whisperCapabilities, type WhisperInspection } from './whisperAdapter'
-import { GeminiTranscriptionAdapter } from './geminiTranscription'
+import { CloudTranscriptionAdapter, type CloudAdapterConfig, type CloudRecognizer } from './cloudTranscription'
+import { GEMINI_ENGINE_ID, GEMINI_ENGINE_VERSION, GEMINI_MAX_CHUNK_US, geminiCloudRecognizer } from './geminiTranscription'
 import { geminiRecognizer, type GeminiRecognizer } from './geminiRecognition'
+import { OPENAI_ENGINE_ID, OPENAI_ENGINE_VERSION, OPENAI_MAX_CHUNK_US, openaiRecognizer } from './openaiRecognition'
+import { ELEVENLABS_ENGINE_ID, ELEVENLABS_ENGINE_VERSION, ELEVENLABS_MAX_CHUNK_US, elevenlabsRecognizer } from './elevenlabsRecognition'
+import { cloudProvider, type CloudLanguageChoice, type CloudProviderId } from '../src/core/transcriptionProviders'
 import { geminiTranslator, translateTranscript, type GeminiTranslator } from './geminiTranslation'
 
 export const WHISPER_NOT_CONFIGURED_MESSAGE = 'No local speech engine is configured. Run ./dev.sh to build whisper-cli (whisper.cpp 1.9.4) automatically, or set whisperCliPath in caption-studio.local.json (CAPTION_STUDIO_WHISPER_CLI_PATH overrides it) together with the FFmpeg/ffprobe pair.'
@@ -27,6 +31,8 @@ export type TranscriptionServiceOptions = {
   now?: () => Date
   /** Test seam; defaults to the real Gemini client for the given key. */
   geminiRecognizer?: (apiKey: string) => GeminiRecognizer
+  /** Test seam replacing the recognizer of any cloud provider. */
+  cloudRecognizer?: (provider: CloudProviderId, apiKey: string, model: string) => CloudRecognizer
   /** Test seam; defaults to the real Gemini client for the given key. */
   geminiTranslator?: (apiKey: string) => GeminiTranslator
 }
@@ -43,13 +49,24 @@ export type TranscriptionRequest = {
 }
 
 /** Optional cloud transcription with the user's own key; no model file or device choice applies. */
-export type GeminiTranscriptionRequest = {
-  engine: 'gemini'
+export type CloudTranscriptionRequest = {
+  engine: CloudProviderId
   mediaPath: string
   sourceRange: { startUs: number; endUs: number }
-  language: 'auto' | 'ml' | 'en'
+  /** Absent means the provider's catalog default. */
+  model?: string
+  language: CloudLanguageChoice
   translateTo: LanguageCode | null
+  /** The key of `engine`. */
   apiKey: string
+  /** Translation always uses Gemini; needed only when `translateTo` is set and `engine` is not Gemini. */
+  translationApiKey?: string
+}
+
+const CLOUD_ENGINES: Record<CloudProviderId, Omit<CloudAdapterConfig, 'model'>> = {
+  gemini: { engineId: GEMINI_ENGINE_ID, engineVersion: GEMINI_ENGINE_VERSION, maxChunkUs: GEMINI_MAX_CHUNK_US },
+  openai: { engineId: OPENAI_ENGINE_ID, engineVersion: OPENAI_ENGINE_VERSION, maxChunkUs: OPENAI_MAX_CHUNK_US },
+  elevenlabs: { engineId: ELEVENLABS_ENGINE_ID, engineVersion: ELEVENLABS_ENGINE_VERSION, maxChunkUs: ELEVENLABS_MAX_CHUNK_US },
 }
 
 export type TranscriptionJobValue = { transcript: SourceTimedTranscript; run: TranscriptionRun; translation: TranslatedTranscript | null }
@@ -104,9 +121,9 @@ export class TranscriptionService {
     }
   }
 
-  start(request: TranscriptionRequest | GeminiTranscriptionRequest, onUpdate: (snapshot: JobSnapshot) => void): JobHandle<TranscriptionJobValue> {
+  start(request: TranscriptionRequest | CloudTranscriptionRequest, onUpdate: (snapshot: JobSnapshot) => void): JobHandle<TranscriptionJobValue> {
     const run = 'engine' in request
-      ? (ctx: JobContext) => this.runGemini(request, ctx)
+      ? (ctx: JobContext) => this.runCloud(request, ctx)
       : (() => { const model = this.model(request.modelId); return (ctx: JobContext) => this.run(request, model, ctx) })()
     let jobId: string | null = null
     const unsubscribe = this.options.scheduler.subscribe((snapshot) => { if (snapshot.id === jobId) onUpdate(snapshot) })
@@ -207,7 +224,18 @@ export class TranscriptionService {
     }
   }
 
-  private async runGemini(request: GeminiTranscriptionRequest, ctx: JobContext): Promise<TranscriptionJobValue> {
+  private recognizerFor(request: CloudTranscriptionRequest, model: string): CloudRecognizer {
+    if (this.options.cloudRecognizer) return this.options.cloudRecognizer(request.engine, request.apiKey, model)
+    if (request.engine === 'gemini') {
+      return geminiCloudRecognizer((this.options.geminiRecognizer ?? ((key: string) => geminiRecognizer(key, 'transcribe', model)))(request.apiKey))
+    }
+    return request.engine === 'openai' ? openaiRecognizer(request.apiKey, model) : elevenlabsRecognizer(request.apiKey, model)
+  }
+
+  private async runCloud(request: CloudTranscriptionRequest, ctx: JobContext): Promise<TranscriptionJobValue> {
+    const model = request.model ?? cloudProvider(request.engine).defaultModel
+    const translationKey = request.engine === 'gemini' ? request.apiKey : request.translationApiKey
+    if (request.translateTo && !translationKey) throw jobFailure('INVALID_INPUT', 'Add a Gemini API key in Settings before translating captions.')
     const directory = await mkdtemp(path.join(this.options.temporaryRoot, 'caption-studio-transcription-'))
     try {
       const durationUs = request.sourceRange.endUs - request.sourceRange.startUs
@@ -228,15 +256,14 @@ export class TranscriptionService {
 
       const chunkDirectory = path.join(directory, 'speech')
       await mkdir(chunkDirectory)
-      const recognizer = (this.options.geminiRecognizer ?? ((key: string) => geminiRecognizer(key, 'transcribe')))(request.apiKey)
-      const adapter = new GeminiTranscriptionAdapter(this.options.worker, recognizer, chunkDirectory)
+      const adapter = new CloudTranscriptionAdapter(this.options.worker, this.recognizerFor(request, model), chunkDirectory, { ...CLOUD_ENGINES[request.engine], model })
       const transcript = await runTranscription(adapter, {
         audio: { path: audio.path, sourceStartUs: audio.sourceStartUs, durationUs: audio.durationUs, sampleRate: audio.sampleRate as 16000, channels: 1, sampleCount: audio.sampleCount },
       }, { language: request.language, device: 'cpu', wordTimestamps: true }, { signal: ctx.signal, onProgress: ctx.reportProgress })
       const report = adapter.lastRun
-      if (!report) throw jobFailure('INTERNAL_ERROR', 'The Gemini run report is missing.')
+      if (!report) throw jobFailure('INTERNAL_ERROR', 'The cloud transcription run report is missing.')
 
-      const translated = request.translateTo ? await this.translate(request.translateTo, request.apiKey, transcript, ctx) : null
+      const translated = request.translateTo ? await this.translate(request.translateTo, translationKey!, transcript, ctx) : null
 
       if (!ctx.enterCommit()) throw jobFailure('CANCELLED', 'Transcription was cancelled before its captions were delivered.')
       return {
@@ -245,7 +272,7 @@ export class TranscriptionService {
         run: {
           id: randomUUID(),
           createdAt: (this.options.now?.() ?? new Date()).toISOString(),
-          provider: 'gemini',
+          provider: request.engine,
           engine: { id: transcript.engine, version: (await adapter.capabilities()).engine.version },
           model: { id: transcript.model },
           requestedLanguage: request.language,

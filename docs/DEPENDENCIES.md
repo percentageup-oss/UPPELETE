@@ -1,5 +1,9 @@
 # Dependency inventory
 
+## Project license
+
+KathaCut is licensed under GPL-3.0-or-later ([LICENSE](../LICENSE); name and logo: [TRADEMARKS.md](../TRADEMARKS.md)). All npm dependencies above are MIT or Apache-2.0, both GPL-3 compatible. FFmpeg (LGPL) and whisper-cli (MIT) run as separate executables, and the CUDA/MSVC runtimes are shipped only alongside whisper-cli on Windows, so these are aggregated components, not linked into GPL code. Any new dependency must be GPL-3-compatible.
+
 ## Optional Gemini alignment SDK
 
 `@google/genai` 2.23.0 is the official Gemini JavaScript/TypeScript SDK and is bundled in Electron main only; it is Apache-2.0 licensed. It supports the optional user-initiated `gemini-3.5-transcribe` requests (imported-caption alignment and cloud transcription) and Files API cleanup. The dependency does not make cloud inference mandatory: the local editor, SRT import, estimated timing, local transcription and export remain functional without a key or connection. Before redistribution, retain the SDK's Apache-2.0 license/notice and regenerate the npm production dependency/license report from the committed lockfile. Provider service terms, API availability and user charges are operational concerns rather than redistributed software licenses.

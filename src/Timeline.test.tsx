@@ -17,8 +17,9 @@ const video = (id: string, timelineStartUs: number, sourceStartUs: number, sourc
 const asset = (id: string, kind: ProjectAsset['kind']): ProjectAsset =>
   ({ id, kind, name: `${id}.mp4`, reference: { relativePath: null, absolutePath: `/m/${id}` }, fingerprint: null, metadata: null })
 
-const actions = { addLine: () => {}, addWord: () => {}, merge: () => {}, previous: () => {}, next: () => {}, delete: () => {}, split: () => {}, trim: () => {} }
-const clipTools = { split: () => {}, canSplit: false, trimTo: () => {}, canTrimTo: false, markIn: () => {}, markOut: () => {}, clearRange: () => {}, hasRange: false, remove: () => {}, hasClip: false }
+const actions = { addLine: () => {}, addWord: () => {}, merge: () => {}, previous: () => {}, next: () => {} }
+const clipTools = { markIn: () => {}, markOut: () => {}, clearRange: () => {}, hasRange: false }
+const edit = { split: () => {}, canSplit: false, splitLabel: 'Split', trimTo: () => {}, canTrim: false, trimLabels: { start: 'Trim start', end: 'Trim end' }, remove: () => {}, canRemove: false, removeLabel: 'Delete' }
 const trackActions = { onUpdate: () => {}, onReorder: () => {}, onRemove: () => {}, onAdd: () => {} }
 const captionTrackActions = { onUpdate: () => {}, onReorder: () => {}, onRemove: () => {}, onAdd: () => {} }
 
@@ -30,8 +31,8 @@ const render = (overrides: Partial<Parameters<typeof Timeline>[0]> = {}) => rend
     onSeek={() => {}} onDragPreview={() => {}} onDragCommit={() => {}} editMode="overwrite" onEditMode={() => {}}
     onSelectClip={() => {}} onClipMove={() => {}} onClipClone={() => {}} onClipTrim={() => {}} onCloseGap={() => {}}
     trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={() => null}
-    display="line" onDisplay={() => {}} selectedWordId={null} onSelectWord={() => {}} actions={actions} clipTools={clipTools}
-    canSplit={false} canMerge={false} canAdd hasSelectedWord={false} {...overrides} />)
+    display="line" onDisplay={() => {}} selectedWordId={null} onSelectWord={() => {}} actions={actions} clipTools={clipTools} edit={edit}
+    canMerge={false} canAdd {...overrides} />)
 
 const marker = (id: string, atUs: number, extra: Partial<Marker> = {}): Marker => ({ id, atUs, text: '', ...extra })
 

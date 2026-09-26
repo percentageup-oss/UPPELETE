@@ -10,17 +10,18 @@ type Size = { width: number; height: number }
 
 const n = (value: number) => String(Math.round(value * 1000) / 1000)
 
-/** Closed cubic-bezier path through the points; a corner side (no handle) uses its own point. */
-export function pathD(points: readonly MaskPathPoint[]): string {
+/** Cubic-bezier path through the points; a corner side (no handle) uses its own point. Closed by default; `closed = false` leaves out the wrap-around segment (an in-progress pen outline). */
+export function pathD(points: readonly MaskPathPoint[], closed = true): string {
   if (points.length < 2) return ''
   const first = points[0]
   let d = `M${n(first.x)} ${n(first.y)}`
-  for (let i = 0; i < points.length; i++) {
+  const segments = closed ? points.length : points.length - 1
+  for (let i = 0; i < segments; i++) {
     const from = points[i], to = points[(i + 1) % points.length]
     const c1 = from.out ?? from, c2 = to.in ?? to
     d += ` C${n(c1.x)} ${n(c1.y)} ${n(c2.x)} ${n(c2.y)} ${n(to.x)} ${n(to.y)}`
   }
-  return d + ' Z'
+  return closed ? d + ' Z' : d
 }
 
 function shapeElement(shape: MaskShape, attrs: string): string {
@@ -78,6 +79,9 @@ export function maskBounds(shape: MaskShape): CompositionRect {
   const x = Math.min(...xs), y = Math.min(...ys)
   return { x, y, width: Math.max(1, Math.max(...xs) - x), height: Math.max(1, Math.max(...ys) - y) }
 }
+
+/** A pen-drawn mask: the closed path through `points`, fully opaque and unfeathered. */
+export const drawnMask = (points: MaskPathPoint[]): LayerMask => ({ enabled: true, invert: false, feather: 0, density: 1, shape: { kind: 'path', points } })
 
 /** A fresh mask covering `bounds`: rect and ellipse fill it, a pen starts as an inscribed triangle to be reshaped. */
 export function defaultMask(kind: MaskShape['kind'], bounds: CompositionRect): LayerMask {

@@ -1,9 +1,9 @@
 import { expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AgentSettings, GeminiKeySettings, PlaybackProxySettings, SettingsDialog } from './SettingsDialog'
+import { AgentSettings, PlaybackProxySettings, ProviderKeySettings, SettingsDialog } from './SettingsDialog'
 
 it('renders only the selected settings tab', () => {
-  const html = renderToStaticMarkup(<SettingsDialog tab="shortcuts" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+  const html = renderToStaticMarkup(<SettingsDialog tab="shortcuts" onTab={() => {}} onClose={() => {}} providerKeys={null} onProviderKeys={() => {}} transcriptionDefaults={{ provider: 'whisper', models: {} }} onTranscriptionDefaults={() => {}}
     playbackProxyMode="auto" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
   expect(html).toMatch(/id="settings-tab-shortcuts"[^>]*aria-selected="true"/)
   expect(html).toMatch(/id="settings-tab-models"[^>]*aria-selected="false"/)
@@ -12,7 +12,7 @@ it('renders only the selected settings tab', () => {
 })
 
 it('lists the AI agents tab alongside the others', () => {
-  const html = renderToStaticMarkup(<SettingsDialog tab="agent" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+  const html = renderToStaticMarkup(<SettingsDialog tab="agent" onTab={() => {}} onClose={() => {}} providerKeys={null} onProviderKeys={() => {}} transcriptionDefaults={{ provider: 'whisper', models: {} }} onTranscriptionDefaults={() => {}}
     playbackProxyMode="auto" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
   expect(html).toMatch(/id="settings-tab-agent"[^>]*aria-selected="true"/)
   expect(html).toContain('AI agents')
@@ -20,7 +20,7 @@ it('lists the AI agents tab alongside the others', () => {
 })
 
 it('lists the Playback tab and marks the current mode selected', () => {
-  const html = renderToStaticMarkup(<SettingsDialog tab="playback" onTab={() => {}} onClose={() => {}} geminiKey={null} onGeminiKey={() => {}}
+  const html = renderToStaticMarkup(<SettingsDialog tab="playback" onTab={() => {}} onClose={() => {}} providerKeys={null} onProviderKeys={() => {}} transcriptionDefaults={{ provider: 'whisper', models: {} }} onTranscriptionDefaults={() => {}}
     playbackProxyMode="always" onPlaybackProxyMode={() => {}} onMessage={() => {}} />)
   expect(html).toMatch(/id="settings-tab-playback"[^>]*aria-selected="true"/)
   expect(html).toContain('Playback proxies')
@@ -45,7 +45,7 @@ it('AgentSettings shows the disabled state with no window.captionStudio bridge (
 })
 
 it('describes both Gemini uses and never offers removal of an environment key', () => {
-  const html = renderToStaticMarkup(<GeminiKeySettings status={{ configured: true, source: 'environment' }} onStatus={() => {}} onMessage={() => {}} />)
+  const html = renderToStaticMarkup(<ProviderKeySettings provider="gemini" status={{ configured: true, source: 'environment' }} onStatuses={() => {}} onMessage={() => {}} />)
   expect(html).toContain('Transcribe with Gemini')
   expect(html).toContain('Align audio')
   expect(html).toContain('GEMINI_API_KEY')

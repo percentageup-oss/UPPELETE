@@ -13,7 +13,7 @@ it.each(['darwin', 'win32'] as const)('forwards only valid menu commands on %s',
   for (const item of items) item.click?.({} as never, undefined, {} as never)
   expect(sent.length).toBeGreaterThan(0)
   expect(sent.every(isMenuCommand)).toBe(true)
-  expect(new Set(sent)).toEqual(new Set(['new-project', 'open-video', 'import-srt', 'open-project', 'save-project', 'save-project-as', 'export-video', 'export-srt', 'undo', 'redo', 'remove-silence', 'restore-cuts', 'settings', 'shortcuts']))
+  expect(new Set(sent)).toEqual(new Set(['go-home', 'new-project', 'open-video', 'import-srt', 'open-project', 'save-project', 'save-project-as', 'export-video', 'export-srt', 'undo', 'redo', 'remove-silence', 'restore-cuts', 'settings', 'shortcuts']))
   const accelerators = items.map((item) => item.accelerator).filter(Boolean)
   expect(new Set(accelerators).size).toBe(accelerators.length)
   expect(items.find((item) => item.label === 'New Project')?.accelerator).toBe('CmdOrCtrl+N')

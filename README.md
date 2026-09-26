@@ -1,47 +1,107 @@
+<div align="center">
+
 # KathaCut
 
-**Your local AI video toolkit.**
+**Your local AI video toolkit.** Automatic captions, animated subtitles and a real timeline, built for Malayalam and English creator videos. It runs on your computer.
 
-A local-first desktop subtitle editor for Malayalam/English creator videos.
+[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
+![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%C2%B7%20macOS%20Apple%20Silicon-lightgrey)
+![Status](https://img.shields.io/badge/status-pre--1.0-orange)
+[![Buy Me a Coffee](https://img.shields.io/badge/support-Buy%20Me%20a%20Coffee-ffdd00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/sadiqsulaimn)
 
-Status: editor foundation in development. The current desktop slice probes local media through the isolated worker, stores portable references and sampled fingerprints, resolves/relinks missing media, extracts and caches real audio waveforms, opens SRT files, synchronizes captions with playback, edits text/timing, supports undo/redo, and saves/opens `.cstudio` projects (schema 3, with schema 1/2 migration) with autosave once a project is named, or exports SRT.
+</div>
 
-The Models button manages three exact approved whisper.cpp GGML artifacts with explicit
-download/resume/cancel, SHA-256 verification, atomic activation and confirmed selected-model
-removal. Local rechecking works offline. The transcription backend is still pending; see
-[model management](docs/MODELS.md) and [status](docs/STATUS.md).
+## What is KathaCut?
 
-## Start
-Extract this folder to your development directory and open it as the working folder in Codex. Read AGENTS.md, docs/PRODUCT.md, docs/ARCHITECTURE.md and docs/ROADMAP.md. Paste the contents of START_HERE.md into the first task.
-Install Node.js 22.12 or newer, then run:
+KathaCut turns a video into accurately timed, styled, animated captions and lets you polish the whole thing in one editor. It was built for Malayalam speech mixed with English technical terms, so Malayalam text is shaped correctly and never split inside a character cluster. Vertical 9:16 and landscape videos are both supported.
+
+The core workflow is **local and offline** once you have downloaded a speech model. There is no account, no telemetry and no subscription, and your media is never uploaded unless you choose a cloud provider yourself.
+
+<p align="center">
+  <img src="docs/media/screen-3.png" alt="The KathaCut editor: vertical video preview with styled captions, caption inspector with word timing, and a multi-track timeline with caption, text, zoom and vignette lanes" width="100%">
+</p>
+
+## Features
+
+**Transcription**
+- Automatic transcription of the video's own audio with local [whisper.cpp](https://github.com/ggml-org/whisper.cpp) models, including Malayalam. Models are downloaded on request, checksum-verified and removable.
+- Optional cloud transcription with your own API key (Gemini, OpenAI, ElevenLabs Scribe). Only speech sections are uploaded, and you are told before anything leaves your computer.
+- Optional translation of the recognized text, and optional audio alignment for imported subtitles.
+- Word timing always says where it came from. Estimated timing is never passed off as aligned timing.
+
+**Captions**
+- Import SRT files without changing their text or timings. Export SRT any time.
+- Caption styles with word-level animation (active-word highlight, pop, phrase fade, progressive reveal), custom fonts, colors, outline, shadow and background.
+- Your corrections are authoritative: retranscribing never silently overwrites them.
+
+**Editing**
+- Multi-track timeline with several videos, linked audio, split, trim, ripple, picture-in-picture and undo/redo.
+- Titles, image overlays, shapes, masks, zoom and blur regions, look adjustments and glass-style templates.
+- Autosave, atomic project files (`.cstudio`) and relinking when media moves.
+
+**Export**
+- MP4 with captions burned in, using the same layout and animation code as the preview.
+- Separate SRT export and a fully editable project file. Your source media is never overwritten.
+
+**Optional local AI control**
+- An off-by-default, loopback-only [MCP server](docs/MCP.md) lets a local Claude client inspect and edit the open project through the same undoable commands as the UI.
+
+<p align="center">
+  <img src="docs/media/screen-2.png" alt="The KathaCut home screen with a Create project banner and recent projects" width="70%">
+</p>
+
+## Privacy
+
+- Transcription, editing and export run locally.
+- Nothing is sent anywhere unless **you** enable a cloud provider, and then only what the dialog says it will send.
+- API keys are stored with the operating system's secure storage and never reach the UI layer.
+- No telemetry, accounts or ads.
+
+## Install
+
+Test installers for Windows (x64) and macOS (Apple Silicon) are attached to the [Releases](../../releases) page. They are **unsigned**, so Windows SmartScreen and macOS Gatekeeper will warn you the first time; [INSTALL_TESTERS.md](docs/INSTALL_TESTERS.md) explains how to proceed. Intel Macs are not supported.
+
+## Build from source
+
+Requires Node.js 22.12 or newer.
 
 ```sh
-./dev.sh            # installs dependencies if needed, then Vite + Electron with hot reload
-./dev.sh electron   # production build, then electron .
+./dev.sh              # macOS: installs dependencies, sets up tools, runs Vite + Electron with hot reload
+.\dev.ps1             # Windows (PowerShell): the same, and it finds or downloads FFmpeg and whisper-cli
+npm run check         # typecheck, tests and production build
+npm run dist:win      # build the Windows installer
+npm run dist:mac      # build the macOS installer
 ```
 
-On first run `./dev.sh` asks for your local ffmpeg/ffprobe executables, builds the project-pinned
-whisper-cli (whisper.cpp 1.9.4, macOS arm64) automatically if it isn't configured yet, and saves
-everything to the gitignored `caption-studio.local.json`. The app reads that file directly in
-unpackaged runs, so plain `npm run dev` or `npx electron .` also work afterwards. No tools are
-downloaded or looked up on PATH by the app itself; see [media worker](docs/MEDIA_WORKER.md) and
-[dependencies](docs/DEPENDENCIES.md).
+The dev scripts save tool paths to the git-ignored `caption-studio.local.json`. The app never downloads engines or searches PATH by itself. See [media worker](docs/MEDIA_WORKER.md) and [dependencies](docs/DEPENDENCIES.md). If scripts are blocked on Windows, run `powershell -ExecutionPolicy Bypass -File .\dev.ps1`.
 
-**Windows (PowerShell):** `.\dev.ps1` does the same and needs no manual paths. It finds FFmpeg/ffprobe
-(PATH, winget, Scoop, Chocolatey, `C:\ffmpeg`, `.tools`), checks the build can export (PNG codec plus
-`h264_nvenc` or `h264_mf`), and otherwise downloads a BtbN LGPL build into `.tools\`. It also fetches
-whisper-cli (CUDA build when an NVIDIA GPU is present). Export uses NVIDIA NVENC when a test encode
-succeeds, else Windows Media Foundation; set `CAPTION_STUDIO_EXPORT_ENCODER=h264_mf` to force the
-fallback. Flags: `-Reconfigure`, `-Yes`. If scripts are blocked: `powershell -ExecutionPolicy Bypass -File .\dev.ps1`.
+## Documentation
 
-Use `npm run check` for type checks, tests and production builds. No remote repository has been created. Select an open-source license before public release; no license choice is implied by this project.
+| Topic | Doc |
+| --- | --- |
+| Product requirements | [PRODUCT.md](docs/PRODUCT.md) |
+| Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Roadmap and current status | [ROADMAP.md](docs/ROADMAP.md), [STATUS.md](docs/STATUS.md) |
+| Timeline editing | [EDITING.md](docs/EDITING.md) |
+| Transcription and models | [TRANSCRIPTION.md](docs/TRANSCRIPTION.md), [MODELS.md](docs/MODELS.md) |
+| Caption rendering | [CAPTION_RENDERER.md](docs/CAPTION_RENDERER.md) |
+| Media worker and FFmpeg | [MEDIA_WORKER.md](docs/MEDIA_WORKER.md) |
+| Local agent control | [MCP.md](docs/MCP.md) |
+| Licenses of dependencies | [DEPENDENCIES.md](docs/DEPENDENCIES.md), [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) |
+| Design decisions | [docs/decisions/](docs/decisions/) |
 
-## Target machines
-Primary: Mac mini M4 Pro, 24 GB unified memory.
-Validation: Windows PC, Ryzen 5 5600X, 32 GB RAM, RTX 3070 Ti 8 GB.
-macOS and Windows are first-release targets. Keep portable interfaces for future Linux support; Linux release validation is not yet promised.
+## Project status
 
-## Core workflow
-Import video -> generate timed captions locally OR import SRT -> edit text and timing in transcript/timeline -> style and animate -> export video and SRT -> reopen editable project.
+KathaCut is **pre-1.0** and under active development. It is developed on macOS (Apple Silicon) and Windows (x64 with an NVIDIA GPU); Linux is not supported yet. Some recent features have been type-checked but not yet exercised on every platform, and [STATUS.md](docs/STATUS.md) records exactly what has and has not been verified.
 
-Automatic transcription is required in the first usable release, not an optional later feature.
+## Support the project
+
+KathaCut is free, and nothing is paywalled. If it saves you time and you would like to support its development, you can [buy me a coffee](https://buymeacoffee.com/sadiqsulaimn). Starring the repo, sharing it, testing it on your hardware and reporting Malayalam rendering problems help just as much.
+
+## Contributing
+
+Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
+
+## License
+
+KathaCut is licensed under the [GNU General Public License v3.0 or later](LICENSE). The name and logo are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Bundled third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).

@@ -10,7 +10,8 @@ import { getJobScheduler } from './jobs'
 import { getMediaWorker, whisperCliConfigured } from './mediaWorker'
 import { getModelManager } from './modelIpc'
 import { TranscriptionService } from './transcriptionService'
-import { geminiSecretStore } from './geminiKey'
+import { providerSecretStore } from './geminiKey'
+import { cloudProvider } from '../src/core/transcriptionProviders'
 
 let service: TranscriptionService | undefined
 const activeRequests = new Map<string, { cancel(): void }>()
@@ -40,14 +41,27 @@ export function registerTranscriptionIpc(lookupMedia: (fingerprint: MediaFingerp
     const key = `${event.sender.id}:${request.requestId}`
     if (activeRequests.has(key)) return failed('This transcription request is already running.')
     const sourceRange = { startUs: 0, endUs: durationUs }
-    let apiKey: string | null = null
-    if (request.engine === 'gemini' || request.translateTo !== null) {
-      try { apiKey = await geminiSecretStore().load() } catch (error) { return failed(error instanceof Error ? error.message : 'The Gemini API key could not be read.') }
-      if (!apiKey) return failed(request.engine === 'gemini' ? 'Add a Gemini API key in Settings before transcribing with Gemini.' : 'Add a Gemini API key in Settings before translating captions.')
+    // Keys are read here in the main process only. Translation always uses Gemini, whatever engine recognized the audio.
+    const loadKey = async (provider: 'gemini' | 'openai' | 'elevenlabs', purpose: string): Promise<string | { error: string }> => {
+      let value: string | null
+      try { value = await providerSecretStore().load(provider) } catch (error) { return { error: error instanceof Error ? error.message : `The ${cloudProvider(provider).label} API key could not be read.` } }
+      return value ?? { error: `Add a ${cloudProvider(provider).label} API key in Settings before ${purpose}.` }
     }
-    const handle = getService().start(request.engine === 'gemini'
-      ? { engine: 'gemini', mediaPath: registered.path, sourceRange, language: request.language, translateTo: request.translateTo, apiKey: apiKey! }
-      : { mediaPath: registered.path, sourceRange, modelId: request.modelId, language: request.language, device: request.device, translateTo: request.translateTo, apiKey: apiKey ?? undefined },
+    let engineKey: string | undefined
+    let geminiKeyForTranslation: string | undefined
+    if (request.engine !== 'whisper') {
+      const key = await loadKey(request.engine, `transcribing with ${cloudProvider(request.engine).label}`)
+      if (typeof key !== 'string') return failed(key.error)
+      engineKey = key
+    }
+    if (request.translateTo !== null) {
+      const key = request.engine === 'gemini' ? engineKey! : await loadKey('gemini', 'translating captions')
+      if (typeof key !== 'string') return failed(key.error)
+      geminiKeyForTranslation = key
+    }
+    const handle = getService().start(request.engine !== 'whisper'
+      ? { engine: request.engine, mediaPath: registered.path, sourceRange, model: request.model, language: request.language, translateTo: request.translateTo, apiKey: engineKey!, translationApiKey: geminiKeyForTranslation }
+      : { mediaPath: registered.path, sourceRange, modelId: request.modelId, language: request.language, device: request.device, translateTo: request.translateTo, apiKey: geminiKeyForTranslation },
     (job) => { if (!event.sender.isDestroyed()) event.sender.send('transcription:progress', { requestId: request.requestId, job }) })
     activeRequests.set(key, handle)
     const cancelForDestroyedRenderer = () => handle.cancel()
