@@ -22,6 +22,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Electron 44 no longer downloads its binary on install; electron-builder packages node_modules/electron/dist.
+      - run: npx install-electron --no
       - run: npm run typecheck
       - run: npm run dist:win
       - uses: actions/upload-artifact@v4
@@ -40,6 +42,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Electron 44 no longer downloads its binary on install; electron-builder packages node_modules/electron/dist.
+      - run: npx install-electron --no
       - run: npm run typecheck
       - name: Cache media tools
         uses: actions/cache@v4
