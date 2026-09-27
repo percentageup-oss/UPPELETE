@@ -1,5 +1,42 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 01: spike script
+
+**Changes:**
+- `resources/resolve/dev/spike.lua`: single-file Lua 5.1/LuaJIT script, no `require`s. Creates its own
+  `KathaCut spike <time>` timeline (never touches any pre-existing timeline/clip/media), runs tests
+  T1–T14 wrapped individually in `pcall` (T15, a render, only runs if `RUN_RENDER = true` is set at the
+  top), and writes `PASS`/`FAIL`/`INFO <id> <details>` lines both to the Resolve console and to
+  `<TEMP or TMPDIR>/kathacut-resolve-spike.txt` (write-tmp-then-rename, with a remove+rename fallback if
+  the plain rename over an existing file fails). Covers: Lua/Fusion global availability (T1), temp-file
+  write/rename/read semantics (T2), read-only info from the previously-current timeline (T3), a 15 s
+  responsiveness probe (T4), searching the media pool for a `KathaCut` Text+ template bin (T5),
+  appending/falling back to `InsertFusionTitleIntoTimeline` (T6), a full dump of every `TextPlus` input
+  ID/name/type/value (T7), comp time attributes (T8), styling a mixed Malayalam/English string incl. an
+  attempted outline/fill/font/position set (T9), `WriteOnEnd` keyframes inside `Lock`/`Unlock` (T10),
+  recursive Character Level Styling data dump from a hand-styled second clip on video track 2 (T11),
+  `SetData`/`GetData` tagging and clip color/name (T12), bulk `AppendToTimeline` + bulk `SetInput` timing
+  over 100 clips (T13), and a still export at the T9 clip's timecode (T14). Restores whichever timeline
+  was current before the run.
+- `resources/resolve/dev/SPIKE.md`: install path per OS, throwaway-project and template-bin setup, the
+  two-run flow needed for T11 (style a second clip's CLS data by hand between runs), what to send back,
+  and how to opt into the T15 render.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows). No Lua interpreter
+available in this environment to execute the script; checked instead by a bracket/keyword balance pass
+(parens, braces, and `function`/`do`/`then` vs `end` counts all match) and a manual read-through. Needs a
+real run inside Resolve — see next.
+
+**Limitations:** the script is ~700 lines, over the brief's "~500 lines" guideline — comprehensive per-test
+recording across 15 distinct Resolve/Fusion API surfaces added up faster than expected; each test's logic
+is still self-contained and short. Font-substitution detection (T9) isn't possible from the Lua API, so
+that's left to the user's screenshot check. The T6 fallback path's playhead timecode is only approximate
+(assumes an integer frame rate), which is fine for a spike but not for real timecode work later. Entirely
+unverified until the user runs it in Resolve and sends back the report, per SPIKE.md.
+
+**Next:** the user runs the spike (SPIKE.md) and sends back the report, still, and screenshot; then brief
+02 turns the findings into `docs/decisions/0008-resolve-textplus.md` and the real Text+ template bin.
+
 ## 2026-09-26 — Caption languages 05: Hinglish and Manglish targets
 
 **Changes:**
