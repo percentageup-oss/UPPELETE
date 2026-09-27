@@ -1,5 +1,47 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 02: spike findings → ADR 0008
+
+**Changes:**
+- `docs/decisions/0008-resolve-textplus.md`: findings from the same spike run recorded in "01b" below
+  (DaVinci Resolve Studio 21.0.0.47, Windows). **Go** on Malayalam — the user visually confirmed correct
+  shaping (joined conjuncts, correctly placed vowel signs) on the mixed Malayalam/English test string
+  (`"മലയാളം ക്യാപ്ഷൻ Caption ശ്രീ"`) in Resolve's own viewer/Inspector; the blank T14 still is a separate,
+  unrelated tooling gap and isn't the basis for the decision.
+- `docs/decisions/evidence/resolve-spike-2026-09-27.txt` and
+  `docs/decisions/evidence/kathacut-spike-still-2026-09-27.png` committed as evidence.
+- **Correction to the "01b" entry below:** that entry's T10 fix still targets an input named `WriteOnEnd`.
+  T7's full 309-input ground-truth dump for this exact tool has **no `WriteOnEnd` (or `WriteOnStart`) input
+  at all** — the real IDs are `Start`/`End`. That fully explains T10-B's error (`attempt to index field
+  'WriteOnEnd' (a nil value)` — the tool doesn't recognize the name) and means T10-A's `ok=true` is very
+  likely a silent no-op on an unrecognized field, not working keyframing (consistent with its own `nil`
+  readback at frame 12). Write-on keyframing remains **completely unconfirmed** against the real IDs. The
+  next person to touch `spike.lua` should retarget T10 at `End`/`Start`.
+- Other confirmed facts, all cited in the ADR: `os.rename` over an existing file fails on Windows (the
+  remove+rename fallback is mandatory); the ~150 ms mailbox poll interval works and Resolve stayed responsive
+  under it; comp-local time is clip-relative (frame 0 = the clip's first frame); `Center`/`Red2`/`Green2`/
+  `Blue2` and other element-specific inputs are settable by ID even when absent from a default
+  `GetInputList()` dump; timeline drop-frame and resolution settings come back as **strings**, not
+  booleans/numbers.
+
+**Verification:** not tested, typecheck only (per the plan's testing override; `npx tsc --noEmit -p .`).
+
+**Limitations (real gaps, not just caveats — full detail in the ADR):**
+- **No Text+ template bin exists** (T5 found none) — `.drb` export is **pending**; only the
+  `InsertFusionTitleIntoTimeline` fallback placement method is confirmed, not the primary `.drb` +
+  `AppendToTimeline` path. Brief 06 needs the `.drb` before it starts.
+- No bulk-append timing / recommended batch size (T13 skipped, needs the template).
+- No size-calibration measurement (T14's still is blank; root cause unconfirmed — see ADR).
+- Character Level Styling format is completely unresolved (T11 skipped). Blocks brief 07's per-character/
+  per-word styling work.
+- Write-on keyframing unconfirmed (see correction above).
+- `Center`'s Y-axis direction and the `HorizontalJustificationNew` enum mapping are unconfirmed.
+
+**Next:** the user creates the `KathaCut` template bin and hand-styles a CLS test clip per `SPIKE.md`,
+`spike.lua`'s T10 gets retargeted at `End`/`Start`, and the spike re-runs to fill in the open items above;
+the ADR gets amended from that run. Brief 03 (bridge + install) can start now for the parts that don't depend
+on those open items; anything touching placement, size, CLS or keyframing should wait for the re-run.
+
 ## 2026-09-27 — Resolve Text+ 01b: first real spike run, two script bugs fixed
 
 **Changes:** the user ran `spike.lua` for the first time (DaVinci Resolve Studio 21.0.0.47, Windows,
