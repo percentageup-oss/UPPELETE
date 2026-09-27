@@ -1,5 +1,40 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 15: Character Level Styling spike (script)
+
+**Changes:**
+- `resources/resolve/dev/cls-spike.lua` (new, dev-only, not packaged): a Resolve menu script that creates its
+  own scratch timeline (`KathaCut CLS spike <numbers>`) and produces CLS data even with no hand prep. R0 inserts
+  a fresh Text+ clip (`InsertFusionTitleIntoTimeline`, no template bin needed), adds a `StyledTextCLS` modifier,
+  dumps its `GetInputList()`, tries three connection methods (`ConnectTo`, `ConnectInput`, `mod.Text =`) logging
+  which succeeds, and writes the comp's full `CopySettings()` dump (`bmd.writestring`) to `kathacut-cls-R0.setting`.
+  R1 (optional) scans every video track of the timeline open when the script started for a Text+ whose
+  `StyledText` input has a connected output, and dumps up to 5 into `kathacut-cls-R1-<n>.setting`. R2 prints each
+  marked word's `[start, end)` in UTF-16/codepoint/UTF-8-byte (computed in Lua) and grapheme (hard-coded — this
+  session computed them with `graphemes()` from `src/core/captionText.ts`, since Lua 5.1 has no Unicode
+  segmentation) for the test string in the brief. W1 writes a CLS range two ways — editing R0's `CopySettings()`
+  table and `comp:Paste()`-ing it back onto R0's own comp, and `mod:SetInput("CharacterLevelStyling", …)` on a
+  fresh second clip — using property ids sampled from R1 if found, else R0's default, else a guessed fallback
+  (`Red1`/`Green1`/`Blue1`/`Alpha1`/`Size`), and UTF-8 byte offsets as its one operative guess for the counting
+  unit (R2's job is to supply the alternatives if that guess is wrong). W2 clears the styling two ways and
+  confirms the text still reads. W3 keyframes the CLS input with `comp:BezierSpline()` (word 1 red at frame 0,
+  word 2 red at frame 10) and exports stills at frames 5 and 15. W4 times 50 fresh clips with the SetInput
+  method. Every step is `pcall`-wrapped; it never edits anything that existed before it ran.
+- `resources/resolve/dev/SPIKE4.md` (new): setup instructions, including the optional hand-prep steps (add a
+  Text+, enable Character Level Styling on the Fusion page, style three specific words, screenshot each step)
+  that R1 depends on, and what to send back.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes; no TS files touched) and Lua
+syntax check only (`npx luaparse` clean). The user runs the spike in Resolve per SPIKE4.md.
+
+**Limitations:** the CLS array shape (`{ propId, start, end, Value }`), the counting unit, and every property-id
+guess are unconfirmed until the user's report — that's the point of the spike. Method (a)'s `Paste()` target
+(R0's own comp) and method (b)'s target (a fresh clip) were chosen to avoid pasting a second TextPlus tool into
+one comp, but this is this session's judgment call, not a confirmed Resolve behavior.
+
+**Next:** the user runs the spike (optionally with the hand prep) and sends back the report, `.setting` dumps,
+stills and (if hand-prepped) screenshots/notes. A findings session (brief 16) turns that into ADR 0011.
+
 ## 2026-09-27 — Resolve Text+ 14: unpack compound clips on import
 
 **Changes:**
