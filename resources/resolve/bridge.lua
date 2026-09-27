@@ -1,8 +1,8 @@
 --[[
 KathaCut Resolve bridge.
 
-Started by the generated launcher (Workspace -> Scripts -> KathaCut) with a global `KATHACUT` table
-set: `{ resourcesDir, mailboxDir, launch = { kind, exe, args } }` (see electron/resolve/install.ts).
+Started by the generated launcher (Workspace -> Scripts -> KathaCut), which passes a `KATHACUT` table
+(and `Resolve`, `bmd`) as arguments: `{ resourcesDir, mailboxDir, launch = { kind, exe, args } }` (see electron/resolve/install.ts).
 Polls a small JSON-file mailbox (docs/plans/resolve-textplus/README.md) for commands from the
 KathaCut app and answers them. All caption logic lives in KathaCut's TypeScript; this file only
 executes a fixed whitelist of command handlers below and never `load`s or `loadstring`s request
@@ -12,6 +12,14 @@ Written for KathaCut, GPL-3.0-or-later.
 ]]
 
 BRIDGE_VERSION = 1
+
+-- The launcher passes its config and Resolve's scripting globals as arguments: Resolve runs each menu
+-- script in its own environment, and globals set there are not visible to a file loaded from it.
+local launchArgs = { ... }
+local KATHACUT = launchArgs[1] or KATHACUT
+local Resolve = launchArgs[2] or Resolve
+local bmd = launchArgs[3] or bmd
+if type(KATHACUT) ~= "table" then error("KathaCut bridge: started without its launcher config. Reinstall the plugin from KathaCut Settings.") end
 
 local resourcesDir = KATHACUT.resourcesDir
 local mailboxDir = KATHACUT.mailboxDir
