@@ -21,7 +21,10 @@ import { alignmentProgressSchema, type AlignmentOutcome, type AlignmentProgress,
 import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../src/core/agentProtocol'
 import type { McpSettingsView, McpStatus } from './mcp/config'
 import type { RecentProjectView } from './projectLibrary'
-import { resolveStatusViewSchema, type ResolveStatus, type ResolveTimelineInfo } from '../src/core/resolveIpc'
+import {
+  resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema,
+  type ResolveProxyDone, type ResolveProxyProgress, type ResolveStatus, type ResolveTimelineInfo,
+} from '../src/core/resolveIpc'
 import type { ResolvePluginInfo } from './resolve/install'
 
 export type OperationResult<T> = { ok: true } & T | { ok: false; message: string }
@@ -208,4 +211,22 @@ contextBridge.exposeInMainWorld('captionStudio', {
   uninstallResolvePlugin: (): Promise<ResolvePluginInfo> => ipcRenderer.invoke('resolve:uninstall-plugin'),
   resolveTimelineInfo: (): Promise<ResolveTimelineInfo> => ipcRenderer.invoke('resolve:timeline-info'),
   resolveDisconnect: (): Promise<void> => ipcRenderer.invoke('resolve:disconnect'),
+  resolveCreateProxyStart: (): Promise<{ requestId: string }> => ipcRenderer.invoke('resolve:create-proxy-start'),
+  resolveCreateProxyCancel: (requestId: string): Promise<void> => ipcRenderer.invoke('resolve:create-proxy-cancel', requestId),
+  onResolveProxyProgress: (callback: (message: ResolveProxyProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolveProxyProgressSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:proxy-progress', listener)
+    return () => ipcRenderer.removeListener('resolve:proxy-progress', listener)
+  },
+  onResolveProxyDone: (callback: (message: ResolveProxyDone) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolveProxyDoneSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:proxy-done', listener)
+    return () => ipcRenderer.removeListener('resolve:proxy-done', listener)
+  },
 })

@@ -14,7 +14,7 @@ const video = (id: string, trackId: string, timelineStartUs: number, sourceStart
 const cue = (id: string, extra: Partial<Cue> = {}): Cue =>
   ({ id, mediaAssetId: 'x', startUs: 0, endUs: 2 * US, text: 'ഇത് React ആണ്', timingSource: 'imported', needsReview: false, textSource: 'imported', words: [], ...extra })
 const project = (extra: Partial<CaptionProject> = {}): CaptionProject => ({
-  schemaVersion: 24, id: 'project', title: 'Test', cues: [cue('c1')],
+  schemaVersion: 25, id: 'project', title: 'Test', cues: [cue('c1')],
   assets: [asset('x')], tracks: [track('V1')], clips: [video('clip1', 'V1', 0, 0, 20 * US)],
   captionTracks: [], blurRegions: [], zoomRegions: [], effects: [], textOverlays: [], shapes: [], markers: [], format: { width: 1080, height: 1920, frameRate: { numerator: 25, denominator: 1 } },
   ...dates, ...extra,

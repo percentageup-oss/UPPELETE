@@ -57,7 +57,7 @@ protocol.registerSchemesAsPrivileged([
 
 registerModelIpc()
 registerMcpIpc({ inspectFile: (filePath) => inspectFileForBin(filePath, assetInspectDeps) })
-registerResolveIpc()
+registerResolveIpc({ inspect: (filePath) => inspectMedia(filePath) })
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 const inspectedMedia = new Map<string, { path: string; media: ProjectMedia }>()

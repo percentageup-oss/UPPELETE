@@ -143,6 +143,90 @@ handlers["disconnect"] = function()
 end
 
 -- ---------------------------------------------------------------------------
+-- Timeline proxy render (04): renders the current timeline to a small H.264 proxy in KathaCut's
+-- cache. Resolve's own Deliver-page render format/codec is remembered per job and restored once the
+-- job leaves the queue (finished, failed or cancelled), so KathaCut never leaves that changed behind.
+-- ---------------------------------------------------------------------------
+
+local pendingRenderFormats = {}
+
+local function restoreRenderFormat(jobId, project)
+  local remembered = pendingRenderFormats[jobId]
+  if not remembered then return end
+  pendingRenderFormats[jobId] = nil
+  if project and remembered.format and remembered.codec then
+    project:SetCurrentRenderFormatAndCodec(remembered.format, remembered.codec)
+  end
+end
+
+handlers["renderProxyStart"] = function(params)
+  local project = currentProject()
+  if not project then error("No Resolve project is open") end
+  if project:IsRenderingInProgress() then error("A render is already in progress in Resolve") end
+  local timeline = project:GetCurrentTimeline()
+  if not timeline then error("No timeline is open in Resolve") end
+
+  local prevFormat, prevCodec = project:GetCurrentRenderFormatAndCodec()
+
+  -- Resolution comes back as a string on Windows Studio 21.0 (ADR 0008); coerce defensively.
+  local timelineWidth = tonumber(project:GetSetting("timelineResolutionWidth"))
+  local timelineHeight = tonumber(project:GetSetting("timelineResolutionHeight"))
+  if not timelineWidth or not timelineHeight or timelineWidth <= 0 or timelineHeight <= 0 then
+    error("Could not read the timeline's resolution")
+  end
+  local longSide = math.max(timelineWidth, timelineHeight)
+  local scale = math.min(1, params.maxLongSide / longSide)
+  local width = math.max(2, math.floor((timelineWidth * scale) / 2) * 2)
+  local height = math.max(2, math.floor((timelineHeight * scale) / 2) * 2)
+
+  project:SetCurrentRenderMode(1)
+  project:SetCurrentRenderFormatAndCodec("mp4", "H264")
+  project:SetRenderSettings({
+    SelectAllFrames = true,
+    TargetDir = params.targetDir,
+    CustomName = params.name,
+    ExportVideo = true,
+    ExportAudio = true,
+    FormatWidth = width,
+    FormatHeight = height,
+  })
+
+  local jobId = project:AddRenderJob()
+  if not jobId then error("Resolve refused to queue the render job") end
+  pendingRenderFormats[jobId] = { format = prevFormat, codec = prevCodec }
+  project:StartRendering(jobId)
+
+  return { jobId = jobId, width = width, height = height }
+end
+
+handlers["renderStatus"] = function(params)
+  local project = currentProject()
+  if not project then error("No Resolve project is open") end
+  local status = project:GetRenderJobStatus(params.jobId)
+  if not status then error("Unknown render job") end
+  local jobStatus = tostring(status.JobStatus or "Unknown")
+  if jobStatus == "Complete" or jobStatus == "Failed" or jobStatus == "Cancelled" then
+    project:DeleteRenderJob(params.jobId)
+    restoreRenderFormat(params.jobId, project)
+  end
+  return {
+    status = jobStatus,
+    percent = status.CompletionPercentage or 0,
+    error = status.Error or json.null,
+  }
+end
+
+handlers["renderCancel"] = function(params)
+  local project = currentProject()
+  if project then
+    project:StopRendering()
+    project:DeleteRenderJob(params.jobId)
+  end
+  restoreRenderFormat(params.jobId, project)
+  return {}
+end
+
+-- ---------------------------------------------------------------------------
 -- Launch KathaCut if it isn't already running and answering (app.json heartbeat under 5 s old).
 -- ---------------------------------------------------------------------------
 

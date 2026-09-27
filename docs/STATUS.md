@@ -1,5 +1,81 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 04: create project from current DaVinci timeline
+
+**Changes:**
+- `resources/resolve/bridge.lua`: three new whitelisted handlers. `renderProxyStart { targetDir, name,
+  maxLongSide }` refuses if `project:IsRenderingInProgress()`, remembers
+  `project:GetCurrentRenderFormatAndCodec()` keyed by the new job's id, scales the timeline's own
+  resolution (coerced from Resolve's string return) down to `maxLongSide` on its long side (even
+  numbers), calls `SetCurrentRenderMode(1)` → `SetCurrentRenderFormatAndCodec("mp4","H264")` →
+  `SetRenderSettings{...}` → `AddRenderJob()` → `StartRendering(jobId)`, and returns `{jobId, width,
+  height}`. `renderStatus { jobId }` reads `GetRenderJobStatus`, and once the job leaves the queue
+  (Complete/Failed/Cancelled) deletes it and restores the remembered render format/codec.
+  `renderCancel { jobId }` calls `StopRendering()` plus the same cleanup. **None of these three are
+  exercised by the spike** (ADR 0008: "T15 not run") — `JobStatus`'s exact string values and whether
+  `AddRenderJob()` returns a string or number are unconfirmed; the job id is passed through opaquely
+  end to end (never coerced) precisely because its type is unknown.
+- `src/core/resolveIpc.ts`: `resolveRenderStartResultSchema`, `resolveRenderStatusResultSchema`,
+  `resolveFpsSchema`, `resolveInspectedVideoSchema` (the video variant of `InspectedFile`, zod-backed so
+  it can cross the IPC boundary), `resolveProxyResultSchema`, `resolveProxyProgressSchema`,
+  `resolveProxyDoneSchema`.
+- `electron/resolve/proxy.ts` (new): `renderTimelineProxy(deps, onProgress, signal)` — reads
+  `timelineInfo`, computes the output dir (`<userData>/Cache/resolve-proxies/`) and a
+  `<sanitised timeline name>-<timelineId prefix>-<Date.now()>` name, starts the render, polls
+  `renderStatus` every 500 ms, cancels on abort (still restoring Resolve's render format via
+  `renderCancel`), locates the output file (exact name, else the newest file sharing the prefix), then
+  inspects it with the same `inspect` function `dialog:open-video` uses (injected as a dependency, to
+  avoid a circular import into `electron/main.ts`) so its fingerprint lands in `inspectedMedia`.
+- `electron/resolve/ipc.ts`: `registerResolveIpc` now takes `{ inspect }`. New handlers
+  `resolve:create-proxy-start` (returns `{requestId}` immediately; the render runs in the background),
+  `resolve:create-proxy-cancel`. Progress and the final result arrive as push events
+  (`resolve:proxy-progress`, `resolve:proxy-done`), matched by `requestId` — this is a different shape
+  than the plan sketch's positional `renderTimelineProxy(bridge, onProgress, signal)`; kept the deps-object
+  form so `proxy.ts` doesn't need to import from `electron/main.ts`.
+- `electron/main.ts`: `registerResolveIpc({ inspect: (filePath) => inspectMedia(filePath) })`.
+- Preload + `src/env.d.ts`: `resolveCreateProxyStart`, `resolveCreateProxyCancel`,
+  `onResolveProxyProgress`, `onResolveProxyDone` (zod-validated in preload, matching the
+  `onResolveStatus` convention).
+- `src/core/model.ts`: **schema 25**. `projectSchema` (was schema 24) renamed to `projectSchemaV24`;
+  the new `projectSchema` adds an optional `resolveLink` (`resolveLinkSchema`: project/timeline
+  name+id, `startFrame`, rational `fps`, `width`/`height`, `proxyAssetId` — checked by `superRefine`
+  against a video asset in `assets` — `trackName` defaulting to `'KathaCut'`, and `synced` (empty until
+  brief 06)). `src/core/migrateV24.ts` only moves the version. Every `toV24From*` helper in the
+  migration cascade now produces `CaptionProjectV24`, wrapped in a new `toV25FromV24` at each of
+  `loadProject`'s branches (plus a new schema-24 branch); `createProject()` now stamps `schemaVersion: 25`.
+- `src/App.tsx` / `src/home/HomeScreen.tsx`: `HomeScreen` takes an optional `resolve` prop
+  (`{connected, timelineName?, onCreate}`) and shows **Create project from current DaVinci timeline**
+  only while connected. `createFromResolve()` starts the render, shows a small modal
+  (`ResolveRenderProgress`, styled like the existing `RelinkReview`/`DiscardProjectReview` dialogs) with
+  live percent and Cancel; on success it opens the editor, calls `addAssetsFromInspected` to place the
+  proxy on V1 at 0, and `commit`s `resolveLink` (a separate undo step from the asset add, per the
+  brief's fallback). In the editor header, next to the brief-03 pill: a *Linked to DaVinci: `<project>` ›
+  `<timeline>`* pill when `project.resolveLink` is set, warning instead when Resolve's live
+  `timelineInfo` (re-read whenever the connected project/timeline name changes) reports a different
+  timeline id.
+- `src/styles.css`: `.home-create-resolve`, `.resolve-pill.warning`.
+- Nine existing test fixtures (`CaptionProject`/`Partial<CaptionProject>` object literals) updated from
+  `schemaVersion: 24` to `25` — required for typecheck, not a behavior change.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes; per the plan's testing
+override). Nobody has run this against a real DaVinci Resolve session — the render path (T15) was
+never exercised even in the spike. Windows-only once the user checks; Mac is unverified.
+
+**Limitations:**
+- Schema 25 migration is trivial (only moves the version); a unit test is available on request
+  (migrations are high-risk per AGENTS.md, but the testing override skips writing one here).
+- `GetRenderJobStatus`'s `JobStatus` string values are guessed (`"Complete"`/`"Failed"`/`"Cancelled"`,
+  anything else treated as still running) — unconfirmed by the spike. If Resolve uses different
+  strings, a render will appear to hang at its last percent until the 10 s bridge-request timeout, not
+  fail outright.
+- The `<userData>/Cache/resolve-proxies/` cache directory is never cleaned up; each render leaves its
+  file behind. Out of scope per the brief.
+- Cancelling before `renderProxyStart`'s own response arrives isn't covered — cancel only takes effect
+  from the first poll onward.
+
+**Next:** brief 05 (Text+ planner, pure TS) — turns cues + style into JSON clip specs using the frame
+mapping in `src/resolve/frames.ts` and the `resolveLink` this brief added.
+
 ## 2026-09-27 — Resolve Text+ 03: bridge, plugin install and connection status
 
 **Changes:**

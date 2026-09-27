@@ -19,7 +19,7 @@ import type { CloudProviderId, ProviderKeyStatuses } from './core/transcriptionP
 import type { AgentRequest, AgentResponse } from './core/agentProtocol'
 import type { McpSettingsView, McpStatus } from '../electron/mcp/config'
 import type { RecentProjectView } from '../electron/projectLibrary'
-import type { ResolveStatus, ResolveTimelineInfo } from './core/resolveIpc'
+import type { ResolveProxyDone, ResolveProxyProgress, ResolveStatus, ResolveTimelineInfo } from './core/resolveIpc'
 import type { ResolvePluginInfo } from '../electron/resolve/install'
 
 /** Chromium Local Font Access API (not yet in TS lib.dom). Offline, requires transient user
@@ -109,6 +109,10 @@ declare global {
       uninstallResolvePlugin(): Promise<ResolvePluginInfo>
       resolveTimelineInfo(): Promise<ResolveTimelineInfo>
       resolveDisconnect(): Promise<void>
+      resolveCreateProxyStart(): Promise<{ requestId: string }>
+      resolveCreateProxyCancel(requestId: string): Promise<void>
+      onResolveProxyProgress(callback: (message: ResolveProxyProgress) => void): () => void
+      onResolveProxyDone(callback: (message: ResolveProxyDone) => void): () => void
     }
   }
 }

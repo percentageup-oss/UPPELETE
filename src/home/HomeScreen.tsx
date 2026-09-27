@@ -23,12 +23,15 @@ const lastTouched = (project: RecentProjectView) => Math.max(project.savedAt, pr
 const trashName = () => navigator.platform.startsWith('Mac') ? 'Trash' : 'Recycle Bin'
 
 /** The start page: sidebar (Home / Templates), a Create-project banner and the projects saved so far. */
-export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onMessage }: {
+export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onMessage, resolve }: {
   onCreate: () => void
   onOpenFile: () => void
   onOpenRecent: (path: string) => void
   onSettings: () => void
   onMessage: (tone: 'info' | 'warning' | 'error', text: string) => void
+  /** DaVinci Resolve connection (docs/plans/resolve-textplus/04-project-from-timeline.md): the
+   * "Create project from current DaVinci timeline" button shows only while connected. */
+  resolve?: { connected: boolean; timelineName?: string; onCreate: () => void }
 }) {
   const [tab, setTab] = useState<HomeTab>('home')
   const [projects, setProjects] = useState<RecentProjectView[] | null>(null)
@@ -99,6 +102,10 @@ export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onM
       <button type="button" className="home-create" onClick={onCreate}>
         <span className="home-create-plus"><PlusIcon width={22} height={22} /></span><span>Create project</span>
       </button>
+      {resolve?.connected && <button type="button" className="home-create-resolve" onClick={resolve.onCreate}>
+        <FilmIcon width={18} height={18} />
+        <span>Create project from current DaVinci timeline{resolve.timelineName ? ` — “${resolve.timelineName}”` : ''}</span>
+      </button>}
       <div className="home-actions"><button type="button" onClick={onOpenFile}><FolderOpenIcon />Open project…</button><ResolveStatusPill onMessage={onMessage} /></div>
 
       <div className="home-projects-head">

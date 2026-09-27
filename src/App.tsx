@@ -44,6 +44,8 @@ import { MenuButton, type MenuEntry } from './MenuButton'
 import { SettingsDialog, type SettingsTab } from './SettingsDialog'
 import type { McpStatus } from '../electron/mcp/config'
 import { ResolveStatusPill } from './resolve/ResolveStatusPill'
+import { useResolveStatus } from './resolve/useResolveStatus'
+import type { ResolveProxyResult } from './core/resolveIpc'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
 import { loadTranscriptionDefaults, saveTranscriptionDefaults } from './core/transcriptionDefaults'
@@ -203,6 +205,23 @@ export default function App() {
   const [view, setView] = useState<'home' | 'editor'>('home')
   const viewRef = useRef(view)
   viewRef.current = view
+  // DaVinci Resolve bridge connection (docs/plans/resolve-textplus/04-project-from-timeline.md):
+  // drives the Home "Create project from current timeline" button, the render-progress modal and
+  // the editor's linked banner.
+  const resolveStatus = useResolveStatus()
+  const [resolveRender, setResolveRender] = useState<{ requestId: string; timelineName: string; percent: number } | null>(null)
+  const resolveRenderRef = useRef(resolveRender)
+  resolveRenderRef.current = resolveRender
+  // The linked banner's mismatch warning needs Resolve's *live* current timeline id, which `status.json`
+  // doesn't carry (only its name); re-read it whenever the connection or the live project/timeline name changes.
+  const [resolveLiveTimelineId, setResolveLiveTimelineId] = useState<string | null>(null)
+  const resolveConnectedKey = resolveStatus.state === 'connected' ? `${resolveStatus.projectName ?? ''}\u0000${resolveStatus.timelineName ?? ''}` : null
+  useEffect(() => {
+    if (resolveConnectedKey === null || !project.resolveLink || !window.captionStudio) { setResolveLiveTimelineId(null); return }
+    let cancelled = false
+    window.captionStudio.resolveTimelineInfo().then((info) => { if (!cancelled) setResolveLiveTimelineId(info.timelineId) }).catch(() => { if (!cancelled) setResolveLiveTimelineId(null) })
+    return () => { cancelled = true }
+  }, [resolveConnectedKey, project.resolveLink])
   // One draft clip substituted into the visible list, for the inspector's and the stage editor's
   // live rect/opacity/gain drafts — exactly `dragPreview`'s role for captions.
   const [clipDraft, setClipDraft] = useState<Clip | null>(null)
@@ -1270,6 +1289,62 @@ export default function App() {
     setNotice({ tone: 'info', text: 'Open a video to transcribe it, or import an SRT file. The project saves automatically once you add something.' })
   }
 
+  // Create project from current DaVinci timeline (docs/plans/resolve-textplus/04-project-from-timeline.md):
+  // opens the editor with the rendered proxy on V1 at 0, linked to the Resolve timeline via `resolveLink`.
+  // `applyResolveProxyResultRef` always holds this render's latest closure so the `[]`-effect below (which must
+  // not re-subscribe on every keystroke) never acts on a stale `project`/`commit`.
+  const applyResolveProxyResultRef = useRef<(result: ResolveProxyResult) => void>(() => {})
+  applyResolveProxyResultRef.current = (result: ResolveProxyResult) => {
+    setView('editor')
+    addAssetsFromInspected([result.inspected], { sequenceUs: 0, trackId: null })
+    const proxyAsset = findAssetByFingerprint(projectRef.current.assets.filter((asset) => asset.kind === 'video'), result.inspected.media)
+    if (proxyAsset) {
+      commit((current) => ({
+        ...current,
+        resolveLink: {
+          projectName: result.timeline.projectName,
+          timelineName: result.timeline.timelineName,
+          timelineId: result.timeline.timelineId,
+          startFrame: result.timeline.startFrame,
+          fps: result.timeline.fps,
+          width: result.timeline.width,
+          height: result.timeline.height,
+          proxyAssetId: proxyAsset.id,
+          trackName: 'KathaCut',
+          synced: [],
+        },
+      }))
+    }
+    setNotice({ tone: 'info', text: 'Timeline imported. Transcribe it from the Captions tab.' })
+  }
+
+  useEffect(() => window.captionStudio?.onResolveProxyProgress((message) => {
+    setResolveRender((state) => state && state.requestId === message.requestId ? { ...state, percent: message.percent } : state)
+  }), [])
+
+  useEffect(() => window.captionStudio?.onResolveProxyDone((message) => {
+    const current = resolveRenderRef.current
+    if (!current || current.requestId !== message.requestId) return
+    setResolveRender(null)
+    if (message.ok) applyResolveProxyResultRef.current(message.result)
+    else setNotice({ tone: 'error', text: message.message })
+  }), [])
+
+  const createFromResolve = async () => {
+    if (!window.captionStudio || resolveStatus.state !== 'connected') return
+    const timelineName = resolveStatus.timelineName ?? 'the current timeline'
+    try {
+      const { requestId } = await window.captionStudio.resolveCreateProxyStart()
+      setResolveRender({ requestId, timelineName, percent: 0 })
+    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
+  }
+
+  const cancelResolveRender = () => {
+    const requestId = resolveRender?.requestId
+    setResolveRender(null)
+    if (requestId) void window.captionStudio?.resolveCreateProxyCancel(requestId)
+  }
+
   // A project made from Home gets its file in the managed projects folder as soon as it holds anything, so autosave
   // covers it from the first edit and an empty project never leaves a file behind.
   const creatingProjectFile = useRef(false)
@@ -2292,10 +2367,12 @@ export default function App() {
 
   if (view === 'home') return <main className="home-shell">
     <HomeScreen onCreate={startFromHome} onOpenFile={() => void openProject()} onOpenRecent={(path) => void openProject(path)}
-      onSettings={() => setSettingsTab('models')} onMessage={(tone, text) => setNotice({ tone, text })} />
+      onSettings={() => setSettingsTab('models')} onMessage={(tone, text) => setNotice({ tone, text })}
+      resolve={{ connected: resolveStatus.state === 'connected', timelineName: resolveStatus.state === 'connected' ? (resolveStatus.timelineName ?? undefined) : undefined, onCreate: () => void createFromResolve() }} />
     <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} providerKeys={providerKeys} onProviderKeys={setProviderKeys} transcriptionDefaults={transcriptionDefaults} onTranscriptionDefaults={setTranscriptionDefaults}
       playbackProxyMode={playbackProxies.mode} onPlaybackProxyMode={playbackProxies.setMode}
       onMessage={(tone, text) => setNotice({ tone, text })} />
+    {resolveRender && <ResolveRenderProgress timelineName={resolveRender.timelineName} percent={resolveRender.percent} onCancel={cancelResolveRender} />}
     {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
   </main>
 
@@ -2319,6 +2396,17 @@ export default function App() {
           title={agentStatus.connections ? `${agentStatus.connections} agent client connected` : 'Agent access is on; no client connected yet'}>
           Agent{agentStatus.connections ? ` · ${agentStatus.connections}` : ''}
         </button>}
+        {project.resolveLink && (() => {
+          const link = project.resolveLink
+          const mismatched = resolveLiveTimelineId !== null && resolveLiveTimelineId !== link.timelineId
+          const label = mismatched
+            ? `Resolve has another timeline open — switch to “${link.timelineName}”`
+            : `Linked to DaVinci: ${link.projectName} › ${link.timelineName}`
+          const title = mismatched
+            ? `Resolve has a different timeline open. Switch to '${link.timelineName}' in Resolve before syncing.`
+            : label
+          return <span className={`resolve-pill${mismatched ? ' warning' : ' connected'}`} title={title}>{label}</span>
+        })()}
         <ResolveStatusPill onMessage={(tone, text) => setNotice({ tone, text })} />
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />
@@ -2892,6 +2980,14 @@ function CaptionShortcutHint() {
       <dt>Esc</dt><dd>Cancel the drag</dd>
     </dl>
   </div>
+}
+
+function ResolveRenderProgress({ timelineName, percent, onCancel }: { timelineName: string; percent: number; onCancel: () => void }) {
+  return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="resolve-render-title">
+    <small>DAVINCI RESOLVE</small><h2 id="resolve-render-title">Rendering “{timelineName}”… {percent}%</h2>
+    <p>KathaCut changes the render format on Resolve's Deliver page for this render and sets it back afterwards.</p>
+    <div><button onClick={onCancel}>Cancel</button></div>
+  </section></div>
 }
 
 function RelinkReview({ candidate, title = 'Replacement does not match', onUse, onChooseAgain, onCancel }: { candidate: MediaCandidate; title?: string; onUse: () => void; onChooseAgain: () => void; onCancel: () => void }) {
