@@ -1,5 +1,41 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 09: edit spike script (E1-E11)
+
+**Changes:**
+- `resources/resolve/dev/edit-spike.lua` (new, dev-only, not packaged): a second Resolve menu script,
+  independent of `spike.lua`. E1/E2 read every item on the current timeline's video and audio tracks
+  (name, start/end/duration, offsets, source start/end frame, media pool clip properties, fusion comp
+  count, clip color, speed/retime/zoom properties) and guess a kind (plain file, title/generator, Fusion
+  clip, compound, multicam, retimed), capped at 200 items. E3 compares the first file-backed item's
+  source start frame against its Start TC. E4 creates a timeline with explicit fps/resolution. E5 imports
+  media into a `KathaCut Media` bin, twice, and searches for an existing item by File Path. E6 places two
+  source ranges of one item and reads back start/end/source start/end, inclusivity and audio-track
+  items. E7 bulk-appends 20 Text+ clips in one call and times placement vs. styling. E8 exports three
+  calibration stills (`HorizontalJustificationNew` 0/1/2) of `"H മലയാളം"` after an 8 s pause on the Edit
+  page. E9 retargets the write-on keyframe test at the ADR-confirmed `End` input (not `WriteOnEnd`). E10
+  reads Character Level Styling from a hand-styled `CLS`-tagged clip on the original timeline's video
+  track 2, and logs the styled text's byte/UTF-8-codepoint lengths for comparison against any offsets
+  found. E11 tags one E7 clip via `comp:SetData`, then (with `MODE = "check"` after a save/close/reopen)
+  searches all `KathaCut edit spike *` timelines for the surviving tag. Every test is `pcall`-wrapped.
+- `resources/resolve/dev/spike.lua`: fixed T10 to use the ADR 0008-confirmed write-on input id `End`
+  instead of the wrong `WriteOnEnd` (both were previously silent no-ops / errors).
+- `resources/resolve/dev/SPIKE2.md` (new): setup (throwaway project, a real cut timeline with a retimed
+  clip/title/compound clip/audio if available, a hand-styled `CLS` clip on video track 2, the `KathaCut`
+  template bin from the first spike), run instructions, the save/close/reopen + `MODE = "check"` step,
+  and what to send back (report file, three stills, the "H" height/position per still).
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes; no TS files changed). Real
+verification needs Resolve; the user runs `SPIKE2.md` next.
+
+**Limitations:** every classification rule in E2, the source-frame-origin note in E3, and the CLS
+character-counting-unit note in E10 are guesses for the findings session to confirm or correct — none of
+this is verified yet.
+
+**Next:** the user runs the spike per `SPIKE2.md` and sends back the report, the three stills and the "H"
+measurements. A later findings session writes `docs/decisions/0009-resolve-edit-roundtrip.md` from that
+report and amends ADR 0008's open items, then briefs 10 → 11 → 12 → 07 → 08 proceed.
+
 ## 2026-09-27 — Resolve bridge: first real connection + two-way plan
 
 **Changes:**

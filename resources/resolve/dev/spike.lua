@@ -465,7 +465,7 @@ local function main()
         id, serialize(value, 1), tostring(ok), serialize(ret, 1))
     end
 
-    local fontRequested = "Noto Sans Malayalam"
+    local fontRequested = "Anek Malayalam"
     setAndRecord("StyledText", "മലയാളം ക്യാപ്ഷൻ Caption ശ്രീ")
     setAndRecord("Font", fontRequested)
     setAndRecord("Style", "Bold")
@@ -493,13 +493,14 @@ local function main()
     record("INFO", "T9-readback", string.format("fontRequested=%q %s",
       fontRequested, table.concat(readBacks, " | ")))
     record("INFO", "T9-note",
-      "Font substitution (if Noto Sans Malayalam is missing) cannot be detected via the Lua API; " ..
+      "Font substitution (if Anek Malayalam is missing) cannot be detected via the Lua API; " ..
       "check the still/screenshot per SPIKE.md step 6.")
   end)
 
-  -- T10: WriteOnEnd keyframes inside Lock/Unlock. Tries two documented approaches and records
-  -- which one Resolve actually accepts, since a first guess ("assign comp:BezierSpline() then
-  -- index-assign") errored on the initial run ("attempt to index field 'WriteOnEnd' (a nil value)").
+  -- T10: End (write-on) keyframes inside Lock/Unlock. Tries two documented approaches and records
+  -- which one Resolve actually accepts. Uses the ADR 0008-confirmed input id `End` (labelled
+  -- "Write On End" in the Inspector), not `WriteOnEnd` — the earlier guess errored on that id
+  -- ("attempt to index field 'WriteOnEnd' (a nil value)"); T7's full input dump has no such field.
   test("T10", function()
     if not comp or not tool then
       record("INFO", "T10", "skipped: no comp/tool from T7")
@@ -509,13 +510,13 @@ local function main()
     -- Attempt A: direct table assignment (time -> value in one step).
     local okA, errA = pcall(function()
       comp:Lock()
-      tool.WriteOnEnd = { [0] = 0, [24] = 1 }
+      tool.End = { [0] = 0, [24] = 1 }
       comp:Unlock()
     end)
     if not okA then
       pcall(function() comp:Unlock() end)
     end
-    local readOkA, readValA = pcall(function() return tool:GetInput("WriteOnEnd", 12) end)
+    local readOkA, readValA = pcall(function() return tool:GetInput("End", 12) end)
     record("INFO", "T10-A-table-assign", string.format("ok=%s err=%s readback@12=%s",
       tostring(okA), tostring(errA), readOkA and serialize(readValA, 1) or "<error>"))
 
@@ -523,15 +524,15 @@ local function main()
     local okB, errB = pcall(function()
       comp:Lock()
       local spline = comp:BezierSpline()
-      tool.WriteOnEnd = spline
-      tool.WriteOnEnd[0] = 0
-      tool.WriteOnEnd[24] = 1
+      tool.End = spline
+      tool.End[0] = 0
+      tool.End[24] = 1
       comp:Unlock()
     end)
     if not okB then
       pcall(function() comp:Unlock() end)
     end
-    local readOkB, readValB = pcall(function() return tool:GetInput("WriteOnEnd", 12) end)
+    local readOkB, readValB = pcall(function() return tool:GetInput("End", 12) end)
     record("INFO", "T10-B-bezierspline", string.format("ok=%s err=%s readback@12=%s",
       tostring(okB), tostring(errB), readOkB and serialize(readValB, 1) or "<error>"))
 
