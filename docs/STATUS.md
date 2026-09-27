@@ -1,5 +1,54 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 11: import the DaVinci timeline edit (render becomes the fallback)
+
+**Changes:**
+- `resources/resolve/bridge.lua`: new `readTimelineEdit { timelineId }` (after `requireTimeline`). For every
+  video-track item it returns record start/end, source start/end frames, `File Path`, `FPS`, `Type`, name and a
+  `kind` from ADR 0009's rules (no media pool item → title/generator; `Type` Compound/Timeline → compound;
+  Multicam/Title/Generator/Fusion; a file with a Fusion comp → fusion). Audio-track items are listed too.
+  The timeline info comes back in the same response (`timelineInfoOf`, shared with `timelineInfo`). 5000
+  items max, `pcall` per item, and an item that fails is returned as `unknown`.
+- `src/core/resolveIpc.ts`: `resolveTimelineEditSchema` (Lua result), `resolveImportEditResultSchema` (assets,
+  planned clips by asset index and Resolve track, `unsupported`, `notImported`, timeline with rational fps,
+  `truncated`), `resolveImportEditProgressSchema`.
+- `src/resolve/editToProject.ts` (new, pure): `planEditImport` maps record frames to sequence µs as an offset
+  from the timeline start, each boundary converted on its own. The source in-point is `GetSourceStartFrame` in
+  the file's fps (Resolve's `FPS`, else the probe's rate). **Deviation from the brief (per ADR 0009):** the
+  source length is the record length, not `GetSourceEndFrame`, which is only ±1 frame accurate; the source end
+  frame is used only for the retime check (source span vs. record span differ by > 2 frames → "retimed").
+  The source range is clamped to the file's duration and keeps the clip's length where it can. Only a readable
+  video `file` becomes a clip; everything else is listed with a reason. Audio-track items with no video item at
+  the same start and file (i.e. not a clip's embedded audio) go to `notImported`.
+  `sequenceFormatForTimeline` gives the KathaCut sequence the Resolve timeline's size and fps.
+- `electron/resolve/importEdit.ts` (new) + `resolve:import-edit` in `ipc.ts` (one at a time, no renderer
+  payload): `timelineInfo` → `readTimelineEdit` → each unique file path is checked on disk and probed with
+  `deps.inspect` (`inspectMedia`, which registers it in `inspectedMedia`) → plan. Missing files and unreadable
+  formats become unsupported items, not failures. Progress over `resolve:import-edit-progress`.
+- Preload/`env.d.ts`: `resolveImportEdit()` (validated with zod) and `onResolveImportEditProgress`.
+- Renderer: Home's Resolve button is now **Import DaVinci timeline — "<name>"** with a secondary **Render
+  instead** (brief 04's flow). While importing, a small progress dialog; if anything is skipped, a review dialog
+  (`ResolveImportReview` in `App.tsx`) lists every item (track, time, name, reason) with **Import the rest** /
+  **Render instead** / Cancel. `applyResolveImport` adds the assets through `addAssetsFromInspected`, then
+  runs one command batch: `format-set` to the timeline's frame, then `clip-add` per planned clip on one
+  KathaCut video track per Resolve video track (bottom-up, reusing the empty V1). Embedded audio comes along as
+  linked audio clips. It commits `resolveLink` with `origin: 'edit'`, no `proxyAssetId`, and `editSignature`
+  computed after placement. Files Chromium can't play use the existing playback-proxy flow unchanged.
+- `src/resolve/textPlusPlan.ts`: the Sync support notes for size, position and alignment now cite ADR 0009
+  (Position is "sent").
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes). Real verification needs
+Resolve; see the brief's manual check. Windows only when it is run; Mac unverified.
+
+**Limitations:** the retime, multicam, generator and Fusion rules are unconfirmed guesses (ADR 0009); a
+retimed clip that slips past the retime check would import at 100 % speed. Source in-points on user-trimmed
+clips are expected to be within ±1 source frame. Still images and separate audio are listed, not imported.
+Importing adds each asset as its own undo step before the one clip-placement step. Re-importing into an
+existing project is out of scope (Home only).
+
+**Next:** the user runs brief 11's manual check. A unit test for `planEditImport` (frame math, retime check,
+clamping, embedded-audio matching) is cheap and worth adding if the user wants it. Then brief 12.
+
 ## 2026-09-27 — Resolve Text+ 09 findings: ADR 0009 (edit spike results)
 
 **Changes:**

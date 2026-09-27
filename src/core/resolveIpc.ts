@@ -228,7 +228,76 @@ export const resolveSyncProgressSchema = z.strictObject({
 })
 export type ResolveSyncProgress = z.infer<typeof resolveSyncProgressSchema>
 
-export const resolveJumpRequestSchema = z.strictObject({ timelineId: z.string().min(1).max(256), frame: z.number().int().nonnegative() })
+// ---------------------------------------------------------------------------------------------------------------
+// Import the timeline edit (11). The Lua result is validated here; main inspects the files and plans the clips
+// (`src/resolve/editToProject.ts`), and the renderer only ever receives the plan, never a path to open itself.
+// ---------------------------------------------------------------------------------------------------------------
+
+const resolvePathSchema = z.string().min(1).max(32768).refine((value) => !value.includes('\0'), 'NUL in path')
+const frameSchema = z.number().int()
+
+export const RESOLVE_EDIT_KINDS = ['file', 'title', 'generator', 'fusion', 'compound', 'multicam', 'retimed', 'unknown'] as const
+export type ResolveEditKind = typeof RESOLVE_EDIT_KINDS[number]
+
+/** Result of the `readTimelineEdit` command: absolute record frames (`GetEnd` exclusive), source frames in the
+ * file's own fps counted from its first frame (ADR 0009). */
+export const resolveTimelineEditSchema = z.strictObject({
+  timeline: resolveTimelineInfoSchema,
+  items: z.array(z.strictObject({
+    trackIndex: z.number().int().positive(),
+    recordStart: frameSchema.nullable(),
+    recordEnd: frameSchema.nullable(),
+    sourceStart: frameSchema.nullable(),
+    sourceEnd: frameSchema.nullable(),
+    filePath: resolvePathSchema.nullable(),
+    fileFps: z.string().max(32).nullable(),
+    clipType: z.string().max(256).nullable(),
+    name: z.string().max(1024).nullable(),
+    kind: z.enum(RESOLVE_EDIT_KINDS),
+  })).max(5000),
+  audioItems: z.array(z.strictObject({
+    trackIndex: z.number().int().positive(),
+    recordStart: frameSchema.nullable(),
+    filePath: resolvePathSchema.nullable(),
+    name: z.string().max(1024).nullable(),
+  })).max(5000),
+  truncated: z.boolean(),
+})
+export type ResolveTimelineEdit = z.infer<typeof resolveTimelineEditSchema>
+
+export const resolveEditSkipSchema = z.strictObject({
+  track: z.string().max(16),
+  name: z.string().max(1024),
+  startUs: z.number().int().nullable(),
+  reason: z.string().max(512),
+})
+export type ResolveEditSkip = z.infer<typeof resolveEditSkipSchema>
+
+export const resolvePlannedClipSchema = z.strictObject({
+  assetIndex: z.number().int().nonnegative(),
+  /** Resolve's 1-based video track index; KathaCut makes one video track per Resolve track that has clips. */
+  trackIndex: z.number().int().positive(),
+  timelineStartUs: z.number().int().nonnegative(),
+  sourceStartUs: z.number().int().nonnegative(),
+  sourceEndUs: z.number().int().positive(),
+})
+export type ResolvePlannedClip = z.infer<typeof resolvePlannedClipSchema>
+
+/** What `resolve:import-edit` returns. `notImported` is separately recorded audio (v1 imports embedded audio only). */
+export const resolveImportEditResultSchema = z.strictObject({
+  timeline: z.strictObject({ ...resolveTimelineInfoSchema.shape, fps: resolveFpsSchema }),
+  assets: z.array(resolveInspectedVideoSchema).max(5000),
+  clips: z.array(resolvePlannedClipSchema).max(5000),
+  unsupported: z.array(resolveEditSkipSchema).max(5000),
+  notImported: z.array(resolveEditSkipSchema).max(5000),
+  truncated: z.boolean(),
+})
+export type ResolveImportEditResult = z.infer<typeof resolveImportEditResultSchema>
+
+export const resolveImportEditProgressSchema = z.strictObject({ done: z.number().int().nonnegative(), total: z.number().int().nonnegative() })
+export type ResolveImportEditProgress = z.infer<typeof resolveImportEditProgressSchema>
+
+export const resolveJumpRequestSchema =z.strictObject({ timelineId: z.string().min(1).max(256), frame: z.number().int().nonnegative() })
 
 // Bridge command results (06).
 export const resolveFindTrackResultSchema = z.strictObject({ trackIndex: z.number().int().positive().nullable() })

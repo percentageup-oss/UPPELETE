@@ -22,8 +22,8 @@ import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../sr
 import type { McpSettingsView, McpStatus } from './mcp/config'
 import type { RecentProjectView } from './projectLibrary'
 import {
-  resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema, resolveSyncProgressSchema,
-  type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress, type ResolveSyncResult,
+  resolveImportEditProgressSchema, resolveImportEditResultSchema, resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema, resolveSyncProgressSchema,
+  type ResolveImportEditProgress, type ResolveImportEditResult, type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress, type ResolveSyncResult,
   type ResolveProxyDone, type ResolveProxyProgress, type ResolveStatus, type ResolveTimelineInfo,
 } from '../src/core/resolveIpc'
 import type { ResolvePluginInfo } from './resolve/install'
@@ -229,6 +229,15 @@ contextBridge.exposeInMainWorld('captionStudio', {
     }
     ipcRenderer.on('resolve:proxy-done', listener)
     return () => ipcRenderer.removeListener('resolve:proxy-done', listener)
+  },
+  resolveImportEdit: async (): Promise<ResolveImportEditResult> => resolveImportEditResultSchema.parse(await ipcRenderer.invoke('resolve:import-edit')),
+  onResolveImportEditProgress: (callback: (progress: ResolveImportEditProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolveImportEditProgressSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:import-edit-progress', listener)
+    return () => ipcRenderer.removeListener('resolve:import-edit-progress', listener)
   },
   resolveSyncPreview: (request: ResolveSyncPreviewRequest): Promise<ResolveSyncPreview> => ipcRenderer.invoke('resolve:sync-preview', request),
   resolveSyncApply: (request: ResolveSyncApplyRequest): Promise<ResolveSyncResult> => ipcRenderer.invoke('resolve:sync-apply', request),

@@ -4,6 +4,7 @@ import {
   resolveEmptyResultSchema, resolveJumpRequestSchema, resolveSyncApplyRequestSchema, resolveSyncPreviewRequestSchema, resolveTimelineInfoSchema,
 } from '../../src/core/resolveIpc'
 import { getResolveBridge } from './bridge'
+import { importTimelineEdit } from './importEdit'
 import { installPlugin, pluginInfo, uninstallPlugin } from './install'
 import { renderTimelineProxy, type RenderTimelineProxyDeps } from './proxy'
 import { applySync, jumpToFrame, previewSync } from './sync'
@@ -35,7 +36,17 @@ export function registerResolveIpc(deps: ResolveIpcDeps): void {
       return await applySync(getResolveBridge(), request, (progress) => { if (!event.sender.isDestroyed()) event.sender.send('resolve:sync-progress', progress) })
     } finally { syncRunning = false }
   })
-  ipcMain.handle('resolve:jump-to', (_event, payload: unknown) => {
+  // Import the timeline edit (11): paths come from Resolve inside main; the renderer sends no payload.
+  let importRunning = false
+  ipcMain.handle('resolve:import-edit', async (event) => {
+    if (importRunning) throw new Error('A DaVinci timeline import is already running.')
+    importRunning = true
+    try {
+      return await importTimelineEdit({ bridge: getResolveBridge(), inspect: deps.inspect },
+        (progress) => { if (!event.sender.isDestroyed()) event.sender.send('resolve:import-edit-progress', progress) })
+    } finally { importRunning = false }
+  })
+  ipcMain.handle('resolve:jump-to',(_event, payload: unknown) => {
     const { timelineId, frame } = resolveJumpRequestSchema.parse(payload)
     return jumpToFrame(getResolveBridge(), timelineId, frame)
   })

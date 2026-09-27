@@ -887,6 +887,12 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .home-create-plus { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 10px; background: rgba(9, 11, 16, .55); }
 .home-create-resolve { width: 100%; height: 44px; gap: 10px; margin-top: 10px; border: 1px solid #2d5a42; border-radius: 10px; font-size: 13px; font-weight: 600; color: #7fd8a0; background: #10241b; }
 .home-create-resolve:hover:not(:disabled) { background: #142d20; }
+.home-resolve-actions { display: flex; gap: 8px; align-items: stretch; }
+.home-resolve-actions .home-create-resolve { flex: 1; min-width: 0; }
+.home-resolve-render { flex: none; height: 44px; margin-top: 10px; padding: 0 14px; border: 1px solid #2d5a42; border-radius: 10px; font-size: 13px; color: #7fd8a0; background: transparent; }
+.home-resolve-render:hover:not(:disabled) { background: #10241b; }
+.resolve-import-skips { max-height: 240px; overflow-y: auto; margin: 0 0 12px; padding-left: 18px; font-size: 12px; }
+.resolve-import-skips li { margin: 3px 0; }
 .home-actions { display: flex; gap: 8px; margin-top: 12px; }
 .home-projects-head { display: flex; align-items: center; gap: 12px; margin: 32px 0 16px; }
 .home-projects-head h2 { margin: 0 auto 0 0; font-size: 16px; }

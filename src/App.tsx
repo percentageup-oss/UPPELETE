@@ -47,7 +47,8 @@ import { ResolveStatusPill } from './resolve/ResolveStatusPill'
 import { ResolveSyncControl } from './resolve/ResolveSync'
 import { useResolveStatus } from './resolve/useResolveStatus'
 import { editSignature } from './resolve/editSignature'
-import type { ResolveProxyResult } from './core/resolveIpc'
+import type { ResolveEditSkip, ResolveImportEditResult, ResolveProxyResult } from './core/resolveIpc'
+import { sequenceFormatForTimeline } from './resolve/editToProject'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
 import { loadTranscriptionDefaults, saveTranscriptionDefaults } from './core/transcriptionDefaults'
@@ -214,6 +215,9 @@ export default function App() {
   const [resolveRender, setResolveRender] = useState<{ requestId: string; timelineName: string; percent: number } | null>(null)
   const resolveRenderRef = useRef(resolveRender)
   resolveRenderRef.current = resolveRender
+  // Import the timeline edit (11): progress while main inspects the files, then the skipped-items review.
+  const [resolveImport, setResolveImport] = useState<{ timelineName: string; done: number; total: number } | null>(null)
+  const [pendingResolveImport, setPendingResolveImport] = useState<ResolveImportEditResult | null>(null)
   // The linked banner's mismatch warning needs Resolve's *live* current timeline id, which `status.json`
   // doesn't carry (only its name); re-read it whenever the connection or the live project/timeline name changes.
   const [resolveLiveTimelineId, setResolveLiveTimelineId] = useState<string | null>(null)
@@ -1343,6 +1347,86 @@ export default function App() {
     } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
   }
 
+  // Import DaVinci timeline (docs/plans/resolve-textplus/11-import-edit.md): rebuilds the cuts from the original
+  // files. Anything that can't be rebuilt is listed first, with Render (brief 04) as the fallback.
+  useEffect(() => window.captionStudio?.onResolveImportEditProgress((progress) => {
+    setResolveImport((state) => state ? { ...state, ...progress } : state)
+  }), [])
+
+  const importFromResolve = async () => {
+    if (!window.captionStudio || resolveStatus.state !== 'connected' || resolveImport) return
+    setResolveImport({ timelineName: resolveStatus.timelineName ?? 'the current timeline', done: 0, total: 0 })
+    try {
+      const result = await window.captionStudio.resolveImportEdit()
+      if (result.unsupported.length || result.notImported.length || result.truncated || !result.clips.length) setPendingResolveImport(result)
+      else applyResolveImport(result)
+    } catch (error) { setNotice({ tone: 'error', text: errorText(error) }) }
+    finally { setResolveImport(null) }
+  }
+
+  const applyResolveImport = (result: ResolveImportEditResult) => {
+    setPendingResolveImport(null)
+    setView('editor')
+    addAssetsFromInspected(result.assets)
+    const current = projectRef.current
+    const videos = current.assets.filter((asset) => asset.kind === 'video')
+    const assetIds = result.assets.map((inspected) => findAssetByFingerprint(videos, inspected.media)?.id ?? null)
+    if (assetIds.some((id) => id === null)) { setNotice({ tone: 'error', text: 'The DaVinci timeline’s media could not be added to the project.' }); return }
+
+    // One KathaCut video track per Resolve video track that has clips, created bottom-up in Resolve's order.
+    const emptyVideoTrack = current.tracks.find((track) => track.kind === 'video' && !track.locked && !current.clips.some((clip) => clip.trackId === track.id))
+    const targets = new Map<number, { id: string; track?: Track }>()
+    ;[...new Set(result.clips.map((clip) => clip.trackIndex))].sort((a, b) => a - b).forEach((trackIndex, order) => {
+      if (order === 0 && emptyVideoTrack) targets.set(trackIndex, { id: emptyVideoTrack.id })
+      else { const track = newTrack('video'); targets.set(trackIndex, { id: track.id, track }) }
+    })
+    const commands: EditCommand[] = []
+    const format = sequenceFormatForTimeline(result.timeline)
+    if (format) commands.push({ type: 'format-set', format })
+    const ordered = [...result.clips].sort((a, b) => a.trackIndex - b.trackIndex || a.timelineStartUs - b.timelineStartUs)
+    for (const planned of ordered) {
+      const target = targets.get(planned.trackIndex)!
+      const track = target.track
+      target.track = undefined
+      const clip: Clip = {
+        kind: 'video', id: crypto.randomUUID(), trackId: target.id, assetId: assetIds[planned.assetIndex]!,
+        timelineStartUs: planned.timelineStartUs, sourceStartUs: planned.sourceStartUs, sourceEndUs: planned.sourceEndUs, opacity: 1, fit: 'contain', gain: 1,
+      }
+      commands.push({ type: 'clip-add', clip, track, mode: 'overwrite', idPrefix: crypto.randomUUID() })
+    }
+    const outcome = runCommands(commands, 'DaVinci timeline imported.')
+    if (outcome.failedIndex !== null) {
+      const failure = outcome.outcomes[outcome.failedIndex]
+      setNotice({ tone: 'error', text: `The DaVinci timeline could not be imported: ${failure && !failure.ok ? failure.errors.map((issue) => issue.message).join(' ') : 'unknown error'}` })
+      return
+    }
+    commit((present) => ({
+      ...present,
+      resolveLink: {
+        projectName: result.timeline.projectName,
+        timelineName: result.timeline.timelineName,
+        timelineId: result.timeline.timelineId,
+        startFrame: result.timeline.startFrame,
+        fps: result.timeline.fps,
+        width: result.timeline.width,
+        height: result.timeline.height,
+        origin: 'edit',
+        editSignature: editSignature(present),
+        trackName: 'KathaCut',
+        synced: [],
+      },
+    }))
+    playback.seek(0)
+    setSelection(null)
+    const skipped = result.unsupported.length + result.notImported.length
+    setNotice({ tone: skipped ? 'warning' : 'info', text: `Imported ${result.clips.length} clip${result.clips.length === 1 ? '' : 's'} from “${result.timeline.timelineName}”${skipped ? `; ${skipped} item${skipped === 1 ? '' : 's'} not imported` : ''}. Transcribe it from the Captions tab.` })
+  }
+
+  const renderInsteadOfImport = () => {
+    setPendingResolveImport(null)
+    void createFromResolve()
+  }
+
   const cancelResolveRender = () => {
     const requestId = resolveRender?.requestId
     setResolveRender(null)
@@ -2372,11 +2456,18 @@ export default function App() {
   if (view === 'home') return <main className="home-shell">
     <HomeScreen onCreate={startFromHome} onOpenFile={() => void openProject()} onOpenRecent={(path) => void openProject(path)}
       onSettings={() => setSettingsTab('models')} onMessage={(tone, text) => setNotice({ tone, text })}
-      resolve={{ connected: resolveStatus.state === 'connected', timelineName: resolveStatus.state === 'connected' ? (resolveStatus.timelineName ?? undefined) : undefined, onCreate: () => void createFromResolve() }} />
+      resolve={{ connected: resolveStatus.state === 'connected', timelineName: resolveStatus.state === 'connected' ? (resolveStatus.timelineName ?? undefined) : undefined,
+        busy: resolveImport !== null || resolveRender !== null, onImport: () => void importFromResolve(), onRender: () => void createFromResolve() }} />
     <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={() => setSettingsTab(null)} providerKeys={providerKeys} onProviderKeys={setProviderKeys} transcriptionDefaults={transcriptionDefaults} onTranscriptionDefaults={setTranscriptionDefaults}
       playbackProxyMode={playbackProxies.mode} onPlaybackProxyMode={playbackProxies.setMode}
       onMessage={(tone, text) => setNotice({ tone, text })} />
     {resolveRender && <ResolveRenderProgress timelineName={resolveRender.timelineName} percent={resolveRender.percent} onCancel={cancelResolveRender} />}
+    {resolveImport && <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="resolve-import-title">
+      <small>DAVINCI RESOLVE</small><h2 id="resolve-import-title">Importing “{resolveImport.timelineName}”…{resolveImport.total ? ` ${resolveImport.done} of ${resolveImport.total} files checked` : ''}</h2>
+      <p>KathaCut reads the cuts and uses the original files. Nothing in Resolve or your media is changed.</p>
+    </section></div>}
+    {pendingResolveImport && <ResolveImportReview result={pendingResolveImport} onImport={() => applyResolveImport(pendingResolveImport)}
+      onRender={renderInsteadOfImport} onCancel={() => setPendingResolveImport(null)} />}
     {notice && <div className={`notice ${notice.tone}`} role="status" aria-live="polite" onClick={() => setNotice(null)}>{notice.text}</div>}
   </main>
 
@@ -2994,6 +3085,24 @@ function ResolveRenderProgress({ timelineName, percent, onCancel }: { timelineNa
     <small>DAVINCI RESOLVE</small><h2 id="resolve-render-title">Rendering “{timelineName}”… {percent}%</h2>
     <p>KathaCut changes the render format on Resolve's Deliver page for this render and sets it back afterwards.</p>
     <div><button onClick={onCancel}>Cancel</button></div>
+  </section></div>
+}
+
+function ResolveImportReview({ result, onImport, onRender, onCancel }: { result: ResolveImportEditResult; onImport: () => void; onRender: () => void; onCancel: () => void }) {
+  const row = (item: ResolveEditSkip, index: number) => <li key={index}>
+    <strong>{item.track}{item.startUs !== null ? ` · ${formatClock(item.startUs)}` : ''}</strong> {item.name}: {item.reason}
+  </li>
+  const skipped = [...result.unsupported, ...result.notImported]
+  return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="resolve-import-review-title">
+    <small>DAVINCI RESOLVE</small>
+    <h2 id="resolve-import-review-title">{result.clips.length ? `${skipped.length} item${skipped.length === 1 ? '' : 's'} can’t be imported` : 'Nothing on this timeline can be imported'}</h2>
+    <p>{result.clips.length
+      ? `${result.clips.length} clip${result.clips.length === 1 ? '' : 's'} can be rebuilt from the original files. Render instead makes one video of the whole timeline, including everything below.`
+      : 'Render instead makes one video of the whole timeline.'}
+      {result.truncated ? ' Only the first 5000 items were read.' : ''}</p>
+    <ul className="resolve-import-skips" lang="ml">{skipped.map(row)}</ul>
+    <div><button onClick={onCancel}>Cancel</button><button onClick={onRender}>Render instead</button>
+      {result.clips.length > 0 && <button className="accent" onClick={onImport}>Import the rest</button>}</div>
   </section></div>
 }
 

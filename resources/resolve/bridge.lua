@@ -476,6 +476,119 @@ handlers["deleteClips"] = function(params)
   return { deleted = #items, missing = requested - #items }
 end
 
+-- ---------------------------------------------------------------------------
+-- Import the timeline edit (11): the video tracks' items, mapped back to their original files. Only
+-- reads; the classification rules are ADR 0009's. The retime check needs fps math, so it's done in
+-- KathaCut's TypeScript (src/resolve/editToProject.ts) from the raw frames returned here.
+-- ---------------------------------------------------------------------------
+
+local MAX_EDIT_ITEMS = 5000
+
+local function callOn(object, method)
+  local ok, value = pcall(function() return object[method](object) end)
+  if ok then return value end
+  return nil
+end
+
+local function numberOrNull(value)
+  if type(value) == "number" then return value end
+  return json.null
+end
+
+local function clipProperty(mediaPoolItem, key)
+  local ok, value = pcall(function() return mediaPoolItem:GetClipProperty(key) end)
+  if ok and value ~= nil and tostring(value) ~= "" then return tostring(value) end
+  return nil
+end
+
+local function classifyEditItem(mediaPoolItem, clipType, filePath, fusionCount)
+  if not mediaPoolItem then
+    if fusionCount >= 1 then return "title" end
+    return "generator"
+  end
+  local t = clipType or ""
+  if t:find("Compound") or t == "Timeline" then return "compound" end
+  if t:find("Multicam") then return "multicam" end
+  if t:find("Title") then return "title" end
+  if t:find("Generator") then return "generator" end
+  if t:find("Fusion") then return "fusion" end
+  if not filePath then return "unknown" end
+  if fusionCount >= 1 then return "fusion" end
+  return "file"
+end
+
+local function describeEditItem(item, trackIndex)
+  local mediaPoolItem = callOn(item, "GetMediaPoolItem")
+  local clipType, filePath, fileFps = nil, nil, nil
+  if mediaPoolItem then
+    clipType = clipProperty(mediaPoolItem, "Type")
+    filePath = clipProperty(mediaPoolItem, "File Path")
+    fileFps = clipProperty(mediaPoolItem, "FPS")
+  end
+  local fusionCount = callOn(item, "GetFusionCompCount")
+  if type(fusionCount) ~= "number" then fusionCount = 0 end
+  local name = callOn(item, "GetName")
+  return {
+    trackIndex = trackIndex,
+    recordStart = numberOrNull(callOn(item, "GetStart")),
+    recordEnd = numberOrNull(callOn(item, "GetEnd")),
+    sourceStart = numberOrNull(callOn(item, "GetSourceStartFrame")),
+    sourceEnd = numberOrNull(callOn(item, "GetSourceEndFrame")),
+    filePath = filePath or json.null,
+    fileFps = fileFps or json.null,
+    clipType = clipType or json.null,
+    name = isString(name) and name or json.null,
+    kind = classifyEditItem(mediaPoolItem, clipType, filePath, fusionCount),
+  }
+end
+
+handlers["readTimelineEdit"] = function(params)
+  local project, timeline = requireTimeline(params)
+  local items = json.array({})
+  local count = 0
+  local truncated = false
+  local videoTracks = timeline:GetTrackCount("video") or 0
+  for trackIndex = 1, videoTracks do
+    for _, item in ipairs(timeline:GetItemListInTrack("video", trackIndex) or {}) do
+      if count >= MAX_EDIT_ITEMS then truncated = true; break end
+      count = count + 1
+      local ok, entry = pcall(describeEditItem, item, trackIndex)
+      if not ok then
+        local name = callOn(item, "GetName")
+        entry = {
+          trackIndex = trackIndex,
+          recordStart = numberOrNull(callOn(item, "GetStart")),
+          recordEnd = numberOrNull(callOn(item, "GetEnd")),
+          sourceStart = json.null, sourceEnd = json.null, filePath = json.null, fileFps = json.null, clipType = json.null,
+          name = isString(name) and name or json.null,
+          kind = "unknown",
+        }
+      end
+      table.insert(items, entry)
+    end
+    if truncated then break end
+  end
+  -- Audio items are only listed (a video clip's embedded audio shows up here too, so KathaCut matches
+  -- them against the video items to tell separately recorded audio apart).
+  local audioItems = json.array({})
+  for trackIndex = 1, (timeline:GetTrackCount("audio") or 0) do
+    for _, item in ipairs(timeline:GetItemListInTrack("audio", trackIndex) or {}) do
+      if count >= MAX_EDIT_ITEMS then truncated = true; break end
+      count = count + 1
+      local mediaPoolItem = callOn(item, "GetMediaPoolItem")
+      local name = callOn(item, "GetName")
+      table.insert(audioItems, {
+        trackIndex = trackIndex,
+        recordStart = numberOrNull(callOn(item, "GetStart")),
+        filePath = (mediaPoolItem and clipProperty(mediaPoolItem, "File Path")) or json.null,
+        name = isString(name) and name or json.null,
+      })
+    end
+    if truncated then break end
+  end
+  return { timeline = timelineInfoOf(project, timeline), items = items, audioItems = audioItems, truncated = truncated }
+end
+
 handlers["jumpTo"] = function(params)
   local _, timeline = requireTimeline(params)
   if not timeline:SetCurrentTimecode(params.timecode) then error("Resolve could not move the playhead") end
