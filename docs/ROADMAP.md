@@ -39,6 +39,17 @@ Explainer-style motion graphics — arrows, dotted lines, highlighter sweeps, pa
 5. **Cut-outs (separate plan).** A local background-removal model and worker so a person can be lifted out as a sticker. Needs its own model-license review and download flow.
 Gate (per slice): the feature works in the editor, an exported MP4 matches preview within the documented tolerance, undo/redo and save/reload are lossless, and Windows and macOS results are reported separately.
 
+## 4d. DaVinci Resolve Text+ sync — done, unverified in Resolve
+Two-way local integration ([RESOLVE.md](RESOLVE.md), [ADR 0008](decisions/0008-resolve-textplus.md),
+[ADR 0009](decisions/0009-resolve-edit-roundtrip.md)): connect to a running Resolve project (Free or
+Studio), import its timeline edit (or render a proxy as fallback), sync captions to Resolve as native
+Text+ clips with incremental diff/conflict handling, and create a new Resolve timeline from a KathaCut
+edit. Implemented and typechecked; not yet run end-to-end by the user in a real Resolve session (see
+STATUS.md).
+Follow-ups: an opt-in "auto-sync when idle", a proxy-cache cleanup policy, refreshing a proxy without
+losing the caption link, and a rendered-overlay mode for effects Text+ can't represent (emphasis and
+line-mode word highlighting today, pending Character Level Styling's data format).
+
 ## 5. Distribution
 - Validate macOS Apple Silicon and Windows x64 clean installation.
 - Dependencies/models/fonts license inventory and public-release checklist. (Source license: GPL-3.0-or-later, see LICENSE; contributor docs: CONTRIBUTING.md — done.)

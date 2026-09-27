@@ -272,6 +272,17 @@ see. A user-imported `.cube` LUT is never committed, bundled or shipped — it s
 put it on disk, referenced and relinked the same way project media is, and is explicitly the user's
 own file to license.
 
+## DaVinci Resolve bridge — no third-party code vendored
+
+[RESOLVE.md](RESOLVE.md) documents the integration. Dependency/licensing facts:
+
+| Component | License | Notes |
+| --- | --- | --- |
+| `resources/resolve/bridge.lua`, `resources/resolve/json.lua` | GPL-3.0-or-later (KathaCut's own code) | The Lua mailbox executor and a small hand-written JSON encoder/decoder for Lua 5.1/LuaJIT, written for this project. No third-party Lua library (JSON or otherwise) is vendored. |
+| `resources/resolve/kathacut-captions.drb` | KathaCut-authored asset | A DaVinci Resolve bin export holding the Text+ template clip Sync places on the timeline. Authored for this project in Resolve's own UI; no third-party `.drb`/template content. |
+| DaVinci Resolve scripting API (`Resolve()`, `bmd`, Fusion `comp`/`tool` objects) | Blackmagic Design, used at runtime only | Called only inside the user's own installed Resolve at runtime; no Resolve/Fusion/Blackmagic code, header or SDK file is bundled or redistributed with KathaCut. |
+| AutoSubs (MIT) | design inspiration only | The file-mailbox pattern (used because Resolve Free only runs scripts started from inside Resolve, and Resolve's Lua has no sockets) follows AutoSubs' approach; no AutoSubs code is copied into this repository. |
+
 ## Installer test builds (2026-09-24)
 
 Test installers now bundle third-party binaries under `resources/bin` (attribution in `THIRD_PARTY_NOTICES.txt`, staged by `scripts/stage-tools.mjs`, which refuses GPL/nonfree FFmpeg):

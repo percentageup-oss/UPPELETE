@@ -1,5 +1,31 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 08: docs
+
+**Changes:**
+- `docs/RESOLVE.md` (new): what the integration does, install/connect/sync steps for users (Free and
+  Studio), the architecture diagram and mailbox protocol v1 with the full command list and parameters,
+  install paths per OS, time mapping, the sync/diff/conflict rules, the Text+ support matrix, known
+  limits and troubleshooting. Built by reading the plan README, ADR 0008/0009, every Resolve STATUS
+  entry (briefs 01-07, 09-12), `resources/resolve/bridge.lua`'s command list and `electron/resolve/install.ts`.
+- `docs/ARCHITECTURE.md`: a short "DaVinci Resolve bridge" section linking to RESOLVE.md.
+- `docs/PRODUCT.md`: one bullet on Resolve Text+ sync (local only, Lua runs inside Resolve, nothing
+  uploaded).
+- `docs/ROADMAP.md`: new "4d. DaVinci Resolve Text+ sync" milestone marked done-but-unverified-in-Resolve,
+  with the follow-ups (auto-sync when idle, proxy cache cleanup, proxy refresh, a rendered-overlay mode
+  for effects Text+ can't represent).
+- `docs/DEPENDENCIES.md`: a "DaVinci Resolve bridge" section — the Lua bridge and `.drb` template are
+  KathaCut's own GPL-3.0-or-later code/assets, the Resolve scripting API is used at runtime only (never
+  redistributed), and AutoSubs (MIT) is credited as design inspiration only, no code copied.
+- `docs/INSTALL_TESTERS.md`: a short "DaVinci Resolve" manual test section, taken from briefs 03, 04, 06
+  and 07's own manual checks.
+
+**Verification:** `npx tsc --noEmit -p .` passes (docs-only change; typecheck unaffected). Not tested
+against a real Resolve session — this brief only reads and documents; see RESOLVE.md's own "Status" line
+for what has and hasn't been run.
+
+**Next:** per ROADMAP 4d's follow-ups — an opt-in "auto-sync when idle" is first in that list.
+
 ## 2026-09-27 — Resolve Text+ 07: emphasis + word animations in Text+
 
 **Changes:**

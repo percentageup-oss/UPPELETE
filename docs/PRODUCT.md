@@ -42,6 +42,12 @@ The editor remains local-first and fully usable offline. A user may explicitly a
 ## Optional translation
 With the same Gemini API key, a **"Translate to"** choice in **Transcribe** (either engine) sends only the recognized caption text — never audio — to Gemini and creates captions in the chosen language instead of the spoken one. The original spoken-language recognition is always retained in the project. Translated captions get estimated word timing and are marked Needs review, since a translated word cannot correspond to the original audio's word position. Default is off (no target chosen), unchanged behavior.
 
+## Optional DaVinci Resolve sync ([RESOLVE.md](RESOLVE.md))
+A user may explicitly connect a running DaVinci Resolve project (Free or Studio) and bring its timeline
+into KathaCut, then sync captions back as native, editable Text+ clips, and build a new Resolve timeline
+from a KathaCut edit. This is local only: the Lua script runs inside the user's own Resolve, connects
+over a file mailbox on disk, and nothing is uploaded or sent to any account or service.
+
 ## Optional local agent control ([MCP.md](MCP.md))
 A user may explicitly enable a loopback-only MCP server so a local Claude client (Claude Code today) can inspect and edit the open project — captions, style, tracks/clips, blur, markers — through the same undoable command path the UI itself uses, with the change visible in the app as it happens and reversible with the normal Undo. Off by default; nothing leaves the computer; no account, cloud provider or subscription is involved. Core editing, transcription and export remain fully usable without it.
 

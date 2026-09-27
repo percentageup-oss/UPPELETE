@@ -109,5 +109,15 @@ Preview `<video>` elements (`src/playback/videoPool.ts`) always decode *some* re
 
 The renderer's `src/core/proxy.ts` defines the pure, unit-tested selection logic — `shouldRequestPlaybackProxy` (mode plus source dimensions decide whether to request one at all: `off` never, `always` unconditionally, `auto`'s default only once the short edge exceeds 1080) and `playbackUrlFor` (which URL preview should actually load, given a proxy's status, the mode and the viewer's own override). `src/app/usePlaybackProxies.ts` is the one hook that ever produces a proxy URL: it requests a proxy at most once per fingerprint per session, tracks per-video status from `media:playback-proxy-status` events, and hands `App.tsx` a wrapped `urlOf` used *only* for the `useProjectPlayback` call that feeds the pooled `<video>` elements. Every other consumer of media URLs — export, transcription, waveform extraction, thumbnails, export parity — keeps calling `useAssetUrls`'s own `urlOf` directly and never sees a proxy; a proxy is preview-only by construction, not by a runtime check any of those paths have to remember to make. "Playback proxies" (Off/Auto/Always, `SettingsDialog.tsx`, renderer-local `localStorage` preference) controls the automatic request; a per-session "Preview: proxy/original quality" toggle over the video preview (`MediaSummary` in `App.tsx`) lets the viewer force full-quality framing regardless of mode.
 
+## DaVinci Resolve bridge
+
+An opt-in, local-only integration lets KathaCut exchange captions and a video edit with a running
+DaVinci Resolve project: a generated Lua launcher started from Resolve's own Scripts menu polls a small
+file-based mailbox (`electron/resolve/bridge.ts` in main; `resources/resolve/bridge.lua` inside Resolve)
+for a fixed whitelist of commands — connection status, a timeline proxy render, Text+ caption sync, and
+reading/writing the timeline edit. As with MCP, all logic lives in KathaCut's TypeScript; the Lua side
+only executes whitelisted handlers and never `load`s request content. Full protocol, command list, time
+mapping and the Text+ feature support matrix: [RESOLVE.md](RESOLVE.md).
+
 ## Dependency decisions before release
 Record pinned runtime, FFmpeg build, speech engine, weights, fonts and installer tooling in a license inventory. Choose the project's source license before publishing. No cloud inference or proprietary rendering service is required. macOS signing and Windows signing are release tasks, distinct from local development.
