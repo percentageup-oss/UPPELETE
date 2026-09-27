@@ -1,6 +1,7 @@
 import type { CaptionProject, Cue } from '../core/model'
 import { displayedCues } from '../core/captionLanguages'
 import { compositionFor } from '../core/composition'
+import { captionClips, cuesInSequence } from '../core/timelineModel'
 import { DEFAULT_CAPTION_STYLE, resolveCaptionStyle, captionStyleInputs } from '../captions/style'
 import { layoutCaption, wordMotionAvailability, type MeasureText, type MotionCue } from '../captions/renderer'
 import { wordDisplayCue } from '../captions/wordDisplay'
@@ -71,9 +72,13 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   const composition = compositionFor(link.width / link.height)
   const wordDisplay = project.captionDisplay === 'word'
 
-  const cues = displayedCues(project.cues, project.shownTranslation)
-    .filter((cue) => cue.mediaAssetId === link.proxyAssetId)
-    .sort((a, b) => a.startUs - b.startUs || a.endUs - b.endUs)
+  // Captions are placed by sequence time (the KathaCut timeline), not by time on one proxy asset, so the same
+  // mapping works whether the link is a proxy render, an imported edit or a pushed timeline (10). A cue spanning
+  // a non-contiguous cut becomes one cue per contiguous run, with render id `${cue.id}:${n}` for the 2nd and later.
+  const originalCues = displayedCues(project.cues, project.shownTranslation)
+  const originalCueById = new Map(originalCues.map((cue) => [cue.id, cue]))
+  const baseCueId = (id: string) => { const at = id.indexOf(':'); return at === -1 ? id : id.slice(0, at) }
+  const cues = cuesInSequence(originalCues, captionClips(project.tracks, project.clips))
 
   const skipped: TextPlusPlan['skipped'] = []
   const drafts: Draft[] = []
@@ -84,7 +89,8 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
 
   for (const cue of cues) {
     if (!cue.text.trim()) { skipped.push({ cueId: cue.id, reason: 'empty text' }); continue }
-    const resolved = resolvedAppearanceOf(project, cue)
+    const original = originalCueById.get(baseCueId(cue.id)) ?? cue
+    const resolved = resolvedAppearanceOf(project, original)
     resolvedByCueId.set(cue.id, resolved)
     const { style, appearance } = resolved
     if (appearance.gradientEnabled || appearance.emphasisGradientEnabled) anyGradient = true

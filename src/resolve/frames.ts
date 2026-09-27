@@ -33,12 +33,13 @@ function roundRatio(n: bigint, d: bigint): bigint {
 }
 
 /**
- * Cue source µs on the proxy asset -> absolute Resolve timeline record frame (docs/plans/resolve-textplus/README.md,
- * "Time mapping"). `us` can be up to `Number.MAX_SAFE_INTEGER` per `cueSchema`/`wordSchema`, and `us * fps.num` can
- * exceed 2^53 for a long timeline at a high frame rate, so the multiply-then-divide happens in `bigint`, not
- * `number`, per the brief's "integer-safe math" requirement. Each boundary (a cue's start, its end, the next cue's
- * start) is computed independently — never by adding a frame count to a previous frame — so rounding never
- * accumulates.
+ * Sequence µs (the offset from the Resolve timeline's start — the time base `cuesInSequence` maps cues into,
+ * docs/plans/resolve-textplus/10-link-sequence-mapping.md) -> absolute Resolve timeline record frame
+ * (docs/plans/resolve-textplus/README.md, "Time mapping"). `us` can be up to `Number.MAX_SAFE_INTEGER` per
+ * `cueSchema`/`wordSchema`, and `us * fps.num` can exceed 2^53 for a long timeline at a high frame rate, so the
+ * multiply-then-divide happens in `bigint`, not `number`, per the brief's "integer-safe math" requirement. Each
+ * boundary (a cue's start, its end, the next cue's start) is computed independently — never by adding a frame
+ * count to a previous frame — so rounding never accumulates.
  */
 export function usToTimelineFrame(us: number, link: ResolveFrameLink): number {
   if (!Number.isSafeInteger(us) || us < 0) throw new Error(`usToTimelineFrame expects a non-negative safe-integer microsecond timestamp, got ${us}.`)

@@ -1,5 +1,44 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 10: link v26 + sequence-time caption mapping
+
+**Changes:**
+- Schema **26** (`src/core/model.ts`): `resolveLinkSchema` gains `origin: 'proxy' | 'edit' | 'pushed'` and
+  `editSignature` (a hash of the video edit at link time); `proxyAssetId` is now required only for
+  `origin: 'proxy'`, enforced in the project `superRefine`. The old schema-25 shape is kept as
+  `projectSchemaV25`/`resolveLinkSchemaV25` so a v25 project on disk still parses on its way through
+  `loadProject`. New `src/core/migrateV25.ts`: a v25 link gets `origin: 'proxy'` and `editSignature`
+  computed at migration time (25 could only ever produce a proxy link).
+- `src/resolve/editSignature.ts` (new, pure): hashes the project's caption clips (`captionClips`, video
+  clips only — moving an overlay or audio clip doesn't invalidate the link), sorted by track order then
+  `timelineStartUs`.
+- `src/resolve/textPlusPlan.ts` (`planTextPlus`): cues are now placed by **sequence time**
+  (`cuesInSequence` over `captionClips(tracks, clips)`) instead of filtering to `link.proxyAssetId`'s
+  source time, so the same mapping works whatever the link's origin. A cue spanning a non-contiguous cut
+  yields one spec per run (render id `${cue.id}:${n}` for the 2nd and later); style resolution maps a
+  run's id back to the original (un-suffixed) cue before calling `resolveCaptionStyle`. Updated
+  `usToTimelineFrame`'s doc comment (`src/resolve/frames.ts`) to describe its input as sequence µs.
+- `src/resolve/ResolveSync.tsx`: Sync is disabled with "The video edit changed since this project was
+  linked to DaVinci." when the live `editSignature` no longer matches `link.editSignature` (memoised on
+  `project.clips`/`project.tracks`). The second half of that message ("Use Create in DaVinci to make a new
+  timeline") is withheld until brief 12 exists. "The DaVinci proxy video was removed" now applies only to
+  `origin === 'proxy'`.
+- `src/App.tsx` (`createFromResolve`): the link brief 04 creates now writes `origin: 'proxy'` and an
+  `editSignature` computed after the proxy clip is placed on the timeline.
+- Bumped hardcoded `schemaVersion: 25` fixtures to 26 in the dozen unit test files the typecheck flagged
+  (no behavior change; the schemas those tests exercise don't touch `resolveLink`).
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes). Real verification needs
+Resolve; see the manual check in the brief.
+
+**Limitations:** a proxy link's parity with the pre-26 behavior (sequence time == old source time on the
+proxy clip) was checked by reading the code, not by running it. `editSignature`'s exact hash content isn't
+unit-tested (the plan's testing override skips tests for this plan; a unit test for `editSignature` and
+the planner's sequence mapping would be cheap and is worth adding as a follow-up).
+
+**Next:** brief 11 (Resolve → KathaCut: import the timeline edit) and brief 12 (KathaCut → Resolve: Create
+in DaVinci) build on this link shape; 09's findings session should land first if it hasn't already.
+
 ## 2026-09-27 — Resolve Text+ 09: edit spike script (E1-E11)
 
 **Changes:**

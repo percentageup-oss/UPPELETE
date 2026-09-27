@@ -46,6 +46,7 @@ import type { McpStatus } from '../electron/mcp/config'
 import { ResolveStatusPill } from './resolve/ResolveStatusPill'
 import { ResolveSyncControl } from './resolve/ResolveSync'
 import { useResolveStatus } from './resolve/useResolveStatus'
+import { editSignature } from './resolve/editSignature'
 import type { ResolveProxyResult } from './core/resolveIpc'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
@@ -1310,6 +1311,8 @@ export default function App() {
           fps: result.timeline.fps,
           width: result.timeline.width,
           height: result.timeline.height,
+          origin: 'proxy',
+          editSignature: editSignature(current),
           proxyAssetId: proxyAsset.id,
           trackName: 'KathaCut',
           synced: [],

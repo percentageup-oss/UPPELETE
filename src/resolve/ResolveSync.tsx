@@ -5,6 +5,7 @@ import { createDomMeasurer } from '../captions/CaptionPreview'
 import { planTextPlus, type TextPlusPlan } from './textPlusPlan'
 import { countPendingChanges, type SyncDecision } from './syncDiff'
 import { useResolveStatus } from './useResolveStatus'
+import { editSignature } from './editSignature'
 
 type Phase =
   | { kind: 'idle' }
@@ -57,9 +58,12 @@ export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, on
   }, [project])
 
   const pending = useMemo(() => plan ? countPendingChanges(plan.specs, link.synced) : null, [plan, link.synced])
-  const proxyMissing = !project.assets.some((asset) => asset.id === link.proxyAssetId)
+  const currentEditSignature = useMemo(() => editSignature(project), [project.clips, project.tracks])
+  const editChanged = currentEditSignature !== link.editSignature
+  const proxyMissing = link.origin === 'proxy' && !project.assets.some((asset) => asset.id === link.proxyAssetId)
   const disabledReason = !window.captionStudio ? 'Sync to Resolve is available in the desktop app.'
     : proxyMissing ? 'The DaVinci proxy video was removed from this project.'
+    : editChanged ? 'The video edit changed since this project was linked to DaVinci.'
     : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → KathaCut.'
     : liveTimelineId === null ? 'Checking which timeline Resolve has open…'
     : liveTimelineId !== link.timelineId ? `Resolve has a different timeline open. Switch to “${link.timelineName}” in Resolve.`

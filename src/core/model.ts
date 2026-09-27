@@ -30,6 +30,7 @@ import { migrateV21 } from './migrateV21'
 import { migrateV22 } from './migrateV22'
 import { migrateV23 } from './migrateV23'
 import { migrateV24 } from './migrateV24'
+import { migrateV25 } from './migrateV25'
 
 export const wordSchema = z.object({
   id: z.string().min(1),
@@ -1053,9 +1054,10 @@ const resolveSyncedCueSchema = z.strictObject({
   text: z.string().max(4000),
 })
 
-/** Links a project to the DaVinci Resolve timeline its proxy asset (`proxyAssetId`) was rendered from
- * (docs/plans/resolve-textplus/04-project-from-timeline.md). `synced` is filled in by brief 06. */
-export const resolveLinkSchema = z.strictObject({
+/** Schema 25's `resolveLink` shape, frozen so a v25 project on disk still parses as `projectSchemaV25`
+ * after schema 26 added required fields to the current `resolveLinkSchema` below. Every schema-25 link
+ * was made by brief 04 (always a `proxy` link with a `proxyAssetId`), which is what `migrateV25` assumes. */
+const resolveLinkSchemaV25 = z.strictObject({
   projectName: z.string().max(512),
   timelineName: z.string().max(512),
   timelineId: z.string().max(256),
@@ -1067,15 +1069,15 @@ export const resolveLinkSchema = z.strictObject({
   trackName: z.string().max(64).default('KathaCut'),
   synced: z.array(resolveSyncedCueSchema).max(20000).default([]),
 })
-export type ResolveLink = z.infer<typeof resolveLinkSchema>
 
 /** Schema 25 adds an optional DaVinci Resolve link: a project created from a Resolve timeline (04)
  * records which timeline it came from, so a later Sync (06) knows where captions go. Absent for every
- * project not made this way; the migration from 24 only moves the version. */
-export const projectSchema = z.object({
+ * project not made this way; the migration from 24 only moves the version. Kept (not the current
+ * `projectSchema`) so a v25 project on disk still parses on its way through `loadProject`. */
+export const projectSchemaV25 = z.object({
   ...projectSchemaV24.shape,
   schemaVersion: z.literal(25),
-  resolveLink: resolveLinkSchema.optional(),
+  resolveLink: resolveLinkSchemaV25.optional(),
 }).superRefine((project, context) => {
   const { resolveLink, ...rest } = project
   const old = projectSchemaV24.safeParse({ ...rest, schemaVersion: 24 })
@@ -1085,9 +1087,56 @@ export const projectSchema = z.object({
   }
 })
 
+/** Links a project to a DaVinci Resolve timeline (docs/plans/resolve-textplus/10-link-sequence-mapping.md).
+ * `origin` is how the link was made: `proxy` (04, a rendered proxy on V1 at sequence 0), `edit` (11, rebuilt
+ * from Resolve's cuts) or `pushed` (12, a timeline created from KathaCut). Only `proxy` has a `proxyAssetId`;
+ * captions are placed by **sequence time** for every origin, not by time on a single proxy asset. `editSignature`
+ * is a hash of the video edit at link time (`editSignature.ts`); Sync is disabled when it no longer matches, so a
+ * cut change in KathaCut after linking never silently desyncs the Text+ clips. `synced` is filled in by brief 06. */
+export const resolveLinkSchema = z.strictObject({
+  projectName: z.string().max(512),
+  timelineName: z.string().max(512),
+  timelineId: z.string().max(256),
+  startFrame: z.number().int().nonnegative(),
+  fps: z.strictObject({ num: z.number().int().min(1).max(1_000_000), den: z.number().int().min(1).max(1_000_000) }),
+  width: z.number().int().min(1).max(16384),
+  height: z.number().int().min(1).max(16384),
+  origin: z.enum(['proxy', 'edit', 'pushed']),
+  editSignature: z.string().max(64),
+  proxyAssetId: z.string().min(1).max(128).optional(),
+  trackName: z.string().max(64).default('KathaCut'),
+  synced: z.array(resolveSyncedCueSchema).max(20000).default([]),
+})
+export type ResolveLink = z.infer<typeof resolveLinkSchema>
+
+/** Schema 26 maps captions to Resolve by **sequence time** (KathaCut's timeline), not by time on a single
+ * proxy asset, so the same link mechanism works for a proxy render (04), an imported edit (11) or a pushed
+ * timeline (12). `origin === 'proxy'` still requires a `proxyAssetId` pointing at a video asset; the other
+ * origins must not have one, since they aren't tied to one rendered clip. The migration from 25 sets
+ * `origin: 'proxy'` (the only origin schema 25 could produce) and computes `editSignature` at migration
+ * time, so an already-synced proxy-linked project sees no pending changes right after upgrading. */
+export const projectSchema = z.object({
+  ...projectSchemaV25.shape,
+  schemaVersion: z.literal(26),
+  resolveLink: resolveLinkSchema.optional(),
+}).superRefine((project, context) => {
+  const { resolveLink, ...rest } = project
+  const old = projectSchemaV25.safeParse({ ...rest, schemaVersion: 25 })
+  if (!old.success) for (const issue of old.error.issues) context.addIssue({ code: 'custom', path: issue.path, message: issue.message })
+  if (!resolveLink) return
+  if (resolveLink.origin === 'proxy') {
+    if (!resolveLink.proxyAssetId || !project.assets.some((asset) => asset.id === resolveLink.proxyAssetId && asset.kind === 'video')) {
+      context.addIssue({ code: 'custom', path: ['resolveLink', 'proxyAssetId'], message: 'resolveLink.proxyAssetId must reference a video asset in assets when origin is "proxy".' })
+    }
+  } else if (resolveLink.proxyAssetId !== undefined) {
+    context.addIssue({ code: 'custom', path: ['resolveLink', 'proxyAssetId'], message: `resolveLink.proxyAssetId must be absent when origin is "${resolveLink.origin}".` })
+  }
+})
+
 export type Cue = z.infer<typeof cueSchema>
 export type CaptionWord = z.infer<typeof wordSchema>
 export type CaptionProject = z.infer<typeof projectSchema>
+export type CaptionProjectV25 = z.infer<typeof projectSchemaV25>
 export type CaptionProjectV24 = z.infer<typeof projectSchemaV24>
 export type CaptionProjectV23 = z.infer<typeof projectSchemaV23>
 export type CaptionProjectV22 = z.infer<typeof projectSchemaV22>
@@ -1127,7 +1176,7 @@ const legacyProjectSchema = z.object({
 
 export type ProjectLoadResult = {
   project: CaptionProject
-  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | null
+  migratedFrom: 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | null
   /** What the 4 → 5 migration could not carry over exactly, surfaced as a notice (never silent loss). */
   migrationNotes: MigrationNote[]
 }
@@ -1265,7 +1314,9 @@ const toV24FromV23 = (project: CaptionProjectV23): CaptionProjectV24 => projectS
 const toV24FromV22 = (project: CaptionProjectV22): CaptionProjectV24 => toV24FromV23(toV23FromV22(project))
 const toV24FromV20 = (project: CaptionProjectV20): CaptionProjectV24 => toV24FromV22(toV22FromV21(toV21FromV20(project)))
 /** Schema 24 → 25: an optional DaVinci Resolve link, absent unless a later command sets it. */
-const toV25FromV24 = (project: CaptionProjectV24): CaptionProject => projectSchema.parse(migrateV24(project).project)
+const toV25FromV24 = (project: CaptionProjectV24): CaptionProjectV25 => projectSchemaV25.parse(migrateV24(project).project)
+/** Schema 25 → 26: the link's `origin` and `editSignature` (docs/plans/resolve-textplus/10-link-sequence-mapping.md). */
+const toV26FromV25 = (project: CaptionProjectV25): CaptionProject => projectSchema.parse(migrateV25(project).project)
 const toV20FromV18 = (project: CaptionProjectV18): CaptionProjectV20 => toV20FromV19(toV19FromV18(project))
 const toV20FromV17 = (project: CaptionProjectV17): CaptionProjectV20 => toV20FromV18(toV18FromV17(project))
 const toV20FromV16 = (project: CaptionProjectV16): CaptionProjectV20 => toV20FromV17(toV17FromV16(project))
@@ -1277,48 +1328,50 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (current.success) return { project: current.data, migratedFrom: null, migrationNotes: [] }
   const from = (migratedFrom: 1 | 2 | 3 | 4, v4: CaptionProjectV4): ProjectLoadResult => {
     const { project, notes } = toV9(v4, newId)
-    return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project)))))))), migratedFrom, migrationNotes: notes }
+    return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(project))))))))), migratedFrom, migrationNotes: notes }
   }
+  const v25 = projectSchemaV25.safeParse(value)
+  if (v25.success) return { project: toV26FromV25(v25.data), migratedFrom: 25, migrationNotes: [] }
   const v24 = projectSchemaV24.safeParse(value)
-  if (v24.success) return { project: toV25FromV24(v24.data), migratedFrom: 24, migrationNotes: [] }
+  if (v24.success) return { project: toV26FromV25(toV25FromV24(v24.data)), migratedFrom: 24, migrationNotes: [] }
   const v23 = projectSchemaV23.safeParse(value)
-  if (v23.success) return { project: toV25FromV24(toV24FromV23(v23.data)), migratedFrom: 23, migrationNotes: [] }
+  if (v23.success) return { project: toV26FromV25(toV25FromV24(toV24FromV23(v23.data))), migratedFrom: 23, migrationNotes: [] }
   const v22 = projectSchemaV22.safeParse(value)
-  if (v22.success) return { project: toV25FromV24(toV24FromV22(v22.data)), migratedFrom: 22, migrationNotes: [] }
+  if (v22.success) return { project: toV26FromV25(toV25FromV24(toV24FromV22(v22.data))), migratedFrom: 22, migrationNotes: [] }
   const v21 = projectSchemaV21.safeParse(value)
-  if (v21.success) return { project: toV25FromV24(toV24FromV22(toV22FromV21(v21.data))), migratedFrom: 21, migrationNotes: [] }
+  if (v21.success) return { project: toV26FromV25(toV25FromV24(toV24FromV22(toV22FromV21(v21.data)))), migratedFrom: 21, migrationNotes: [] }
   const v20 = projectSchemaV20.safeParse(value)
-  if (v20.success) return { project: toV25FromV24(toV24FromV20(v20.data)), migratedFrom: 20, migrationNotes: [] }
+  if (v20.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(v20.data))), migratedFrom: 20, migrationNotes: [] }
   const v19 = projectSchemaV19.safeParse(value)
-  if (v19.success) return { project: toV25FromV24(toV24FromV20(toV20FromV19(v19.data))), migratedFrom: 19, migrationNotes: [] }
+  if (v19.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV19(v19.data)))), migratedFrom: 19, migrationNotes: [] }
   const v18 = projectSchemaV18.safeParse(value)
-  if (v18.success) return { project: toV25FromV24(toV24FromV20(toV20FromV18(v18.data))), migratedFrom: 18, migrationNotes: [] }
+  if (v18.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV18(v18.data)))), migratedFrom: 18, migrationNotes: [] }
   const v17 = projectSchemaV17.safeParse(value)
-  if (v17.success) return { project: toV25FromV24(toV24FromV20(toV20FromV17(v17.data))), migratedFrom: 17, migrationNotes: [] }
+  if (v17.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV17(v17.data)))), migratedFrom: 17, migrationNotes: [] }
   const v16 = projectSchemaV16.safeParse(value)
-  if (v16.success) return { project: toV25FromV24(toV24FromV20(toV20FromV16(v16.data))), migratedFrom: 16, migrationNotes: [] }
+  if (v16.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV16(v16.data)))), migratedFrom: 16, migrationNotes: [] }
   const v15 = projectSchemaV15.safeParse(value)
-  if (v15.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(v15.data))), migratedFrom: 15, migrationNotes: [] }
+  if (v15.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(v15.data)))), migratedFrom: 15, migrationNotes: [] }
   const v14 = projectSchemaV14.safeParse(value)
-  if (v14.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV14(v14.data)))), migratedFrom: 14, migrationNotes: [] }
+  if (v14.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV14(v14.data))))), migratedFrom: 14, migrationNotes: [] }
   const v13 = projectSchemaV13.safeParse(value)
-  if (v13.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(v13.data)))), migratedFrom: 13, migrationNotes: [] }
+  if (v13.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(v13.data))))), migratedFrom: 13, migrationNotes: [] }
   const v12 = projectSchemaV12.safeParse(value)
-  if (v12.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(v12.data))))), migratedFrom: 12, migrationNotes: [] }
+  if (v12.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(v12.data)))))), migratedFrom: 12, migrationNotes: [] }
   const v11 = projectSchemaV11.safeParse(value)
-  if (v11.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data)))))), migratedFrom: 11, migrationNotes: [] }
+  if (v11.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(v11.data))))))), migratedFrom: 11, migrationNotes: [] }
   const v10 = projectSchemaV10.safeParse(value)
-  if (v10.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data))))))), migratedFrom: 10, migrationNotes: [] }
+  if (v10.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(v10.data)))))))), migratedFrom: 10, migrationNotes: [] }
   const v9 = projectSchemaV9.safeParse(value)
-  if (v9.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data)))))))), migratedFrom: 9, migrationNotes: [] }
+  if (v9.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(v9.data))))))))), migratedFrom: 9, migrationNotes: [] }
   const v8 = projectSchemaV8.safeParse(value)
-  if (v8.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data))))))))), migratedFrom: 8, migrationNotes: [] }
+  if (v8.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(v8.data)))))))))), migratedFrom: 8, migrationNotes: [] }
   const v7 = projectSchemaV7.safeParse(value)
-  if (v7.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data)))))))))), migratedFrom: 7, migrationNotes: [] }
+  if (v7.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(v7.data))))))))))), migratedFrom: 7, migrationNotes: [] }
   const v6 = projectSchemaV6.safeParse(value)
-  if (v6.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data))))))))))), migratedFrom: 6, migrationNotes: [] }
+  if (v6.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(v6.data)))))))))))), migratedFrom: 6, migrationNotes: [] }
   const v5 = projectSchemaV5.safeParse(value)
-  if (v5.success) return { project: toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId)))))))))))), migratedFrom: 5, migrationNotes: [] }
+  if (v5.success) return { project: toV26FromV25(toV25FromV24(toV24FromV20(toV20FromV15(toV15FromV13(toV13FromV12(toV12FromV11(toV11FromV10(toV10FromV9(toV9FromV8(toV8FromV7(toV7FromV6(toV6FromV5(v5.data, newId))))))))))))), migratedFrom: 5, migrationNotes: [] }
   const v4 = projectSchemaV4.safeParse(value)
   if (v4.success) return from(4, v4.data)
   const v3 = projectSchemaV3.safeParse(value)
@@ -1327,7 +1380,8 @@ export function loadProject(value: unknown, newId: () => string = () => crypto.r
   if (v2.success) return from(2, migrateV3(migrateV2(v2.data), newId))
   // A file that claims the current (or a previous, still-named) schema but fails it reports
   // *that* failure, not schema 1's.
-  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 25) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 26) projectSchema.parse(value)
+  if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 25) projectSchemaV25.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 24) projectSchemaV24.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 23) projectSchemaV23.parse(value)
   if (typeof value === 'object' && value !== null && (value as { schemaVersion?: unknown }).schemaVersion === 22) projectSchemaV22.parse(value)
@@ -1382,7 +1436,7 @@ export function defaultCaptionTracks(newId: () => string = () => crypto.randomUU
 export function createProject(): CaptionProject {
   const now = new Date().toISOString()
   return {
-    schemaVersion: 25,
+    schemaVersion: 26,
     id: crypto.randomUUID(),
     title: 'Untitled project',
     cues: [],
