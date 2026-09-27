@@ -186,10 +186,22 @@ Not run (`RUN_RENDER` was left `false`). No format/codec/timing data exists yet.
 
 ## Open items before later briefs proceed
 
-- **Template bin pending** (T5 found none). The user will create the `KathaCut` Media Pool bin with a Text+
-  clip and export it as `resources/resolve/kathacut-captions.drb` in a follow-up run; brief 06 needs it
-  before it starts. Recorded as pending in `docs/STATUS.md`.
-- Re-run the spike once the template exists, with Resolve on the Edit/Color page for T14, and with a
+- ~~Template bin pending~~ **Done (2026-09-27):** `resources/resolve/kathacut-captions.drb`, with bin
+  `KathaCut` holding the Text+ item **`Fusion Title`** (an `Sm2MpGenerator` in the bin XML) and an unused
+  `Timeline 1`. Exported via right-click on the bin **in the Media Pool's bin-list sidebar** → Export Bin. The
+  clip area's context menu has only Import Bin.
+- Re-run the spike: now folded into **brief 09** (`09-edit-spike.md`, tests E7–E11), together with the timeline
+  edit read/write tests. Re-run the spike once the template exists, with Resolve on the Edit/Color page for T14, and with a
   hand-styled second clip on video track 2 for T11, to fill in: size calibration, `Center` Y-axis direction,
   the `HorizontalJustificationNew` enum mapping, T13 bulk-append timing, Character Level Styling format, and
   a confirmed write-on keyframe readback.
+
+## Addendum (2026-09-27): launcher globals
+
+The first real run of the bridge (brief 03's launcher, `dofile(bridge.lua)`) failed with `attempt to index
+global 'KATHACUT' (a nil value)`. **A Resolve menu script's globals are not visible to a file it loads.**
+`dofile` did not see them, and neither did `loadfile` + `setfenv(chunk, getfenv(1))`. `Resolve` and `bmd` are
+affected the same way. The fix, `e413a6d`: the generated launcher keeps its config in a **local** and calls
+`loadfile(bridge.lua)(KATHACUT, Resolve, bmd)`, and `bridge.lua` reads them from `...`. Any future script
+loaded from a menu script must take what it needs as arguments. With that fix the bridge connected in Resolve
+Studio 21.0.0.47 on Windows.

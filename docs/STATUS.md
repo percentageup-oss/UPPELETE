@@ -1,5 +1,26 @@
 # Status
 
+## 2026-09-27 — Resolve bridge: first real connection + two-way plan
+
+**Changes:**
+- **Launcher fix** (`90c4374`, `e413a6d`). `electron/resolve/install.ts` now generates a launcher that keeps its
+  config local and calls `loadfile(bridge.lua)(KATHACUT, Resolve, bmd)`. `resources/resolve/bridge.lua` reads
+  those from its arguments and falls back to globals. The old `dofile` launcher failed on first real use because
+  a Resolve menu script's globals aren't visible to the file it loads (ADR 0008 addendum). The installed launcher
+  on this machine was rewritten in place.
+- **New briefs** in `docs/plans/resolve-textplus/`:
+  - 09: spike 2, covering edit read/write plus the open Text+ items;
+  - 10: link v26 and sequence-time caption mapping;
+  - 11: Resolve → KathaCut, import the timeline edit (render becomes the fallback);
+  - 12: KathaCut → Resolve, Create in DaVinci (video and captions).
+  The README order is now 09 → 10 → 11 → 12 → 07 → 08.
+
+**Verification:** the user confirmed the pill shows Connected in Resolve Studio 21.0.0.47 on Windows. Brief 04
+(render) and brief 06 (sync) are still untested in Resolve.
+
+**Next:** the user runs brief 06's manual check. Then brief 09 (a session writes the spike, the user runs it),
+with brief 10 in parallel.
+
 ## 2026-09-27 — Resolve Text+ 06: Sync to Resolve (incremental, conflicts)
 
 **Changes:**
