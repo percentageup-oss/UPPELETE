@@ -27,12 +27,8 @@ export const LUA_INPUT_WHITELIST: readonly string[] = Object.values(TEXT_PLUS_IN
  * KathaCut px (1080-composition-wide units, `captionAppearanceSchema.fontSize` after `captionStyleInputs`'
  * viewport scale) -> Text+'s `Size`.
  *
- * **UNVERIFIED** (ADR 0008, "Size calibration"): the spike's still-frame export came back blank, so no pixel
- * measurement of a known `Size` value exists, and which axis `Size` scales against (frame width or height) was
- * never confirmed either. This assumes the common Fusion normalized-coordinate convention — `Size` as a fraction
- * of the composition's own height — scaled from KathaCut's 1080-wide reference to the real timeline pixel size.
- * Treat the result as a placeholder only; re-derive once a follow-up spike measures an actual rendered frame
- * (see the ADR's "Open items before later briefs proceed").
+ * `Size` is the em size as a fraction of the frame height (ADR 0009, E8: `Size = 0.08` gave a 0.0583 h cap
+ * height with Open Sans, i.e. a 0.0817 h em). Measured on one 16:9 still only; portrait is unmeasured.
  */
 export function textPlusSize(px: number, compositionWidth: number, timelineWidth: number, timelineHeight: number): number {
   const outputPx = px * (timelineWidth / compositionWidth)
@@ -42,11 +38,7 @@ export function textPlusSize(px: number, compositionWidth: number, timelineWidth
 /**
  * KathaCut's `horizontal`/`vertical` position fractions (0..1, y-down: 0 = top, 1 = bottom,
  * `captionAppearanceSchema`) -> Text+'s `Center` point.
- *
- * **UNVERIFIED** (ADR 0008, "Placement"): "Y-axis direction (up vs. down) is unconfirmed — the still that would
- * show the resulting position came back blank... treat the README's 'y up' claim as unverified." This flips
- * vertical accordingly (`1 - vFraction`); confirm against a real rendered frame before trusting captions land in
- * the right place and aren't vertically mirrored.
+ * `Center` y points up (ADR 0009, E8: y = 0.2 rendered 0.8 of the way down), hence `1 - vFraction`.
  */
 export function centerFor(hFraction: number, vFraction: number): { x: number; y: number } {
   return { x: hFraction, y: 1 - vFraction }
@@ -65,11 +57,8 @@ export function colorToRgba01(css: string): { r: number; g: number; b: number; a
 }
 
 /**
- * **UNVERIFIED** (ADR 0008, "Text+ input IDs"): `HorizontalJustificationNew`'s input ID is confirmed present,
- * but "the enum mapping (which number = left/center/right) is unconfirmed — needs an explicit per-value test with
- * a visual check before Brief 05 encodes it." This is a placeholder guess (0 = left, 1 = center, 2 = right), kept
- * so 06 has something to send; every caption's alignment needs a visual re-check once a real spike confirms the
- * actual enum.
+ * **UNVERIFIED** placeholder (0 = left, 1 = center, 2 = right). ADR 0009, E8: values 0/1/2 render a single line
+ * identically (centred on `Center`); the mapping only matters for multi-line text and is still unmeasured.
  */
 export function horizontalJustificationFor(alignment: CaptionAlignment): number {
   return { left: 0, center: 1, right: 2 }[alignment]

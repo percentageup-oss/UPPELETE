@@ -196,6 +196,11 @@ Not run (`RUN_RENDER` was left `false`). No format/codec/timing data exists yet.
   the `HorizontalJustificationNew` enum mapping, T13 bulk-append timing, Character Level Styling format, and
   a confirmed write-on keyframe readback.
 
+**Update (2026-09-27, edit spike, ADR 0009):** bulk timing measured (`INSERT_BATCH` → 50); `Center` y is
+**up** (confirmed); `Size` = em size ÷ frame height (confirmed on one 16:9 still); write-on keyframes on `End`
+read back correctly. Still open: the `HorizontalJustificationNew` enum (a single line doesn't move), the CLS
+format, and tag persistence across a project reopen. Details in `0009-resolve-edit-roundtrip.md`.
+
 ## Addendum (2026-09-27): launcher globals
 
 The first real run of the bridge (brief 03's launcher, `dofile(bridge.lua)`) failed with `attempt to index

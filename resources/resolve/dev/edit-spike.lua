@@ -189,12 +189,12 @@ local function findFolderNamed(folder, name, depth)
     return nil
   end
   local subs = folder:GetSubFolderList() or {}
-  for _, sub in pairs(subs) do
+  for _, sub in ipairs(subs) do
     if sub:GetName() == name then
       return sub
     end
   end
-  for _, sub in pairs(subs) do
+  for _, sub in ipairs(subs) do
     local found = findFolderNamed(sub, name, depth + 1)
     if found then
       return found

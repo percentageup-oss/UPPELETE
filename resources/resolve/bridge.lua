@@ -126,10 +126,18 @@ handlers["ping"] = function()
   return { pong = true, version = BRIDGE_VERSION }
 end
 
-handlers["timelineInfo"] = function()
-  local project = currentProject()
-  local timeline = project and project:GetCurrentTimeline()
-  if not timeline then error("No timeline is open in Resolve") end
+-- A timeline with custom settings has its own resolution; the project setting is only the default (ADR 0009).
+local function timelineResolution(project, timeline)
+  local function read(key)
+    local ok, value = pcall(function() return timeline:GetSetting(key) end)
+    if ok and tonumber(value) and tonumber(value) > 0 then return tostring(value) end
+    return project:GetSetting(key)
+  end
+  return read("timelineResolutionWidth"), read("timelineResolutionHeight")
+end
+
+local function timelineInfoOf(project, timeline)
+  local width, height = timelineResolution(project, timeline)
   return {
     projectName = project:GetName(),
     timelineName = timeline:GetName(),
@@ -140,9 +148,16 @@ handlers["timelineInfo"] = function()
     -- (ADR 0008), but callers need a stable JSON type regardless.
     frameRate = tostring(timeline:GetSetting("timelineFrameRate")),
     dropFrame = timeline:GetSetting("timelineDropFrameTimecode"),
-    width = project:GetSetting("timelineResolutionWidth"),
-    height = project:GetSetting("timelineResolutionHeight"),
+    width = width,
+    height = height,
   }
+end
+
+handlers["timelineInfo"] = function()
+  local project = currentProject()
+  local timeline = project and project:GetCurrentTimeline()
+  if not timeline then error("No timeline is open in Resolve") end
+  return timelineInfoOf(project, timeline)
 end
 
 handlers["disconnect"] = function()
@@ -177,8 +192,9 @@ handlers["renderProxyStart"] = function(params)
   local prevFormat, prevCodec = project:GetCurrentRenderFormatAndCodec()
 
   -- Resolution comes back as a string on Windows Studio 21.0 (ADR 0008); coerce defensively.
-  local timelineWidth = tonumber(project:GetSetting("timelineResolutionWidth"))
-  local timelineHeight = tonumber(project:GetSetting("timelineResolutionHeight"))
+  local rawWidth, rawHeight = timelineResolution(project, timeline)
+  local timelineWidth = tonumber(rawWidth)
+  local timelineHeight = tonumber(rawHeight)
   if not timelineWidth or not timelineHeight or timelineWidth <= 0 or timelineHeight <= 0 then
     error("Could not read the timeline's resolution")
   end
@@ -273,10 +289,11 @@ end
 local function findFolderNamed(folder, name, depth)
   if depth > 4 then return nil end
   local subs = folder:GetSubFolderList() or {}
-  for _, sub in pairs(subs) do
+  -- ipairs: Resolve's list tables can carry a non-object numeric entry that pairs would visit.
+  for _, sub in ipairs(subs) do
     if sub:GetName() == name then return sub end
   end
-  for _, sub in pairs(subs) do
+  for _, sub in ipairs(subs) do
     local found = findFolderNamed(sub, name, depth + 1)
     if found then return found end
   end
@@ -286,7 +303,7 @@ end
 local function findTemplate(mediaPool, clipName)
   local folder = findFolderNamed(mediaPool:GetRootFolder(), TEMPLATE_FOLDER, 0)
   if not folder then return nil end
-  for _, clip in pairs(folder:GetClipList() or {}) do
+  for _, clip in ipairs(folder:GetClipList() or {}) do
     if clip:GetName() == clipName then return clip end
   end
   return nil

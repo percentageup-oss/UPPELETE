@@ -1,0 +1,31 @@
+INFO SETUP current timeline at start: Timeline 1
+INFO E1 track=video:1 item=1 name=Compound Clip 1 start=86400 end=88420 duration=2020 leftOffset=0 rightOffset=0 sourceStartFrame=0 sourceEndFrame=2019 sourceStartTime=0 mediaPoolItemNil=false filePath= fps=24 startTC=00:00:00:00 frames=2020 type=Compound videoCodec= resolution=1920x1080 clipDuration=00:01:24:04 fusionCompCount=0 clipColor= speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0, RetimeProcess=0}
+INFO E1-property-dump-first-item {Tilt=0, ZoomX=1, ZoomY=1, ZoomGang=true, RotationAngle=0, AnchorPointX=0, AnchorPointY=0, Pitch=0, Yaw=0, FlipX=false, FlipY=false, CropLeft=0, CropRight=0, CropTop=0, CropBottom=0, CropSoftness=0, CropRetain=false, DynamicZoomEase=0, CompositeMode=0, Opacity=100, Distortion=0, RetimeProcess=0, MotionEstimation=0, Scaling=0, ResizeFilter=0, Pan=0}
+INFO E2 track=video:1 item=1 guessedKind=compound rawType=Compound hasFile=false hasFusion=false speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0, RetimeProcess=0}
+INFO E1 track=video:1 item=2 name=captions-short-captions.mp4 start=88420 end=91452 duration=3032 leftOffset=0 rightOffset=0 sourceStartFrame=0 sourceEndFrame=3790 sourceStartTime=0 mediaPoolItemNil=false filePath=C:\Users\sadiq\Desktop\Content Creation\Shorts-2\127. captions\captions-short-captions.mp4 fps=30 startTC=00:00:00:00 frames=3791 type=Video + Audio videoCodec=H.264 Baseline L5.0 resolution=1440x2560 clipDuration=00:02:06:11 fusionCompCount=0 clipColor= speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0, RetimeProcess=0}
+INFO E2 track=video:1 item=2 guessedKind=plain-file rawType=Video + Audio hasFile=true hasFusion=false speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0, RetimeProcess=0}
+INFO E1 track=video:2 item=1 name=Text+ start=86712 end=86838 duration=126 leftOffset=0 rightOffset=-6 sourceStartFrame=nil sourceEndFrame=nil sourceStartTime=0 mediaPoolItemNil=true filePath=missing fps=missing startTC=missing frames=missing type=missing videoCodec=missing resolution=missing clipDuration=missing fusionCompCount=1 clipColor= speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0}
+INFO E2 track=video:2 item=1 guessedKind=title/generator rawType=missing hasFile=false hasFusion=true speedRetimeZoomProps={ZoomX=1, ZoomY=1, ZoomGang=true, DynamicZoomEase=0}
+INFO E1 track=audio:1 item=1 name=Compound Clip 1 start=86400 end=88420 duration=2020 leftOffset=0 rightOffset=0 sourceStartFrame=0 sourceEndFrame=2019 sourceStartTime=0 mediaPoolItemNil=false filePath= fps=24 startTC=00:00:00:00 frames=2020 type=Compound videoCodec= resolution=1920x1080 clipDuration=00:01:24:04 fusionCompCount=0 clipColor= speedRetimeZoomProps={}
+INFO E2 track=audio:1 item=1 guessedKind=compound rawType=Compound hasFile=false hasFusion=false speedRetimeZoomProps={}
+INFO E1 track=audio:1 item=2 name=captions-short-captions.mp4 start=88420 end=91452 duration=3032 leftOffset=0 rightOffset=0 sourceStartFrame=0 sourceEndFrame=3790 sourceStartTime=0 mediaPoolItemNil=false filePath=C:\Users\sadiq\Desktop\Content Creation\Shorts-2\127. captions\captions-short-captions.mp4 fps=30 startTC=00:00:00:00 frames=3791 type=Video + Audio videoCodec=H.264 Baseline L5.0 resolution=1440x2560 clipDuration=00:02:06:11 fusionCompCount=0 clipColor= speedRetimeZoomProps={}
+INFO E2 track=audio:1 item=2 guessedKind=plain-file rawType=Video + Audio hasFile=true hasFusion=false speedRetimeZoomProps={}
+PASS E1-E2 described 5 items across 2 video and 1 audio tracks
+INFO E3 sourceStartFrame=0 startTC=00:00:00:00 fps=30 framesFromStartTC(non-drop-approx)=0 note=if sourceStartFrame matches framesFromStartTC, source frames count from the file's Start TC; if sourceStartFrame is near 0 instead, source frames count from the file's first frame
+PASS E4 name=KathaCut edit spike 1790519125 useCustomSettings(ok=true ret=true) frameRate(ok=true ret=true read=25) width(ok=true ret=true read=1920) height(ok=true ret=true read=1080)
+INFO E5-import1 count=1 paths=C:\Users\sadiq\Desktop\Content Creation\Shorts-2\127. captions\captions-short-captions.mp4
+INFO E5-import2 count=1 sameCountAsFirstImport=true duplicateMade=false
+INFO E5-find-existing method=search bin:GetClipList() for a clip whose 'File Path' equals the imported path; found=true
+PASS E6-video placedCount=2 requestedRecordFrames=90000,90050 requestedTrackIndex=1 item1 start=90000 end=90040(inclusive-check: end-start+1=41 vs requested 50 frames) sourceStart=9 sourceEnd=57 | item2 start=90050 end=90090(inclusive-check: end-start+1=41 vs requested 50 frames) sourceStart=100 sourceEnd=148
+INFO E6-audio 
+INFO E6-source-fps sourceFps=30 timelineFps=25 note=compare the source start/end frames above against requested startFrame=10/100 endFrame=59/149 to see whether AppendToTimeline's startFrame/endFrame are in the source's own fps or the timeline's
+PASS E7 trackIndex=2 appended=20 placeClockSeconds=0.381 placeWallSeconds=0; styled=20 styleClockSeconds=0.241 styleWallSeconds=0
+Switch to the Edit page now.
+INFO E8-justification-0 path=C:\Users\sadiq\AppData\Local\Temp\kathacut-edit-spike-still-j0.png fps=25/1 dropFrame=false timecode=01:00:00:00 exportOk=true result=true
+INFO E8-justification-1 path=C:\Users\sadiq\AppData\Local\Temp\kathacut-edit-spike-still-j1.png fps=25/1 dropFrame=false timecode=01:00:00:00 exportOk=true result=true
+INFO E8-justification-2 path=C:\Users\sadiq\AppData\Local\Temp\kathacut-edit-spike-still-j2.png fps=25/1 dropFrame=false timecode=01:00:00:00 exportOk=true result=true
+PASS E9 setOk=true setErr=nil readback@frame12=0.5
+INFO E10 skipped: no video-track-2 clip with 'CLS' in its name or text (see SPIKE2.md Prepare step)
+INFO E11 tagged clipUid=96486842-97d6-4a42-98c0-358be23d4988 with KathaCut.key=persist-test setOk=true setErr=nil; now save the project, close it, reopen it, set MODE="check" at the top of this script and run again
+INFO CLEANUP restored original timeline: true
+Done, report at C:\Users\sadiq\AppData\Local\Temp\kathacut-edit-spike.txt

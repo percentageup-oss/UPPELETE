@@ -1,5 +1,36 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 09 findings: ADR 0009 (edit spike results)
+
+**Changes:**
+- `docs/decisions/0009-resolve-edit-roundtrip.md` (new) from two user runs of `edit-spike.lua` (Resolve Studio
+  21.0.0.47, Windows); run 2's report is `docs/decisions/evidence/resolve-edit-spike-2026-09-27.txt`. Settled:
+  `GetEnd()` is exclusive; source frames count from the file's first frame (not its Start TC) and use the
+  file's own fps; `GetSourceEndFrame` is only ±1 frame accurate; titles have no media pool item; compound clips
+  report `Type = Compound`; there is no speed property; `AppendToTimeline` source frames are in source fps;
+  re-importing a path doesn't duplicate it; `Center` y is up; `Size` = em ÷ frame height; write-on keyframes on
+  `End` read back.
+- `docs/decisions/0008-resolve-textplus.md`: open items updated with the above.
+- `resources/resolve/bridge.lua`: `findFolderNamed`/`findTemplate` iterate with `ipairs` (the same `pairs` loop
+  crashed the spike's E5 with "attempt to index local 'sub' (a number value)", so Sync's template lookup could
+  have failed in any project with bins). `timelineInfo` and `renderProxyStart` read resolution from the
+  **timeline** first (E4: the project setting returned 1920×1080 for a 1280×720 custom timeline).
+  `resources/resolve/dev/edit-spike.lua`: same `ipairs` fix.
+- `electron/resolve/sync.ts`: `INSERT_BATCH` 20 → 50 (100 clips placed + styled in ~1.3 s).
+- `src/resolve/textPlusInputs.ts`: `textPlusSize` and `centerFor` comments now cite the measurement (formulas
+  unchanged; they already matched). `horizontalJustificationFor` stays a placeholder: 0/1/2 render one line
+  identically.
+
+**Verification:** typecheck only (`npx tsc --noEmit -p .` passes). The facts come from the user's runs; the
+bridge changes are untested in Resolve.
+
+**Limitations:** no trimmed clip from a real edit and no retimed clip were in either test timeline, so
+brief 11's retime rule is a guess (source span vs. record span). CLS (E10) and tag persistence (E11) have no
+data; the justification enum and portrait `Size` are unmeasured; audio placement in `AppendToTimeline` is
+unconfirmed.
+
+**Next:** brief 11 (import the timeline edit).
+
 ## 2026-09-27 — Resolve Text+ 10: link v26 + sequence-time caption mapping
 
 **Changes:**

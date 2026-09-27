@@ -16,9 +16,8 @@ import { bridgeResourcesDir } from './install'
 const TEMPLATE_CLIP_NAME = 'Fusion Title'
 const templatePath = () => path.join(bridgeResourcesDir(), 'kathacut-captions.drb')
 
-/** ADR 0008 has no measured bulk-append time (T13 never ran), so batches are kept small to stay near the
- * mailbox's ~2 s per command target. Unmeasured: tune once a real sync is timed. */
-const INSERT_BATCH = 20
+/** ADR 0009: 100 Text+ clips placed + styled in ~1.3 s, so 50 stays well inside the ~2 s per-command target. */
+const INSERT_BATCH = 50
 const UPDATE_BATCH = 20
 const DELETE_BATCH = 50
 const COMMAND_TIMEOUT_MS = 30_000
