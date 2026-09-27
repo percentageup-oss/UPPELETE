@@ -613,6 +613,22 @@ handlers["readTimelineEdit"] = function(params)
   return { timeline = timelineInfoOf(project, timeline), items = items, audioItems = audioItems, truncated = truncated }
 end
 
+-- ---------------------------------------------------------------------------
+-- Unpack compound clips (14): the scripting API has no way to open a compound directly, so its inner edit is
+-- read from the timeline's own OTIO export (ADR 0010's exact call). The bridge picks the path, under the
+-- mailbox dir, so a request can never make Lua write somewhere else; KathaCut reads and deletes the file.
+-- ---------------------------------------------------------------------------
+
+handlers["exportTimelineOtio"] = function(params)
+  local _, timeline = requireTimeline(params)
+  local exportPath = joinPath(mailboxDir, "timeline-export.otio")
+  os.remove(exportPath)
+  if not timeline:Export(exportPath, resolve.EXPORT_OTIO, resolve.EXPORT_NONE) then
+    error("Resolve could not export the timeline to OTIO")
+  end
+  return { path = exportPath }
+end
+
 handlers["jumpTo"] = function(params)
   local _, timeline = requireTimeline(params)
   if not timeline:SetCurrentTimecode(params.timecode) then error("Resolve could not move the playhead") end

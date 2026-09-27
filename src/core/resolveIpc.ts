@@ -327,6 +327,39 @@ export type ResolveImportEditProgress = z.infer<typeof resolveImportEditProgress
 export const resolveJumpRequestSchema =z.strictObject({ timelineId: z.string().min(1).max(256), frame: z.number().int().nonnegative() })
 
 // ---------------------------------------------------------------------------------------------------------------
+// Unpack compound clips (14, ADR 0010). The scripting API can't open a compound directly, so the timeline is
+// re-exported to OTIO (a compound's inner edit survives that round trip) and read back through this schema.
+// `src/resolve/compoundUnpack.ts` does the actual, defensive field-by-field reading; this schema only bounds the
+// shape (depth, array sizes) so a huge or malformed export can't blow up JSON.parse or a recursive walk.
+// ---------------------------------------------------------------------------------------------------------------
+
+/** Result of the `exportTimelineOtio` command: the bridge picks the path (under the mailbox dir) and returns it;
+ * the request never supplies one, so a compromised or buggy renderer can't make Lua write outside it. */
+export const resolveExportOtioResultSchema = z.strictObject({ path: resolvePathSchema })
+export type ResolveExportOtioResult = z.infer<typeof resolveExportOtioResultSchema>
+
+const MAX_OTIO_CHILDREN = 4000
+const MAX_OTIO_DEPTH = 8
+
+/** One `Clip`/`Gap`/`Track`/`Stack` node (OTIO_SCHEMA tells them apart) or the top-level `Timeline`. Only
+ * `OTIO_SCHEMA` and `children` are asserted; every other field (`source_range`, `media_references`, `effects`,
+ * `metadata`, `kind`, `name`, `global_start_time`, `tracks`, …) is read defensively in `compoundUnpack.ts`
+ * because OTIO's shape has many optional variants this brief doesn't need to model precisely. `.passthrough()`
+ * keeps those fields in the parsed object instead of stripping them. */
+function otioNodeSchema(depth: number): z.ZodTypeAny {
+  return z.object({
+    OTIO_SCHEMA: z.string().max(200),
+    children: depth > 0
+      ? z.array(z.lazy(() => otioNodeSchema(depth - 1))).max(MAX_OTIO_CHILDREN).optional()
+      : z.array(z.unknown()).max(MAX_OTIO_CHILDREN).optional(),
+  }).passthrough()
+}
+
+/** The whole parsed `.otio` file: a `Timeline` node (this brief only reaches into its `global_start_time` and
+ * `tracks`, both read defensively — see `compoundUnpack.ts`). */
+export const resolveOtioDocumentSchema = otioNodeSchema(MAX_OTIO_DEPTH)
+
+// ---------------------------------------------------------------------------------------------------------------
 // Create in DaVinci (12). The renderer's `planPush` (`src/resolve/pushPlan.ts`) builds the clip list; main
 // resolves every asset's file path from its fingerprint (never a path from the renderer) and drives the Lua
 // bridge. Captions are placed afterwards through the existing `resolve:sync-apply` against the returned timeline.

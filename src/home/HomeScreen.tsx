@@ -108,7 +108,7 @@ export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onM
           <span>Import DaVinci timeline{resolve.timelineName ? ` — “${resolve.timelineName}”` : ''}</span>
         </button>
         <button type="button" className="home-resolve-render" disabled={resolve.busy} onClick={resolve.onRender}
-          title="Render the whole timeline to one video instead. Slower, but works for retimed, compound and multicam clips.">Render instead</button>
+          title="Render the whole timeline to one video instead. Slower, but works for retimed, multicam and Fusion clips.">Render instead</button>
       </div>}
       <div className="home-actions"><button type="button" onClick={onOpenFile}><FolderOpenIcon />Open project…</button><ResolveStatusPill onMessage={onMessage} /></div>
 

@@ -20,7 +20,7 @@ export type PlannedEditClip = {
 
 export type EditImportPlan = { clips: PlannedEditClip[]; unsupported: ResolveEditSkip[]; notImported: ResolveEditSkip[] }
 
-const KIND_REASON: Record<Exclude<ResolveEditKind, 'file'>, string> = {
+export const KIND_REASON: Record<Exclude<ResolveEditKind, 'file'>, string> = {
   title: 'Title (KathaCut makes its own captions)',
   generator: 'Generator',
   fusion: 'Fusion clip or a clip with a Fusion effect',
@@ -31,7 +31,7 @@ const KIND_REASON: Record<Exclude<ResolveEditKind, 'file'>, string> = {
 }
 
 const framesToUs = (frames: number, fps: Fps) => timelineFrameToUs(frames, { startFrame: 0, fps })
-const baseName = (filePath: string) => filePath.split(/[\\/]/).pop() || filePath
+export const baseName = (filePath: string) => filePath.split(/[\\/]/).pop() || filePath
 
 function sourceFpsOf(raw: string | null, fallback: Fps | null): Fps | null {
   if (raw) {

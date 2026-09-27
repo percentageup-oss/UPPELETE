@@ -1,5 +1,53 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 14: unpack compound clips on import
+
+**Changes:**
+- `resources/resolve/bridge.lua`: new `exportTimelineOtio { timelineId }` handler — the exact call ADR 0010
+  confirmed (`timeline:Export(path, resolve.EXPORT_OTIO, resolve.EXPORT_NONE)`). The bridge picks the path
+  (`<mailboxDir>/timeline-export.otio`); the request never supplies one. Added to the README's command list.
+- `src/core/resolveIpc.ts`: `resolveExportOtioResultSchema` (`{ path }`) and `resolveOtioDocumentSchema`, a
+  minimal recursive `OTIO_SCHEMA` + `children` shape (depth cap 8, array caps, `.passthrough()`) — every other
+  OTIO field is read defensively in `compoundUnpack.ts` rather than asserted here.
+- `src/resolve/compoundUnpack.ts` (new, pure): `unpackCompounds(edit, otio, fps)` matches each `kind: 'compound'`
+  item to its OTIO `Stack` (video-track index + record start within ±1 frame + name), verifies the Stack's
+  `source_range.duration` against the item's record length, then walks its inner video track(s), clipping each
+  child to the visible window and converting every boundary independently (never by summing frame deltas) into
+  outer timeline frames and the media's own source frames (ADR 0010's "subtract `available_range.start_time`"
+  rule). Nested compounds recurse (depth ≤ 4). A compound with several *media-bearing* video tracks inside is
+  skipped as a whole ("Compound clip with several video tracks inside"); a title-only extra track doesn't count
+  (ADR 0010's suggestion), so the tested shape (file clips + a Text+ on another inner track) still unpacks. A
+  retimed inner clip, a title/generator, a nested clip past depth 4, or one with no readable media reference is
+  reported in `skipped`, never dropped. `skipUnreadableCompounds(edit, fps)` is the fallback when the OTIO
+  export/read/parse fails: every compound is left as it is but given this brief's own reason. Both remove the
+  audio-track duplicate `readTimelineEdit` reports for a consumed compound, so it isn't also reported as
+  separate audio.
+- `electron/resolve/importEdit.ts`: `importTimelineEdit` now unpacks compounds (only when the edit actually has
+  one) between `readTimelineEdit` and the path collection, so inspection, retime clamping and placement run
+  unchanged on the resulting synthetic file items. The exported `.otio` file is capped at 50 MB and always
+  deleted (`finally`).
+- `src/home/HomeScreen.tsx`: **Render instead**'s tooltip drops "compound" (now "retimed, multicam and Fusion
+  clips") since compounds are unpacked, not rendered.
+- `src/resolve/editToProject.ts`: exported `KIND_REASON` and `baseName` for reuse by `compoundUnpack.ts`.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes). No Resolve run.
+
+**Limitations:** built from one spike run (ADR 0010) whose timeline had an untrimmed compound and no retimed
+clip, mixed inner fps, nested compound or nested timeline. Those paths (outer trim verification, retime
+detection via the "Retime and Scaling" effect's parameters, nested-compound recursion) are implemented per the
+ADR's conservative rules but unexercised against a real Resolve project. Retime detection may over-skip (the
+ADR's own stated safe direction) since a duration-mismatch signal wasn't implementable without assuming
+non-retime first (documented in `compoundUnpack.ts`). Windows only; Mac is unverified.
+
+**Suggested opt-in test:** `unpackCompounds`'s window-clipping and frame math (`src/resolve/compoundUnpack.ts`)
+is pure and off-by-one-prone; a small unit test against the evidence OTIO
+(`docs/decisions/evidence/resolve-compound-spike-2026-09-27.otio`) would catch regressions cheaply. Not written,
+per the plan's testing override.
+
+**Next:** the user opens brief 13's spike timeline in Resolve and runs **Import DaVinci timeline** (manual check
+below). Re-running the spike with a trimmed compound, a retimed inner clip, mixed inner fps and a nested
+compound would close the items above.
+
 ## 2026-09-27 — Resolve Text+ 13: compound clip spike findings (ADR 0010)
 
 **Changes:**
