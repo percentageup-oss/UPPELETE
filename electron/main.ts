@@ -37,6 +37,8 @@ import { registerAlignmentIpc } from './alignmentIpc'
 import { registerProviderKeysIpc } from './providerKeysIpc'
 import { appMenuTemplate } from './appMenu'
 import { registerMcpIpc, initMcp, closeMcp } from './mcp/ipc'
+import { registerResolveIpc } from './resolve/ipc'
+import { getResolveBridge } from './resolve/bridge'
 import { RecentProjectsStore, MANAGED_FOLDER_NAME, fileExists, uniqueProjectPath } from './projectLibrary'
 import { clipEndUs } from '../src/core/timelineModel'
 
@@ -55,6 +57,7 @@ protocol.registerSchemesAsPrivileged([
 
 registerModelIpc()
 registerMcpIpc({ inspectFile: (filePath) => inspectFileForBin(filePath, assetInspectDeps) })
+registerResolveIpc()
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 const inspectedMedia = new Map<string, { path: string; media: ProjectMedia }>()
@@ -817,6 +820,9 @@ app.whenReady().then(async () => {
   // fresh install. Never blocks the window from opening — a failure here (a port that can no
   // longer bind) is reported through the Settings tab's status, not a startup dialog.
   void initMcp().catch((error) => logExport('agent-start-failed', { message: error instanceof Error ? error.message : String(error) }))
+  // Starts the DaVinci Resolve mailbox bridge (docs/plans/resolve-textplus/README.md): writes its
+  // own heartbeat and polls for a connected Lua script. Never blocks the window from opening.
+  void getResolveBridge().start().catch((error) => logExport('resolve-bridge-start-failed', { message: error instanceof Error ? error.message : String(error) }))
 })
 
 // A renderer or helper process that dies takes any work it was driving with it, and Chromium
@@ -856,6 +862,6 @@ app.on('before-quit', (event) => {
   // leave a windowless macOS process with a closed model manager.
   // Cancel scheduled transcription (reaping its worker) before closing the shared worker client and models.
   void closeJobs().catch(() => {})
-    .then(() => Promise.all([closeMediaWorker(), closeModelManager(), closeMcp()]))
+    .then(() => Promise.all([closeMediaWorker(), closeModelManager(), closeMcp(), getResolveBridge().stop()]))
     .finally(() => app.exit(0))
 })

@@ -1,5 +1,65 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 03: bridge, plugin install and connection status
+
+**Changes:**
+- `resources/resolve/json.lua`: minimal JSON encoder/decoder for Lua 5.1/LuaJIT (no third-party code).
+  Handles objects, arrays (auto-detected from sequential 1..n keys, or forced via `json.array({})` so
+  an empty array survives round-tripping distinct from an empty object), strings with `\uXXXX`/surrogate
+  pairs decoded to UTF-8, numbers, booleans and a `json.null` sentinel. Raw UTF-8 bytes pass through
+  encode/decode unchanged.
+- `resources/resolve/bridge.lua`: the mailbox loop (protocol v1, README). Launches KathaCut via
+  `KATHACUT.launch` if `app.json` is missing or stale, polls `request.json` every 150 ms, dispatches
+  `ping`/`timelineInfo`/`disconnect` through a fixed handler whitelist (never `load`/`loadstring`s
+  request content), and writes `status.json` every ~1 s. `writeJson` removes the target before
+  `os.rename` unconditionally, per the ADR 0008 finding that a plain overwrite-rename fails on Windows.
+  `timelineInfo`'s `frameRate` is explicitly `tostring`'d; `dropFrame`/`width`/`height` are passed
+  through as Resolve returns them (string or number) — coercion happens on the TS side.
+- `electron/resolve/install.ts`: `resolveScriptsDir`, `bridgeResourcesDir`, `mailboxDir`, `launchSpec`,
+  `pluginInfo`, `installPlugin` (atomic write of the generated `KathaCut.lua` launcher; rejects any
+  path containing `"` or `]]`) and `uninstallPlugin` (removes only that one file).
+- `electron/resolve/bridge.ts`: `ResolveBridge` (singleton `getResolveBridge()`) — writes `app.json`
+  every 2 s, polls `status.json` every 1 s and derives `disconnected`/`connected` from heartbeat
+  freshness, focuses the main window on a new `sessionId`, broadcasts `resolve:status-changed`, and
+  exposes a serial `request<T>()` queue (10 s timeout) for `timelineInfo`/`disconnect`.
+- `src/core/resolveIpc.ts`: zod schemas for the four mailbox files, `resolveTimelineInfoSchema` (with
+  `numericLike`/`boolishLike` coercion for the fields ADR 0008 found come back as strings) and the
+  `ResolveStatus` renderer view type. `src/resolve/frames.ts`: `parseResolveFps` (the README's rational
+  mapping table).
+- `electron/resolve/ipc.ts` `registerResolveIpc()`: `resolve:status`, `resolve:plugin-info`,
+  `resolve:install-plugin`, `resolve:uninstall-plugin`, `resolve:timeline-info`, `resolve:disconnect`.
+  Wired into `electron/main.ts` next to `registerMcpIpc`; the bridge starts in `whenReady` (after the
+  smoke-mode checks) and stops in `before-quit` alongside the other owned services.
+- Preload (`electron/preload.ts`) + `src/env.d.ts`: `resolveStatus`, `onResolveStatus` (zod-validated
+  in preload), `resolvePluginInfo`, `installResolvePlugin`, `uninstallResolvePlugin`,
+  `resolveTimelineInfo`, `resolveDisconnect`.
+- `src/resolve/useResolveStatus.ts` + `src/resolve/ResolveStatusPill.tsx`: the status pill (shown on
+  Home next to "Open project…" and in the editor header next to the save status). Not connected: hint
+  text plus an **Install plugin** button when the plugin isn't installed yet. Connected: project ›
+  timeline plus **Disconnect**.
+- `src/SettingsDialog.tsx`: new `'resolve'` tab ("DaVinci Resolve") with `ResolveSettings` — script
+  path, installed/not installed/outdated badge, Install/Reinstall/Remove, the three-step instructions,
+  and a note that Resolve Free and Studio both work.
+- `electron-builder.yml`: `extraResources` now also copies `resources/resolve` to `resolve`, excluding
+  `dev/**` (the spike script stays dev-only).
+- No caption features yet, as scoped: only `ping`/`timelineInfo`/`disconnect` exist end to end.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes; per the plan's testing
+override). Nobody has run this against a real DaVinci Resolve session yet — see the manual check in
+the brief. Windows-only once the user checks; Mac paths (script folder, `open -a` launch, the `.app`
+bundle derivation in `launchSpec`) are unverified.
+
+**Limitations:**
+- `ResolveBridge.request()` isn't exercised against a live Lua bridge yet; the timeout/queueing logic
+  is untested beyond typechecking.
+- The pill's "busy" state from `status.json` is plumbed through but nothing sets it meaningfully yet
+  (no long-running commands exist until brief 04's renders).
+- No single-instance lock: two KathaCut windows would both poll the same mailbox. Out of scope per the
+  brief; noted here since brief 03 is the first place it matters at all.
+
+**Next:** brief 04 (create project from current timeline) — the render + proxy-import flow, which needs
+this bridge's `request()` plumbing and the frame-rate mapping in `src/resolve/frames.ts`.
+
 ## 2026-09-27 — Resolve Text+ 02: spike findings → ADR 0008
 
 **Changes:**

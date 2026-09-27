@@ -43,6 +43,7 @@ import type { PlaybackClock } from './core/playbackClock'
 import { MenuButton, type MenuEntry } from './MenuButton'
 import { SettingsDialog, type SettingsTab } from './SettingsDialog'
 import type { McpStatus } from '../electron/mcp/config'
+import { ResolveStatusPill } from './resolve/ResolveStatusPill'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
 import type { SilenceDetectionOptions } from './core/silenceRemoval'
 import { loadTranscriptionDefaults, saveTranscriptionDefaults } from './core/transcriptionDefaults'
@@ -2318,6 +2319,7 @@ export default function App() {
           title={agentStatus.connections ? `${agentStatus.connections} agent client connected` : 'Agent access is on; no client connected yet'}>
           Agent{agentStatus.connections ? ` · ${agentStatus.connections}` : ''}
         </button>}
+        <ResolveStatusPill onMessage={(tone, text) => setNotice({ tone, text })} />
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />
         <MenuButton label="Timeline" entries={timelineEntries} />

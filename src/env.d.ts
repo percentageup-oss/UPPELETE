@@ -19,6 +19,8 @@ import type { CloudProviderId, ProviderKeyStatuses } from './core/transcriptionP
 import type { AgentRequest, AgentResponse } from './core/agentProtocol'
 import type { McpSettingsView, McpStatus } from '../electron/mcp/config'
 import type { RecentProjectView } from '../electron/projectLibrary'
+import type { ResolveStatus, ResolveTimelineInfo } from './core/resolveIpc'
+import type { ResolvePluginInfo } from '../electron/resolve/install'
 
 /** Chromium Local Font Access API (not yet in TS lib.dom). Offline, requires transient user
  * activation and the 'local-fonts' permission; no font is bundled, downloaded or sent anywhere. */
@@ -100,6 +102,13 @@ declare global {
       agentSettings(): Promise<McpSettingsView>
       setAgentEnabled(enabled: boolean): Promise<McpSettingsView>
       rotateAgentToken(): Promise<McpSettingsView>
+      resolveStatus(): Promise<ResolveStatus>
+      onResolveStatus(callback: (status: ResolveStatus) => void): () => void
+      resolvePluginInfo(): Promise<ResolvePluginInfo>
+      installResolvePlugin(): Promise<ResolvePluginInfo>
+      uninstallResolvePlugin(): Promise<ResolvePluginInfo>
+      resolveTimelineInfo(): Promise<ResolveTimelineInfo>
+      resolveDisconnect(): Promise<void>
     }
   }
 }

@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import type { McpSettingsView } from '../electron/mcp/config'
+import type { ResolvePluginInfo } from '../electron/resolve/install'
 import type { PlaybackProxyMode } from './core/proxy'
 import { ModelManager } from './ModelManager'
 import { cloudModelIdSchema, CLOUD_PROVIDERS, cloudProvider, providerLabel, type CloudProviderEntry, type CloudProviderId, type ProviderKeyStatus, type ProviderKeyStatuses, type TranscriptionDefaults, type TranscriptionProviderId } from './core/transcriptionProviders'
 
-export type SettingsTab = 'models' | 'transcription' | 'agent' | 'playback' | 'shortcuts'
+export type SettingsTab = 'models' | 'transcription' | 'agent' | 'resolve' | 'playback' | 'shortcuts'
 const TABS: { id: SettingsTab; label: string }[] = [
   { id: 'models', label: 'Speech models' },
   { id: 'transcription', label: 'Transcription' },
   { id: 'agent', label: 'AI agents' },
+  { id: 'resolve', label: 'DaVinci Resolve' },
   { id: 'playback', label: 'Playback' },
   { id: 'shortcuts', label: 'Keyboard shortcuts' },
 ]
@@ -57,6 +59,7 @@ export function SettingsDialog({ tab, onTab, onClose, providerKeys, onProviderKe
         {tab === 'models' && <ModelManager />}
         {tab === 'transcription' && <TranscriptionSettings keys={providerKeys} onKeys={onProviderKeys} defaults={transcriptionDefaults} onDefaults={onTranscriptionDefaults} onMessage={onMessage} />}
         {tab === 'agent' && <AgentSettings onMessage={onMessage} />}
+        {tab === 'resolve' && <ResolveSettings onMessage={onMessage} />}
         {tab === 'playback' && <PlaybackProxySettings mode={playbackProxyMode} onMode={onPlaybackProxyMode} />}
         {tab === 'shortcuts' && <ShortcutReference />}
       </div>
@@ -255,6 +258,53 @@ export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error',
           <button type="button" onClick={() => copy(settings.desktopConfig!)}>Copy config</button>
         </div>
         : <p className="agent-note">The Claude Desktop connector is not built yet — run <code>npm run build:electron</code>.</p>}
+    </>}
+  </section>
+}
+
+/**
+ * DaVinci Resolve plugin install (03): installs, reinstalls or removes the generated `KathaCut.lua`
+ * launcher in Resolve's Scripts folder. Connecting itself happens from inside Resolve (Workspace →
+ * Scripts → KathaCut) — this tab only manages the one file that makes that menu entry exist.
+ */
+export function ResolveSettings({ onMessage }: { onMessage(tone: 'info' | 'error', text: string): void }) {
+  const [info, setInfo] = useState<ResolvePluginInfo | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => { void window.captionStudio?.resolvePluginInfo().then(setInfo).catch(() => {}) }, [])
+
+  const install = async () => {
+    setBusy(true)
+    try { setInfo(await window.captionStudio!.installResolvePlugin()); onMessage('info', 'DaVinci Resolve plugin installed.') }
+    catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not install the plugin.') }
+    finally { setBusy(false) }
+  }
+  const uninstall = async () => {
+    setBusy(true)
+    try { setInfo(await window.captionStudio!.uninstallResolvePlugin()); onMessage('info', 'DaVinci Resolve plugin removed.') }
+    catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not remove the plugin.') }
+    finally { setBusy(false) }
+  }
+
+  return <section className="resolve-settings" aria-labelledby="resolve-settings-heading">
+    <h3 id="resolve-settings-heading">DaVinci Resolve</h3>
+    <p className="settings-lead">Send captions to a DaVinci Resolve timeline as native, editable Text+ clips. Works with both DaVinci Resolve Free and Studio.</p>
+    {!info ? <p>Checking…</p> : !info.supported ? <p role="status">DaVinci Resolve scripting is only supported on Windows and macOS.</p> : <>
+      <div className="settings-row">
+        <span className={`settings-badge ${info.installed ? (info.upToDate ? 'ok' : 'warn') : 'warn'}`} role="status">
+          {!info.installed ? 'Not installed' : info.upToDate ? 'Installed' : 'Installed (outdated)'}
+        </span>
+        {info.scriptPath && <code className="resolve-script-path">{info.scriptPath}</code>}
+      </div>
+      <div className="dialog-actions">
+        <button className="accent" disabled={busy} onClick={() => void install()}>{info.installed ? 'Reinstall' : 'Install'}</button>
+        {info.installed && <button disabled={busy} onClick={() => void uninstall()}>Remove</button>}
+      </div>
+      <ol className="resolve-steps">
+        <li>Install the plugin above.</li>
+        <li>Restart DaVinci Resolve if it was already open.</li>
+        <li>In Resolve: Workspace → Scripts → KathaCut.</li>
+      </ol>
     </>}
   </section>
 }

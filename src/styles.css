@@ -597,6 +597,12 @@ input[type="range"].ins-range:disabled { opacity: .4; }
 button.attention { border-color: #806838; color: #ffda8b; }
 .warning-chip { border-color: #806838; background: #1a160e; color: #ffda8b; border-radius: 999px; }
 .agent-chip { border-color: #2f6b3a; background: #0e1a10; color: #8bffa0; border-radius: 999px; }
+.resolve-status { position: relative; display: inline-flex; }
+.resolve-pill { border: 1px solid #3a414d; background: #171b22; color: #9aabc2; border-radius: 999px; font-size: 11px; white-space: nowrap; padding: 4px 12px; }
+.resolve-pill.connected { border-color: #2d5a42; background: #10241b; color: #7fd8a0; }
+.resolve-popover { position: absolute; z-index: 30; top: calc(100% + 6px); right: 0; min-width: 260px; padding: 12px; border: 1px solid #3a414d; border-radius: 9px; background: #171b22; box-shadow: 0 10px 34px #000a; display: grid; gap: 6px; font-size: 12px; color: #bdc5d4; text-align: left; }
+.resolve-popover p { margin: 0; }
+.resolve-popover .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .overlay-asset-row { display: flex; align-items: center; gap: 8px; padding: 0 16px 12px; }
 .overlay-asset-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: #ccd0d8; }
 .asset-issue-badge { border-radius: 999px; padding: 2px 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
@@ -642,6 +648,10 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .agent-settings .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0; }
 .agent-snippet { margin-top: 14px; }
 .agent-snippet pre { background: #0a0d12; border: 1px solid #303540; border-radius: 7px; padding: 10px; overflow-x: auto; font-size: 11px; color: var(--accent-text); }
+.resolve-settings .settings-row { grid-auto-flow: column; justify-content: start; align-items: center; gap: 10px; }
+.resolve-settings .dialog-actions { display: flex; gap: 8px; margin: 12px 0; }
+.resolve-script-path { font-family: monospace; font-size: 11px; color: #9aabc2; word-break: break-all; }
+.resolve-steps { margin: 10px 0 0; padding-left: 18px; color: #9aabc2; font-size: 12.5px; line-height: 1.7; }
 .agent-note { color: #8f96a4; font-size: 12px; }
 .settings-panel .shortcut-reference-content { position: static; width: auto; border: 0; box-shadow: none; background: transparent; padding: 0; }
 @media (max-width: 1100px) { .brand small { display: none; } }

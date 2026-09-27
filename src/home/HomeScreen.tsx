@@ -3,6 +3,7 @@ import type { RecentProjectView } from '../../electron/projectLibrary'
 import { ContextMenu } from '../ContextMenu'
 import type { MenuEntry } from '../MenuButton'
 import { SettingsIcon } from '../RailIcons'
+import { ResolveStatusPill } from '../resolve/ResolveStatusPill'
 import brandIcon from '../assets/brand/icon-dark.png'
 import { FilmIcon, FolderOpenIcon, HomeIcon, MoreIcon, PlusIcon, SearchIcon, TemplatesIcon } from './HomeIcons'
 import { durationLabel, relativeTime } from './homeFormat'
@@ -98,7 +99,7 @@ export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onM
       <button type="button" className="home-create" onClick={onCreate}>
         <span className="home-create-plus"><PlusIcon width={22} height={22} /></span><span>Create project</span>
       </button>
-      <div className="home-actions"><button type="button" onClick={onOpenFile}><FolderOpenIcon />Open project…</button></div>
+      <div className="home-actions"><button type="button" onClick={onOpenFile}><FolderOpenIcon />Open project…</button><ResolveStatusPill onMessage={onMessage} /></div>
 
       <div className="home-projects-head">
         <h2>Projects</h2>

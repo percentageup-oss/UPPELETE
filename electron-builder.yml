@@ -20,6 +20,11 @@ files:
 extraResources:
   - from: build/bin/${os}
     to: bin
+  - from: resources/resolve
+    to: resolve
+    filter:
+      - '**/*'
+      - '!dev/**'
   - from: docs/licenses
     to: licenses
   - from: LICENSE

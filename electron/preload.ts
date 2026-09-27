@@ -21,6 +21,8 @@ import { alignmentProgressSchema, type AlignmentOutcome, type AlignmentProgress,
 import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../src/core/agentProtocol'
 import type { McpSettingsView, McpStatus } from './mcp/config'
 import type { RecentProjectView } from './projectLibrary'
+import { resolveStatusViewSchema, type ResolveStatus, type ResolveTimelineInfo } from '../src/core/resolveIpc'
+import type { ResolvePluginInfo } from './resolve/install'
 
 export type OperationResult<T> = { ok: true } & T | { ok: false; message: string }
 export type OpenedVideo = OperationResult<{ candidate: MediaCandidate }>
@@ -188,4 +190,22 @@ contextBridge.exposeInMainWorld('captionStudio', {
   agentSettings: (): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-get'),
   setAgentEnabled: (enabled: boolean): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-set-enabled', enabled),
   rotateAgentToken: (): Promise<McpSettingsView> => ipcRenderer.invoke('agent:settings-rotate-token'),
+
+  // DaVinci Resolve bridge (docs/plans/resolve-textplus/README.md): a local file-mailbox connection
+  // to a Lua script started from Resolve's Workspace → Scripts menu. Status is pushed live over
+  // resolve:status-changed; commands are request/response through the main-process bridge queue.
+  resolveStatus: (): Promise<ResolveStatus> => ipcRenderer.invoke('resolve:status'),
+  onResolveStatus: (callback: (status: ResolveStatus) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolveStatusViewSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:status-changed', listener)
+    return () => ipcRenderer.removeListener('resolve:status-changed', listener)
+  },
+  resolvePluginInfo: (): Promise<ResolvePluginInfo> => ipcRenderer.invoke('resolve:plugin-info'),
+  installResolvePlugin: (): Promise<ResolvePluginInfo> => ipcRenderer.invoke('resolve:install-plugin'),
+  uninstallResolvePlugin: (): Promise<ResolvePluginInfo> => ipcRenderer.invoke('resolve:uninstall-plugin'),
+  resolveTimelineInfo: (): Promise<ResolveTimelineInfo> => ipcRenderer.invoke('resolve:timeline-info'),
+  resolveDisconnect: (): Promise<void> => ipcRenderer.invoke('resolve:disconnect'),
 })
