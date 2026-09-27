@@ -93,24 +93,69 @@ local stillPath = joinPath(tempDir, "kathacut-spike-still.png")
 -- Small helpers used by several tests
 -- ---------------------------------------------------------------------------
 
-local function approxFrameRate(fpsSetting)
-  local n = tonumber(fpsSetting)
-  if not n then
-    return 24
+-- Exact rationals for Resolve's decimal timelineFrameRate strings (docs/plans/resolve-textplus/README.md,
+-- "Time mapping"). Falls back to treating the value as an integer rate.
+local RATIONAL_FRAME_RATES = {
+  ["23.976"] = { 24000, 1001 },
+  ["29.97"] = { 30000, 1001 },
+  ["47.952"] = { 48000, 1001 },
+  ["59.94"] = { 60000, 1001 },
+  ["119.88"] = { 120000, 1001 },
+}
+
+local function rationalFrameRate(fpsSetting)
+  local exact = RATIONAL_FRAME_RATES[tostring(fpsSetting)]
+  if exact then
+    return exact[1], exact[2]
   end
-  return math.floor(n + 0.5)
+  return tonumber(fpsSetting) or 24, 1
 end
 
--- Approximate non-drop-frame timecode. Good enough to move the playhead for a spike test;
--- exact frame-accurate timecode formatting is what brief 05/06 will need to get right.
-local function framesToTimecode(frameCount, fps)
-  fps = fps or 24
-  local totalSeconds = math.floor(frameCount / fps)
-  local frames = frameCount - totalSeconds * fps
+local function nominalFrameRate(fpsSetting)
+  local num, den = rationalFrameRate(fpsSetting)
+  return math.floor(num / den + 0.5)
+end
+
+-- Resolve's boolean-ish timeline settings can come back as true/false, "1"/"0", or 1/0.
+local function isTruthySetting(v)
+  return v == true or v == "1" or v == 1
+end
+
+-- Frame -> timecode string, with the standard SMPTE drop-frame skip when dropFrame is set and
+-- the nominal rate is 30 or 60 (i.e. an NTSC rate). Good enough to move the playhead for a spike
+-- test; large offsets (Resolve's default timeline start is frame 108000 at 29.97 fps) make the
+-- non-drop-frame math land outside a short clip if the project actually uses drop-frame.
+local function framesToTimecode(frameCount, num, den, dropFrame)
+  local nominal = math.floor(num / den + 0.5)
+  local dropPerMinute = 0
+  if dropFrame then
+    if nominal == 30 then
+      dropPerMinute = 2
+    elseif nominal == 60 then
+      dropPerMinute = 4
+    end
+  end
+  local adjustedFrame = frameCount
+  if dropPerMinute > 0 then
+    local framesPer10Min = nominal * 600 - dropPerMinute * 9
+    local framesPerMin = nominal * 60 - dropPerMinute
+    local d = math.floor(frameCount / framesPer10Min)
+    local m = frameCount % framesPer10Min
+    local extra
+    if m > dropPerMinute then
+      extra = dropPerMinute * 9 * d + dropPerMinute * math.floor((m - dropPerMinute) / framesPerMin)
+    else
+      extra = dropPerMinute * 9 * d
+    end
+    adjustedFrame = frameCount + extra
+  end
+  local totalSeconds = math.floor(adjustedFrame / nominal)
+  local frames = adjustedFrame - totalSeconds * nominal
   local hours = math.floor(totalSeconds / 3600)
   local minutes = math.floor((totalSeconds % 3600) / 60)
   local seconds = totalSeconds % 60
-  return string.format("%02d:%02d:%02d:%02d", hours, minutes, seconds, frames)
+  local frameSep = dropPerMinute > 0 and ";" or ":"
+  return string.format("%02d:%02d:%02d%s%02d", hours, minutes, seconds, frameSep, frames)
 end
 
 -- Recursively looks for a bin named "KathaCut" containing a Text+ clip.
@@ -337,8 +382,9 @@ local function main()
         tostring(textClipItem:GetStart()), tostring(textClipItem:GetEnd()),
         tostring(textClipItem:GetUniqueId()), tostring(textClipItem:GetFusionCompCount())))
     else
-      local fps = approxFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
-      local tc = framesToTimecode(recordFrame, fps)
+      local num, den = rationalFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
+      local dropFrame = isTruthySetting(spikeTimeline:GetSetting("timelineDropFrameTimecode"))
+      local tc = framesToTimecode(recordFrame, num, den, dropFrame)
       spikeTimeline:SetCurrentTimecode(tc)
       local item = spikeTimeline:InsertFusionTitleIntoTimeline("Text+")
       if not item then
@@ -451,27 +497,50 @@ local function main()
       "check the still/screenshot per SPIKE.md step 6.")
   end)
 
-  -- T10: WriteOnEnd keyframes inside Lock/Unlock.
+  -- T10: WriteOnEnd keyframes inside Lock/Unlock. Tries two documented approaches and records
+  -- which one Resolve actually accepts, since a first guess ("assign comp:BezierSpline() then
+  -- index-assign") errored on the initial run ("attempt to index field 'WriteOnEnd' (a nil value)").
   test("T10", function()
     if not comp or not tool then
       record("INFO", "T10", "skipped: no comp/tool from T7")
       return
     end
-    local ok, err = pcall(function()
+
+    -- Attempt A: direct table assignment (time -> value in one step).
+    local okA, errA = pcall(function()
       comp:Lock()
-      tool.WriteOnEnd = comp:BezierSpline()
+      tool.WriteOnEnd = { [0] = 0, [24] = 1 }
+      comp:Unlock()
+    end)
+    if not okA then
+      pcall(function() comp:Unlock() end)
+    end
+    local readOkA, readValA = pcall(function() return tool:GetInput("WriteOnEnd", 12) end)
+    record("INFO", "T10-A-table-assign", string.format("ok=%s err=%s readback@12=%s",
+      tostring(okA), tostring(errA), readOkA and serialize(readValA, 1) or "<error>"))
+
+    -- Attempt B: explicit BezierSpline(), then index-assign keyframes (the README's guess).
+    local okB, errB = pcall(function()
+      comp:Lock()
+      local spline = comp:BezierSpline()
+      tool.WriteOnEnd = spline
       tool.WriteOnEnd[0] = 0
       tool.WriteOnEnd[24] = 1
       comp:Unlock()
     end)
-    if not ok then
+    if not okB then
       pcall(function() comp:Unlock() end)
-      record("FAIL", "T10", "error: " .. tostring(err))
-      return
     end
-    local readOk, readVal = pcall(function() return tool:GetInput("WriteOnEnd", 12) end)
-    record("PASS", "T10", string.format("keyframes set; GetInput(WriteOnEnd, 12)=%s",
-      readOk and serialize(readVal, 1) or ("<error> " .. tostring(readVal))))
+    local readOkB, readValB = pcall(function() return tool:GetInput("WriteOnEnd", 12) end)
+    record("INFO", "T10-B-bezierspline", string.format("ok=%s err=%s readback@12=%s",
+      tostring(okB), tostring(errB), readOkB and serialize(readValB, 1) or "<error>"))
+
+    if okA or okB then
+      record("PASS", "T10", string.format("at least one approach worked: A(table-assign)=%s B(BezierSpline)=%s",
+        tostring(okA), tostring(okB)))
+    else
+      record("FAIL", "T10", "both keyframe approaches failed")
+    end
   end)
 
   -- T11: read Character Level Styling data from a second, hand-styled clip on track 2.
@@ -589,11 +658,13 @@ local function main()
       return
     end
     log("Resolve must be on the Edit or Color page for ExportCurrentFrameAsStill to work.")
-    local fps = approxFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
-    local tc = framesToTimecode(textClipItem:GetStart(), fps)
+    local num, den = rationalFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
+    local dropFrame = isTruthySetting(spikeTimeline:GetSetting("timelineDropFrameTimecode"))
+    local tc = framesToTimecode(textClipItem:GetStart(), num, den, dropFrame)
     spikeTimeline:SetCurrentTimecode(tc)
     local ok, result = pcall(function() return project:ExportCurrentFrameAsStill(stillPath) end)
-    record("INFO", "T14", string.format("timecode=%s exportOk=%s result=%s", tc, tostring(ok), serialize(result, 1)))
+    record("INFO", "T14", string.format("fps=%s/%s dropFrame=%s timecode=%s exportOk=%s result=%s",
+      tostring(num), tostring(den), tostring(dropFrame), tc, tostring(ok), serialize(result, 1)))
   end)
 
   -- T15: render a 5 s proxy, only when RUN_RENDER is true.
@@ -602,7 +673,7 @@ local function main()
       record("INFO", "T15", "skipped: RUN_RENDER is false")
       return
     end
-    local fps = approxFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
+    local fps = nominalFrameRate(spikeTimeline:GetSetting("timelineFrameRate"))
     local resW = tonumber(project:GetSetting("timelineResolutionWidth")) or 1920
     local resH = tonumber(project:GetSetting("timelineResolutionHeight")) or 1080
     local vertical = resH > resW

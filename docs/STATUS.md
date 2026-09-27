@@ -1,5 +1,40 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 01b: first real spike run, two script bugs fixed
+
+**Changes:** the user ran `spike.lua` for the first time (DaVinci Resolve Studio 21.0.0.47, Windows,
+29.97 fps project, timeline start frame 108000). The run surfaced two bugs in the script itself, fixed in
+`resources/resolve/dev/spike.lua`:
+- **T10** (`WriteOnEnd` keyframes) failed: `tool.WriteOnEnd = comp:BezierSpline()` followed by
+  `tool.WriteOnEnd[0] = 0` errored `attempt to index field 'WriteOnEnd' (a nil value)` — the assignment
+  didn't attach a spline. T10 now tries two approaches independently (direct `tool.WriteOnEnd = {[0]=0,
+  [24]=1}` table assignment, and the original `comp:BezierSpline()` guess) and records which one Resolve
+  actually accepts, instead of betting on a single guess.
+- **T14**'s still export likely landed outside the clip (report showed `exportOk=true` but the returned
+  still was solid black). Root cause: the script's frame→timecode math used a rounded integer fps with
+  non-drop-frame arithmetic; over a 108,000+ frame offset (Resolve's default 1-hour timeline start at
+  29.97 fps) that drifts well past a 150-frame clip if the project uses drop-frame timecode. Replaced with
+  `rationalFrameRate` (exact num/den per the README's fps table) and a proper SMPTE drop-frame-aware
+  `framesToTimecode`, used by T6's fallback path and T14; T15 keeps a plain `nominalFrameRate` for frame
+  counting only (frame counts are drop-frame-independent per the README).
+
+**What the run otherwise confirmed:** all env/file/timeline-responsiveness tests passed; the
+`InsertFusionTitleIntoTimeline` fallback works (no `KathaCut` media-pool bin existed yet, so T5/T13 were
+skipped and T6 exercised the fallback, not `AppendToTimeline`); the full T7 dump (309 inputs) confirms
+`Enabled2`/`Enabled3`/`Enabled4` are outline/shadow/border toggles and `Center` is a `Point`, matching the
+README's guesses; `Red2`/`Green2`/`Blue2` (outline color) don't appear in `GetInputList()` before
+`Enabled2` is turned on, but `SetInput` on them still succeeds — Fusion accepts writes to inputs not yet
+"surfaced." T9's Malayalam style-set and T12's tagging/color both succeeded. T11 was skipped (no video
+track 2 clip yet — the user hasn't done SPIKE.md step 5 yet).
+
+**Verification:** still not run again after the fix (same "no Lua interpreter here" constraint as before);
+checked by manual read-through of every changed region plus a parens/braces balance check
+(549/549, 33/33 — balanced). Waiting on the user to redo the `KathaCut` media-pool bin (SPIKE.md step 3)
+and the video-track-2 CLS clip (step 5), then re-run for a complete report covering T5/T10/T11/T13/T14.
+
+**Next:** user re-runs after completing the two SPIKE.md setup steps; once the report is clean, brief 02
+turns it into the ADR.
+
 ## 2026-09-27 — Resolve Text+ 01: spike script
 
 **Changes:**
