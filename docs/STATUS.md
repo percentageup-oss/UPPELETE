@@ -1,5 +1,33 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 13: compound clip spike (script)
+
+**Changes:**
+- `resources/resolve/dev/compound-spike.lua` (new, dev-only, not packaged): a read-only Resolve menu
+  script. C1 exports the current timeline to OTIO (`resolve.EXPORT_OTIO`) and FCPXML
+  (`resolve.EXPORT_FCPXML_1_10`), logging each constant's value (or `missing`), the `Export` return
+  value, file size and elapsed time; falls back to a two-argument `Export` call if `EXPORT_NONE` is
+  missing. C2 logs every outer video/audio track item's name, timing, source frames and media pool
+  `Type`/`File Path`/`FPS`/`Start TC` (capped at 200 items) and `timeline:GetStartFrame()`. C3 dumps the
+  first compound/nested-timeline item's full `GetClipProperty()` table (sorted), its unique/media id,
+  and whether any project timeline shares its name. Every check is `pcall`-wrapped; an absent method or
+  constant logs `missing` rather than failing the script. It never edits, deletes or adds timeline
+  items — only `Export()` writes files, both outside the project.
+- `resources/resolve/dev/SPIKE3.md` (new): setup instructions — build a timeline with two compounds (one
+  trimmed at both ends with a mixed-fps inner clip, a gap and a Text+ title; one with a 50%-retimed clip
+  and a nested compound) and an optional nested timeline, hand-record each compound's inner clips as
+  ground truth, run the script, and send back the report, the `.otio`/`.fcpxml` files and the hand notes.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes; no TS files touched). The
+user runs the spike in Resolve per SPIKE3.md.
+
+**Limitations:** unconfirmed until the user's report: whether OTIO/FCPXML export carries a compound's
+inner edit at all, export time vs. the ~2 s bridge command budget, and how a compound's outer trim and
+inner clips' source time origin appear in either file format.
+
+**Next:** a findings session turns the user's report into `docs/decisions/0010-resolve-compound-clips.md`
+(brief 13, step 4), then brief 14 (unpack compound clips on import) reads that ADR.
+
 ## 2026-09-27 — Resolve Text+ 08: docs
 
 **Changes:**
