@@ -22,8 +22,10 @@ import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../sr
 import type { McpSettingsView, McpStatus } from './mcp/config'
 import type { RecentProjectView } from './projectLibrary'
 import {
-  resolveImportEditProgressSchema, resolveImportEditResultSchema, resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema, resolveSyncProgressSchema,
-  type ResolveImportEditProgress, type ResolveImportEditResult, type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress, type ResolveSyncResult,
+  resolveImportEditProgressSchema, resolveImportEditResultSchema, resolveProxyDoneSchema, resolveProxyProgressSchema, resolvePushProgressSchema, resolvePushTimelineResultSchema,
+  resolveStatusViewSchema, resolveSyncProgressSchema,
+  type ResolveImportEditProgress, type ResolveImportEditResult, type ResolvePushProgress, type ResolvePushTimelineRequest, type ResolvePushTimelineResult,
+  type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress, type ResolveSyncResult,
   type ResolveProxyDone, type ResolveProxyProgress, type ResolveStatus, type ResolveTimelineInfo,
 } from '../src/core/resolveIpc'
 import type { ResolvePluginInfo } from './resolve/install'
@@ -249,5 +251,15 @@ contextBridge.exposeInMainWorld('captionStudio', {
     }
     ipcRenderer.on('resolve:sync-progress', listener)
     return () => ipcRenderer.removeListener('resolve:sync-progress', listener)
+  },
+  resolvePushTimeline: async (request: ResolvePushTimelineRequest): Promise<ResolvePushTimelineResult> =>
+    resolvePushTimelineResultSchema.parse(await ipcRenderer.invoke('resolve:push-timeline', request)),
+  onResolvePushProgress: (callback: (progress: ResolvePushProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolvePushProgressSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:push-progress', listener)
+    return () => ipcRenderer.removeListener('resolve:push-progress', listener)
   },
 })

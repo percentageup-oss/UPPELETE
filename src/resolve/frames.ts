@@ -20,6 +20,13 @@ export function parseResolveFps(raw: string): { num: number; den: number } {
   return { num: value, den: 1 }
 }
 
+/** The inverse of `parseResolveFps` (12, `createTimeline`'s `timelineFrameRate` setting): a known NTSC rational
+ * round-trips to its exact decimal string; anything else becomes the plain `num/den` value Resolve also accepts. */
+export function formatResolveFps(fps: { num: number; den: number }): string {
+  for (const [raw, exact] of Object.entries(RATIONAL_FRAME_RATES)) if (exact.num === fps.num && exact.den === fps.den) return raw
+  return String(fps.num / fps.den)
+}
+
 export type ResolveFrameLink = { startFrame: number; fps: { num: number; den: number } }
 
 /**

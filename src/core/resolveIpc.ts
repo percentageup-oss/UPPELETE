@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { projectMediaSchema } from './media'
+import { mediaFingerprintSchema, projectMediaSchema } from './media'
 import { resolveLinkSchema } from './model'
 import { LUA_INPUT_WHITELIST } from '../resolve/textPlusInputs'
 
@@ -298,6 +298,66 @@ export const resolveImportEditProgressSchema = z.strictObject({ done: z.number()
 export type ResolveImportEditProgress = z.infer<typeof resolveImportEditProgressSchema>
 
 export const resolveJumpRequestSchema =z.strictObject({ timelineId: z.string().min(1).max(256), frame: z.number().int().nonnegative() })
+
+// ---------------------------------------------------------------------------------------------------------------
+// Create in DaVinci (12). The renderer's `planPush` (`src/resolve/pushPlan.ts`) builds the clip list; main
+// resolves every asset's file path from its fingerprint (never a path from the renderer) and drives the Lua
+// bridge. Captions are placed afterwards through the existing `resolve:sync-apply` against the returned timeline.
+// ---------------------------------------------------------------------------------------------------------------
+
+export const resolvePushClipSchema = z.strictObject({
+  assetId: z.string().min(1).max(128),
+  trackIndex: z.number().int().positive(),
+  recordOffsetFrames: z.number().int().nonnegative(),
+  sourceStartFrame: z.number().int().nonnegative(),
+  sourceEndFrame: z.number().int().nonnegative(),
+}).refine((clip) => clip.sourceEndFrame >= clip.sourceStartFrame, { message: 'A clip’s source end must not precede its start.' })
+export type ResolvePushClip = z.infer<typeof resolvePushClipSchema>
+
+export const resolvePushTimelineRequestSchema = z.strictObject({
+  name: z.string().min(1).max(512),
+  fps: resolveFpsSchema,
+  width: z.number().int().min(16).max(16384),
+  height: z.number().int().min(16).max(16384),
+  assets: z.array(z.strictObject({ assetId: z.string().min(1).max(128), fingerprint: mediaFingerprintSchema })).max(2000),
+  clips: z.array(resolvePushClipSchema).max(20000),
+})
+export type ResolvePushTimelineRequest = z.infer<typeof resolvePushTimelineRequestSchema>
+
+export const resolvePushTimelineResultSchema = z.strictObject({
+  timelineId: z.string().min(1),
+  timelineName: z.string(),
+  projectName: z.string(),
+  startFrame: z.number().int().nonnegative(),
+  fps: resolveFpsSchema,
+  width: z.number().int(),
+  height: z.number().int(),
+  note: z.string().nullable(),
+  errors: z.array(z.string()),
+})
+export type ResolvePushTimelineResult = z.infer<typeof resolvePushTimelineResultSchema>
+
+export const resolvePushProgressSchema = z.strictObject({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  phase: z.enum(['timeline', 'media', 'clips']),
+})
+export type ResolvePushProgress = z.infer<typeof resolvePushProgressSchema>
+
+// Bridge command results (12).
+export const resolveCreateTimelineResultSchema = z.strictObject({
+  timelineId: z.string().min(1),
+  startFrame: z.number().int().nonnegative(),
+  name: z.string(),
+  projectName: z.string(),
+  note: z.string().nullable(),
+})
+export const resolveImportMediaResultSchema = z.strictObject({
+  items: z.array(z.strictObject({ path: z.string(), ok: z.boolean() })),
+})
+export const resolveAppendVideoClipsResultSchema = z.strictObject({
+  clips: z.array(z.strictObject({ ok: z.boolean(), error: z.string().nullable() })),
+})
 
 // Bridge command results (06).
 export const resolveFindTrackResultSchema = z.strictObject({ trackIndex: z.number().int().positive().nullable() })

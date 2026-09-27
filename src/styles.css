@@ -956,3 +956,10 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .resolve-sync-conflict-head { display: flex; justify-content: space-between; align-items: center; color: #ffda8b; }
 .resolve-sync-support ul { margin: 0; padding-left: 18px; font-size: 12px; color: #bdc5d4; }
 .resolve-sync-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.resolve-push-button { white-space: nowrap; font-size: 12px; }
+.resolve-push-dialog { width: min(560px, calc(100vw - 64px)); }
+.resolve-push-dialog label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #9aabc2; margin: 10px 0; }
+.resolve-push-dialog input[type="text"] { font-size: 13px; }
+.resolve-push-dialog h3 { margin: 16px 0 6px; font-size: 14px; }
+.resolve-push-dialog progress { width: 100%; }
+.resolve-push-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

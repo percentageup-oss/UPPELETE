@@ -20,7 +20,8 @@ import type { AgentRequest, AgentResponse } from './core/agentProtocol'
 import type { McpSettingsView, McpStatus } from '../electron/mcp/config'
 import type { RecentProjectView } from '../electron/projectLibrary'
 import type {
-  ResolveImportEditProgress, ResolveImportEditResult, ResolveProxyDone, ResolveProxyProgress, ResolveStatus, ResolveSyncApplyRequest, ResolveSyncPreview, ResolveSyncPreviewRequest, ResolveSyncProgress,
+  ResolveImportEditProgress, ResolveImportEditResult, ResolveProxyDone, ResolveProxyProgress, ResolvePushProgress, ResolvePushTimelineRequest, ResolvePushTimelineResult,
+  ResolveStatus, ResolveSyncApplyRequest, ResolveSyncPreview, ResolveSyncPreviewRequest, ResolveSyncProgress,
   ResolveSyncResult, ResolveTimelineInfo,
 } from './core/resolveIpc'
 import type { ResolvePluginInfo } from '../electron/resolve/install'
@@ -122,6 +123,8 @@ declare global {
       resolveSyncApply(request: ResolveSyncApplyRequest): Promise<ResolveSyncResult>
       resolveJumpTo(timelineId: string, frame: number): Promise<void>
       onResolveSyncProgress(callback: (progress: ResolveSyncProgress) => void): () => void
+      resolvePushTimeline(request: ResolvePushTimelineRequest): Promise<ResolvePushTimelineResult>
+      onResolvePushProgress(callback: (progress: ResolvePushProgress) => void): () => void
     }
   }
 }

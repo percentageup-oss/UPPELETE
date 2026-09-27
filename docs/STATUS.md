@@ -1,5 +1,67 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 12: KathaCut → Resolve, "Create in DaVinci"
+
+**Changes:**
+- `src/resolve/pushPlan.ts` (new, pure): `planPush(project)` maps `captionClips` (video clips on non-hidden
+  tracks) without a speed curve to `{ assetId, trackIndex (1-based, KathaCut video-track order),
+  recordOffsetFrames, sourceStartFrame, sourceEndFrame }`. Record frames come from `timelineStartUs` through
+  the sequence's own fps (`project.format`, else `formatFromMedia` of `primaryVideoAsset`); source frames come
+  from `sourceStartUs`/`sourceEndUs` through the asset's own probed frame rate. Each boundary is rounded on its
+  own via `usToTimelineFrame`; `sourceEndFrame` is inclusive, matching the convention `bridge.lua`'s existing
+  `insertClips` already uses for `AppendToTimeline` (ADR 0009 could not tell inclusive/exclusive apart at its
+  test precision, so this is the best available inference, not a confirmed fact). Speed-curved video clips and
+  every non-video item (audio/image/color/adjustment clips, text overlays, shapes, effects, blur regions, zoom
+  regions) are counted into `notSent` by feature, never dropped silently. Throws if no format can be
+  determined (no video yet).
+- `src/resolve/frames.ts`: `formatResolveFps`, the inverse of `parseResolveFps` (a known NTSC rational
+  round-trips to its exact decimal string; anything else becomes `num/den`).
+- `resources/resolve/bridge.lua`: three new handlers reusing the existing helpers (`requireTimeline`,
+  `findFolderNamed`, `clipProperty`). `createTimeline { name, fps, width, height }` de-duplicates the name
+  against every existing timeline in the project (` (2)`, ` (3)`…), creates it via
+  `mediaPool:CreateEmptyTimeline`, sets custom fps/size (returning a `note` if any `SetSetting` call failed),
+  and makes it current — never touches an existing timeline or switches projects.  `importMedia { paths }`
+  finds or creates the `KathaCut Media` bin at the root, reuses an item whose `File Path` matches (no
+  duplicate imports, ADR 0009), otherwise `ImportMedia`s it. `appendVideoClips { timelineId, clips }` looks
+  media pool items up by `File Path` in that bin, adds video tracks up to the highest requested `trackIndex`,
+  and calls one `AppendToTimeline` per batch; a missing bin item errors the whole batch (main stops the push
+  and reports what was already created) rather than silently skipping a clip. `mediaType` is left unset so a
+  clip's own embedded audio comes along (ADR 0009 flagged this as unconfirmed for `AppendToTimeline`).
+- `src/core/resolveIpc.ts`: `resolvePushClipSchema`/`resolvePushTimelineRequestSchema`/
+  `resolvePushTimelineResultSchema`/`resolvePushProgressSchema` (renderer ↔ main) and the three bridge-result
+  schemas. The request carries each asset's `fingerprint`, never a path.
+- `electron/resolve/push.ts` (new): `pushTimeline` resolves every `fingerprint` through the same
+  `lookupMedia` registry `registerExportIpc` uses — a missing/unrelinked asset throws before Resolve creates
+  anything. Then `createTimeline` → `importMedia` (batches of 25 paths) → `appendVideoClips` (batches of 50
+  clips, ADR 0009's Text+ batch size; plain video placement is unmeasured but assumed no slower). A failure
+  after the timeline exists is re-thrown naming the timeline, so the user knows to check Resolve.
+- `electron/resolve/ipc.ts` + `electron/main.ts`: `resolve:push-timeline` (validated, one at a time, progress
+  over `resolve:push-progress`); `ResolveIpcDeps` gained `lookupMedia`, wired from main's existing
+  `inspectedMedia`/`fingerprintKey` registry (the same one `registerExportIpc` uses).
+- Preload/`env.d.ts`: `resolvePushTimeline`, `onResolvePushProgress`.
+- `src/resolve/CreateInResolve.tsx` (new), wired into `App.tsx`'s header next to the Resolve pill: shown
+  whenever the project has captions. The dialog shows the timeline name (editable, default the project
+  title), fps/size, what's sent (clip/caption counts) and the `notSent` list, plus a note when the project is
+  already linked ("this makes a new timeline and moves the link to it"). On Create: `resolve:push-timeline`,
+  then a provisional `resolveLink` (`origin: 'pushed'`), `planTextPlus` against it, `resolve:sync-apply`, then
+  one `commit` sets the final link with the returned `synced` — one undo step. `src/resolve/ResolveSync.tsx`'s
+  "video edit changed" disabled reason now also says "Use Create in DaVinci to make a new timeline."
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes). Real verification needs
+Resolve; see the brief's manual check. Windows only when it is run; Mac unverified.
+
+**Limitations:** `AddSubFolder` (creating the `KathaCut Media` bin) and per-clip source/record frame
+correspondence are unexercised by the spike; a clip that lands a frame or two off its requested position is
+not flagged (ADR 0009 already notes ±1 frame read-back noise, so exact-match mismatch detection wasn't
+attempted for video clips, unlike the caption sync path). Embedded-audio placement, `endFrame` inclusivity
+and multi-track ordering are all inferred from ADR 0009 rather than confirmed. Pushing later cut changes into
+an existing pushed timeline, and everything in "Out of scope" (audio clips, images, overlays, shapes,
+effects, speed curves, transitions, grades, zooms), stay unsent — the dialog lists them per-project.
+
+**Next:** the user runs the brief's manual check in Resolve. A unit test for `planPush` (frame math, track
+numbering, the `notSent` inventory) is cheap and worth adding if the user wants it. Then brief 07 (emphasis +
+word animations in Text+).
+
 ## 2026-09-27 — Resolve Text+ 11: import the DaVinci timeline edit (render becomes the fallback)
 
 **Changes:**

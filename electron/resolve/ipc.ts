@@ -1,17 +1,21 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
+import type { MediaFingerprint, ProjectMedia } from '../../src/core/media'
 import {
-  resolveEmptyResultSchema, resolveJumpRequestSchema, resolveSyncApplyRequestSchema, resolveSyncPreviewRequestSchema, resolveTimelineInfoSchema,
+  resolveEmptyResultSchema, resolveJumpRequestSchema, resolvePushTimelineRequestSchema, resolveSyncApplyRequestSchema, resolveSyncPreviewRequestSchema, resolveTimelineInfoSchema,
 } from '../../src/core/resolveIpc'
 import { getResolveBridge } from './bridge'
 import { importTimelineEdit } from './importEdit'
 import { installPlugin, pluginInfo, uninstallPlugin } from './install'
+import { pushTimeline } from './push'
 import { renderTimelineProxy, type RenderTimelineProxyDeps } from './proxy'
 import { applySync, jumpToFrame, previewSync } from './sync'
 
 export type ResolveIpcDeps = {
   /** The same probe main.ts uses for `dialog:open-video` (`inspectMedia`). */
   inspect: RenderTimelineProxyDeps['inspect']
+  /** main.ts's fingerprint registry, the same one `registerExportIpc` resolves assets from (12). */
+  lookupMedia(fingerprint: MediaFingerprint): { path: string; media: ProjectMedia } | undefined
 }
 
 /** Registered once at startup, alongside `registerMcpIpc` (`electron/main.ts`). The bridge itself is
@@ -49,6 +53,19 @@ export function registerResolveIpc(deps: ResolveIpcDeps): void {
   ipcMain.handle('resolve:jump-to',(_event, payload: unknown) => {
     const { timelineId, frame } = resolveJumpRequestSchema.parse(payload)
     return jumpToFrame(getResolveBridge(), timelineId, frame)
+  })
+
+  // Create in DaVinci (12): a new timeline in the open project. Payloads are validated here; media paths are
+  // resolved only from this session's fingerprint registry, never from the renderer.
+  let pushRunning = false
+  ipcMain.handle('resolve:push-timeline', async (event, payload: unknown) => {
+    const request = resolvePushTimelineRequestSchema.parse(payload)
+    if (pushRunning) throw new Error('A DaVinci timeline is already being created.')
+    pushRunning = true
+    try {
+      return await pushTimeline({ bridge: getResolveBridge(), lookupMedia: deps.lookupMedia }, request,
+        (progress) => { if (!event.sender.isDestroyed()) event.sender.send('resolve:push-progress', progress) })
+    } finally { pushRunning = false }
   })
 
   // Create-project-from-timeline (04): the render can take a while, so `resolve:create-proxy-start`

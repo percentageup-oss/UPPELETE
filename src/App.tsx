@@ -45,6 +45,7 @@ import { SettingsDialog, type SettingsTab } from './SettingsDialog'
 import type { McpStatus } from '../electron/mcp/config'
 import { ResolveStatusPill } from './resolve/ResolveStatusPill'
 import { ResolveSyncControl } from './resolve/ResolveSync'
+import { CreateInResolveControl } from './resolve/CreateInResolve'
 import { useResolveStatus } from './resolve/useResolveStatus'
 import { editSignature } from './resolve/editSignature'
 import type { ResolveEditSkip, ResolveImportEditResult, ResolveProxyResult } from './core/resolveIpc'
@@ -2505,6 +2506,8 @@ export default function App() {
         {project.resolveLink && <ResolveSyncControl project={project} link={project.resolveLink} liveTimelineId={resolveLiveTimelineId}
           onMessage={(tone, text) => setNotice({ tone, text })}
           onSynced={(synced) => commit((current) => current.resolveLink ? { ...current, resolveLink: { ...current.resolveLink, synced } } : current)} />}
+        <CreateInResolveControl project={project} onMessage={(tone, text) => setNotice({ tone, text })}
+          onLinked={(link) => commit((current) => ({ ...current, resolveLink: link }))} />
         <ResolveStatusPill onMessage={(tone, text) => setNotice({ tone, text })} />
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />

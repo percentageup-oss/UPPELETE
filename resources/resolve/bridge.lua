@@ -596,6 +596,110 @@ handlers["jumpTo"] = function(params)
 end
 
 -- ---------------------------------------------------------------------------
+-- Create in DaVinci (12): a new timeline in the currently open Resolve project, KathaCut's video clips and
+-- their media. Never switches or creates a Resolve project. Captions arrive afterwards through the existing
+-- `insertClips` (Sync), against the timeline `createTimeline` returns.
+-- ---------------------------------------------------------------------------
+
+local MEDIA_FOLDER = "KathaCut Media"
+
+local function existingTimelineNames(project)
+  local names = {}
+  for index = 1, (project:GetTimelineCount() or 0) do
+    local timeline = project:GetTimelineByIndex(index)
+    if timeline then names[timeline:GetName()] = true end
+  end
+  return names
+end
+
+local function uniqueTimelineName(project, base)
+  local names = existingTimelineNames(project)
+  if not names[base] then return base end
+  local suffix = 2
+  while names[base .. " (" .. suffix .. ")"] do suffix = suffix + 1 end
+  return base .. " (" .. suffix .. ")"
+end
+
+handlers["createTimeline"] = function(params)
+  local project = currentProject()
+  if not project then error("No Resolve project is open") end
+  local mediaPool = project:GetMediaPool()
+  local name = uniqueTimelineName(project, params.name)
+  local timeline = mediaPool:CreateEmptyTimeline(name)
+  if not timeline then error("Resolve refused to create a new timeline") end
+  local ok1 = pcall(function() timeline:SetSetting("useCustomSettings", "1") end)
+  local ok2 = pcall(function() timeline:SetSetting("timelineFrameRate", params.fps) end)
+  local ok3 = pcall(function() timeline:SetSetting("timelineResolutionWidth", tostring(params.width)) end)
+  local ok4 = pcall(function() timeline:SetSetting("timelineResolutionHeight", tostring(params.height)) end)
+  project:SetCurrentTimeline(timeline)
+  local note = json.null
+  if not (ok1 and ok2 and ok3 and ok4) then note = "Resolve could not set this timeline's custom frame rate or size; check Timeline Settings." end
+  return { timelineId = timeline:GetUniqueId(), startFrame = timeline:GetStartFrame(), name = name, projectName = project:GetName(), note = note }
+end
+
+handlers["importMedia"] = function(params)
+  local project = currentProject()
+  if not project then error("No Resolve project is open") end
+  local mediaPool = project:GetMediaPool()
+  local folder = findFolderNamed(mediaPool:GetRootFolder(), MEDIA_FOLDER, 0)
+  if not folder then
+    folder = mediaPool:AddSubFolder(mediaPool:GetRootFolder(), MEDIA_FOLDER)
+    if not folder then error("Could not create the KathaCut Media bin") end
+  end
+  local existingByPath = {}
+  for _, clip in ipairs(folder:GetClipList() or {}) do
+    local path = clipProperty(clip, "File Path")
+    if path then existingByPath[path] = true end
+  end
+  local previous = mediaPool:GetCurrentFolder()
+  mediaPool:SetCurrentFolder(folder)
+  local items = json.array({})
+  for _, path in ipairs(params.paths) do
+    if existingByPath[path] then
+      table.insert(items, { path = path, ok = true })
+    else
+      local imported = mediaPool:ImportMedia({ path })
+      table.insert(items, { path = path, ok = imported ~= nil and #imported > 0 })
+    end
+  end
+  if previous then mediaPool:SetCurrentFolder(previous) end
+  return { items = items }
+end
+
+handlers["appendVideoClips"] = function(params)
+  local project, timeline = requireTimeline(params)
+  local mediaPool = project:GetMediaPool()
+  local folder = findFolderNamed(mediaPool:GetRootFolder(), MEDIA_FOLDER, 0)
+  if not folder then error("The KathaCut Media bin is missing") end
+  local itemByPath = {}
+  for _, clip in ipairs(folder:GetClipList() or {}) do
+    local path = clipProperty(clip, "File Path")
+    if path then itemByPath[path] = clip end
+  end
+
+  local maxTrack = 0
+  for _, spec in ipairs(params.clips) do if spec.trackIndex > maxTrack then maxTrack = spec.trackIndex end end
+  while (timeline:GetTrackCount("video") or 0) < maxTrack do
+    if not timeline:AddTrack("video") then error("Resolve refused to add a video track") end
+  end
+
+  local infos = {}
+  for index, spec in ipairs(params.clips) do
+    local item = itemByPath[spec.filePath]
+    if not item then error("Media for '" .. tostring(spec.filePath) .. "' is missing from the KathaCut Media bin") end
+    infos[index] = { mediaPoolItem = item, trackIndex = spec.trackIndex, recordFrame = spec.recordFrame, startFrame = spec.startFrame, endFrame = spec.endFrame }
+  end
+  local placed = mediaPool:AppendToTimeline(infos)
+  if not placed then error("Resolve refused to place the video clips") end
+  local results = json.array({})
+  for index = 1, #params.clips do
+    local item = placed[index]
+    table.insert(results, { ok = item ~= nil, error = item and json.null or "Resolve did not place this clip" })
+  end
+  return { clips = results }
+end
+
+-- ---------------------------------------------------------------------------
 -- Launch KathaCut if it isn't already running and answering (app.json heartbeat under 5 s old).
 -- ---------------------------------------------------------------------------
 

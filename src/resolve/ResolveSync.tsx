@@ -63,7 +63,7 @@ export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, on
   const proxyMissing = link.origin === 'proxy' && !project.assets.some((asset) => asset.id === link.proxyAssetId)
   const disabledReason = !window.captionStudio ? 'Sync to Resolve is available in the desktop app.'
     : proxyMissing ? 'The DaVinci proxy video was removed from this project.'
-    : editChanged ? 'The video edit changed since this project was linked to DaVinci.'
+    : editChanged ? 'The video edit changed since this project was linked to DaVinci. Use Create in DaVinci to make a new timeline.'
     : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → KathaCut.'
     : liveTimelineId === null ? 'Checking which timeline Resolve has open…'
     : liveTimelineId !== link.timelineId ? `Resolve has a different timeline open. Switch to “${link.timelineName}” in Resolve.`
