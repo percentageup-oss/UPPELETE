@@ -19,3 +19,38 @@ export function parseResolveFps(raw: string): { num: number; den: number } {
   if (!Number.isFinite(value) || value <= 0) throw new Error(`Unrecognized DaVinci Resolve frame rate: ${raw}`)
   return { num: value, den: 1 }
 }
+
+export type ResolveFrameLink = { startFrame: number; fps: { num: number; den: number } }
+
+/**
+ * Rounds `n / d` (both non-negative) to the nearest integer without going through a float division,
+ * so a large `n` (e.g. `us * fps.num` for a multi-hour timeline) never silently loses precision past
+ * 2^53. `floor((2n + d) / (2d))` is the standard integer form of `round(n / d) = floor(n/d + 0.5)`,
+ * and bigint division already truncates toward zero, i.e. floors for non-negative operands.
+ */
+function roundRatio(n: bigint, d: bigint): bigint {
+  return (2n * n + d) / (2n * d)
+}
+
+/**
+ * Cue source µs on the proxy asset -> absolute Resolve timeline record frame (docs/plans/resolve-textplus/README.md,
+ * "Time mapping"). `us` can be up to `Number.MAX_SAFE_INTEGER` per `cueSchema`/`wordSchema`, and `us * fps.num` can
+ * exceed 2^53 for a long timeline at a high frame rate, so the multiply-then-divide happens in `bigint`, not
+ * `number`, per the brief's "integer-safe math" requirement. Each boundary (a cue's start, its end, the next cue's
+ * start) is computed independently — never by adding a frame count to a previous frame — so rounding never
+ * accumulates.
+ */
+export function usToTimelineFrame(us: number, link: ResolveFrameLink): number {
+  if (!Number.isSafeInteger(us) || us < 0) throw new Error(`usToTimelineFrame expects a non-negative safe-integer microsecond timestamp, got ${us}.`)
+  const frameOffset = roundRatio(BigInt(us) * BigInt(link.fps.num), BigInt(link.fps.den) * 1_000_000n)
+  return link.startFrame + Number(frameOffset)
+}
+
+/** The inverse of `usToTimelineFrame`, used by `jumpTo` (06) to seek KathaCut's preview to match a Resolve frame. */
+export function timelineFrameToUs(frame: number, link: ResolveFrameLink): number {
+  if (!Number.isInteger(frame)) throw new Error(`timelineFrameToUs expects an integer frame, got ${frame}.`)
+  const offsetFrames = frame - link.startFrame
+  const sign = offsetFrames < 0 ? -1 : 1
+  const us = roundRatio(BigInt(Math.abs(offsetFrames)) * BigInt(link.fps.den) * 1_000_000n, BigInt(link.fps.num))
+  return sign * Number(us)
+}

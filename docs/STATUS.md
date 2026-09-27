@@ -1,5 +1,57 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 05: Text+ planner (pure TS)
+
+**Changes:**
+- `src/resolve/frames.ts`: `usToTimelineFrame(us, link)` / `timelineFrameToUs(frame, link)` — cue source µs on the
+  proxy ↔ absolute Resolve record frame. Computed in `bigint` (`us * fps.num` can exceed 2^53 for a long timeline
+  at a high frame rate) with a standard integer round-half-up (`floor((2n+d)/(2d))`); each boundary is rounded
+  independently, never accumulated.
+- `src/resolve/textPlusInputs.ts` (new): the Text+ input-ID table from ADR 0008, `LUA_INPUT_WHITELIST`,
+  `textPlusSize` (px → `Size`), `centerFor` (the y-flip), `colorToRgba01`, `horizontalJustificationFor`,
+  `styleNameFor` (weight/italic → `Style`), `applyTextTransform` (grapheme-safe uppercase/lowercase/capitalize,
+  since Text+ has no CSS-style text-transform of its own).
+- `src/resolve/specHash.ts` (new): `stableStringify` (sorted-key JSON) + `fnv1a32Hex`, for the spec `hash` 06 will
+  diff against.
+- `src/resolve/textPlusPlan.ts` (new): `planTextPlus(project, measure)`. Only runs when `project.resolveLink` is
+  set; selects cues via the existing `displayedCues` (language layer) filtered to the proxy asset, splits into
+  one spec per shown word when `captionDisplay === 'word'` and the cue's word timing can drive it (else falls
+  back to the whole cue and flags it in `support`), maps time via `usToTimelineFrame` with each spec's end
+  clamped to the next spec's start (extended to one frame, or skipped, when that leaves no room), resolves each
+  cue's style exactly as the preview does (`resolveCaptionStyle` + `captionStyleInputs`), runs `layoutCaption` to
+  get KathaCut's own line breaks, and maps font/colour/outline/shadow/background/position/spacing/alignment to
+  the whitelisted Text+ inputs. `keyframes`/`styleRanges` are left empty for brief 07.
+
+**Mapping table (support levels `planTextPlus` reports):**
+
+| Feature | Level | Why |
+|---|---|---|
+| Text | sent | `StyledText`, Malayalam shaping visually confirmed (T9) |
+| Primary color / outline enable+color | sent | `Red1..Alpha1` / `Enabled2,Red2..Blue2` confirmed by T9 |
+| Text transform | sent | applied to the string itself, grapheme-safe |
+| Font family, Style (weight/italic), outline thickness, shadow (enable-only), background box (enable-only), line/character spacing, alignment, line breaks | **approximated** | ID confirmed present but the value mapping is unmeasured/unconfirmed (ADR 0008) — see per-feature notes in the plan's own `support` output |
+| **Font size** | **approximated** | ADR 0008 explicitly has **no measured px→`Size` formula** ("Size calibration" blocked pending a re-run of the spike); this uses an unverified placeholder (`Size` = output px / frame height) |
+| **Position** | **approximated** | `Center`'s Y-axis direction is unconfirmed by the spike; assumes "y up" per the original research |
+| Gradient fill, glow, 3D depth, underline, emphasis, caption motion | not-sent | no Text+ equivalent identified, or deferred to brief 07 |
+| Rotation | not-sent | no single confirmed `Angle` input exists yet (ADR 0008); candidates untested |
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` passes). No Resolve, IPC or Lua calls exist
+in this brief — it is pure TypeScript consumed by 06.
+
+**Limitations:**
+- Per the plan's README ("when the ADR and a brief disagree, follow the ADR"): the brief text listed rotation
+  under "sent", but ADR 0008 has no confirmed single rotation input, so it is reported `not-sent` here instead.
+- Several mappings above (size, position, alignment enum, Style name validity) are best-effort placeholders the
+  ADR itself flags as unmeasured/unconfirmed; each carries a `note` in `planTextPlus`'s `support` output, and none
+  should be trusted before a visual check in Resolve.
+- No confirmed Resolve input sets Text+'s own text-box wrap width, so a KathaCut line break sent via `\n` could
+  still be re-wrapped by Text+ itself inside its own box.
+- Offered, not written (per the plan's no-tests override): a small unit test for `usToTimelineFrame` covering the
+  29.97/23.976 rounding cases, since it's a pure function where an off-by-one-frame bug would be easy to miss.
+
+**Next:** brief 06 (sync to Resolve — incremental apply, conflict detection) consumes `planTextPlus` and the Lua
+whitelist from `textPlusInputs.ts`.
+
 ## 2026-09-27 — Resolve Text+ 04: create project from current DaVinci timeline
 
 **Changes:**
