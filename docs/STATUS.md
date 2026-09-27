@@ -1,5 +1,68 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 06: Sync to Resolve (incremental, conflicts)
+
+**Changes:**
+- `resources/resolve/kathacut-captions.drb` (new, exported by the user from Resolve Studio 21.0.0.47): bin
+  `KathaCut` holding the Text+ template item **`Fusion Title`** (plus an unused `Timeline 1`). No media or local
+  paths inside.
+- `resources/resolve/bridge.lua`: new handlers `ensureTemplate` (finds bin `KathaCut` → clip by name, else
+  `ImportFolderFromFile(drbPath)` into the root folder and searches again), `findTrack`, `ensureTrack` (`AddTrack` at
+  the top + `SetTrackName`), `readClips` (per-item `pcall`; `key` = comp `GetData("KathaCut.key")`, text only for
+  tagged clips), `insertClips` (one `AppendToTimeline` per batch, `startFrame=0, endFrame=len-1`, then `applySpec`
+  + tag; a clip whose spec fails is deleted again so no untagged clip is left behind; returns actual start/end),
+  `updateClips`, `deleteClips` (only items on the given track), `jumpTo` (timecode). Every handler checks
+  `params.timelineId` against the open timeline. `applySpec` writes only ids in a hard-coded `INPUT_WHITELIST`
+  (copied from `LUA_INPUT_WHITELIST`), inside `comp:Lock()`/`Unlock()`; request values are data only.
+- `src/resolve/syncDiff.ts` (new, pure): `diffSync` (match by clip id, fall back to the key tag; changed-in-Resolve
+  = start/end/text differ from the synced entry; adopt a tagged but unrecorded clip when its text matches),
+  `planSync` (folds conflict decisions; missing decision = keep Resolve), `countPendingChanges` (badge).
+- `src/resolve/frames.ts`: `timelineFrameToTimecode` (incl. drop-frame for 29.97/59.94) for "Show in Resolve".
+- `src/core/resolveIpc.ts`: sync request/preview/result/progress schemas (specs ≤ 20000, text ≤ 4000, input ids
+  must be in `LUA_INPUT_WHITELIST`) and bridge-result schemas.
+- `electron/resolve/sync.ts` (new): `previewSync`, `applySync` (fresh `readClips` → diff → `ensureTemplate` →
+  `ensureTrack` → deletes (50/batch) → inserts (20/batch) → updates (20/batch), progress events, stops at the first
+  failing batch and returns a synced list for only what happened), `jumpToFrame`. The template path is resolved in
+  main (`bridgeResourcesDir()/kathacut-captions.drb`).
+- `electron/resolve/ipc.ts`, `electron/preload.ts`, `src/env.d.ts`: `resolve:sync-preview`, `resolve:sync-apply`
+  (one at a time), `resolve:jump-to`, `resolve:sync-progress`.
+- `src/resolve/ResolveSync.tsx` (new) + `src/App.tsx` + `src/styles.css`: **Sync to Resolve** button beside the
+  linked pill with a change-count / "Synced" badge (planner runs in the renderer, debounced 300 ms). Disabled with
+  a tooltip when disconnected, on another timeline, or when the proxy asset is gone. Review dialog: counts, target
+  track, conflicts (Keep Resolve version by default / Overwrite / Show in Resolve), foreign-clip note, support list.
+  Progress dialog while applying; the new `resolveLink.synced` is committed as one undo step.
+
+**Deviations from the brief:**
+- Kept-Resolve conflicts are **not dropped** from `synced`. They stay as an entry with `hash = RELEASED_HASH`
+  (`'kathacut:kept-resolve'`), which the diff never updates, deletes or re-inserts. If they were dropped, the
+  still-tagged clip would come back as a conflict on every later sync, or the caption would be inserted a second
+  time. A released entry is forgotten only once the clip is gone from Resolve **and** the caption is gone from
+  KathaCut. Currently the only way to "un-release" a caption is to undo the sync in KathaCut.
+- A third conflict kind, `untracked-in-resolve`: a clip tagged by KathaCut that this project's sync record doesn't
+  have, and whose text no longer matches (or whose caption is gone). Overwriting replaces or deletes it.
+- Overwriting a clip that was changed in Resolve **replaces** it (delete + insert) rather than updating it in
+  place, so no Resolve-side edits to other inputs remain.
+- Undo steps have no labels in this codebase (`commitHistory`), so the "Sync to Resolve" label isn't shown.
+- `jumpTo` takes a timecode computed in TS (from `timelineInfo`'s fps and drop-frame flag), not a frame.
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .`). Nobody has run this against Resolve yet.
+
+**Limitations:**
+- Batch sizes are unmeasured guesses (ADR 0008: T13 never ran).
+- Unconfirmed against real Resolve: that `AppendToTimeline` honours `recordFrame`/`trackIndex` for a title item,
+  that `endFrame` is inclusive, the order of returned items, and whether a title item can be stretched past its
+  default length. A clip that lands at the wrong frames is reported in the result notice. It is still recorded
+  with its actual frames, so later syncs will not retry it.
+- Importing the `.drb` also brings the unused `Timeline 1` into the user's Resolve project. Re-exporting the bin
+  without it would avoid that.
+- Whether `SetData` tags survive closing and reopening a Resolve project is untested (ADR 0008). If they don't, the
+  diff still matches clips by clip id.
+- Size, position Y-axis, justification enum and styles are still the brief 05 placeholders.
+- Windows only for the code paths; Mac untested.
+
+**Next:** the user runs the manual check in `06-sync.md`. Opt-in offer: a unit test for `diffSync`/`planSync`
+(pure). Then brief 07 (emphasis + word animations).
+
 ## 2026-09-27 — Resolve Text+ 05: Text+ planner (pure TS)
 
 **Changes:**

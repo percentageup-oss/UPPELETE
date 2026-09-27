@@ -54,3 +54,26 @@ export function timelineFrameToUs(frame: number, link: ResolveFrameLink): number
   const us = roundRatio(BigInt(Math.abs(offsetFrames)) * BigInt(link.fps.den) * 1_000_000n, BigInt(link.fps.num))
   return sign * Number(us)
 }
+
+/**
+ * Absolute Resolve record frame -> the timecode string `SetCurrentTimecode` takes (06's "Show in Resolve"). Frame 0
+ * is 00:00:00:00, so a timeline starting at 01:00:00:00 at 30 fps starts at frame 108000 (ADR 0008, T3). Drop-frame
+ * numbering (`;` separator) applies only to the 30000/1001 and 60000/1001 rates.
+ */
+export function timelineFrameToTimecode(frame: number, fps: { num: number; den: number }, dropFrame: boolean): string {
+  if (!Number.isSafeInteger(frame) || frame < 0) throw new Error(`timelineFrameToTimecode expects a non-negative integer frame, got ${frame}.`)
+  const nominal = Math.round(fps.num / fps.den)
+  const drop = dropFrame && fps.den === 1001 && (nominal === 30 || nominal === 60) ? nominal / 15 : 0
+  let label = frame
+  if (drop) {
+    const perTenMinutes = nominal * 600 - drop * 9
+    const perMinute = nominal * 60 - drop
+    const tens = Math.floor(frame / perTenMinutes)
+    const rest = frame % perTenMinutes
+    label += drop * 9 * tens + (rest > drop ? drop * Math.floor((rest - drop) / perMinute) : 0)
+  }
+  const ff = label % nominal
+  const totalSeconds = Math.floor(label / nominal)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${pad(Math.floor(totalSeconds / 3600))}:${pad(Math.floor(totalSeconds / 60) % 60)}:${pad(totalSeconds % 60)}${drop ? ';' : ':'}${pad(ff)}`
+}

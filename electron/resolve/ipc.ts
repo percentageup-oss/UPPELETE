@@ -1,9 +1,12 @@
 import { ipcMain } from 'electron'
 import { randomUUID } from 'node:crypto'
-import { resolveEmptyResultSchema, resolveTimelineInfoSchema } from '../../src/core/resolveIpc'
+import {
+  resolveEmptyResultSchema, resolveJumpRequestSchema, resolveSyncApplyRequestSchema, resolveSyncPreviewRequestSchema, resolveTimelineInfoSchema,
+} from '../../src/core/resolveIpc'
 import { getResolveBridge } from './bridge'
 import { installPlugin, pluginInfo, uninstallPlugin } from './install'
 import { renderTimelineProxy, type RenderTimelineProxyDeps } from './proxy'
+import { applySync, jumpToFrame, previewSync } from './sync'
 
 export type ResolveIpcDeps = {
   /** The same probe main.ts uses for `dialog:open-video` (`inspectMedia`). */
@@ -19,6 +22,23 @@ export function registerResolveIpc(deps: ResolveIpcDeps): void {
   ipcMain.handle('resolve:uninstall-plugin', () => uninstallPlugin())
   ipcMain.handle('resolve:timeline-info', () => getResolveBridge().request('timelineInfo', {}, resolveTimelineInfoSchema))
   ipcMain.handle('resolve:disconnect', () => getResolveBridge().request('disconnect', {}, resolveEmptyResultSchema))
+
+  // Sync to Resolve (06). Payloads are validated here; the apply recomputes the diff from a fresh read of the
+  // Resolve track, and the template path is resolved in main, never taken from the renderer.
+  let syncRunning = false
+  ipcMain.handle('resolve:sync-preview', (_event, payload: unknown) => previewSync(getResolveBridge(), resolveSyncPreviewRequestSchema.parse(payload)))
+  ipcMain.handle('resolve:sync-apply', async (event, payload: unknown) => {
+    const request = resolveSyncApplyRequestSchema.parse(payload)
+    if (syncRunning) throw new Error('A sync to DaVinci Resolve is already running.')
+    syncRunning = true
+    try {
+      return await applySync(getResolveBridge(), request, (progress) => { if (!event.sender.isDestroyed()) event.sender.send('resolve:sync-progress', progress) })
+    } finally { syncRunning = false }
+  })
+  ipcMain.handle('resolve:jump-to', (_event, payload: unknown) => {
+    const { timelineId, frame } = resolveJumpRequestSchema.parse(payload)
+    return jumpToFrame(getResolveBridge(), timelineId, frame)
+  })
 
   // Create-project-from-timeline (04): the render can take a while, so `resolve:create-proxy-start`
   // returns a `requestId` immediately and the render runs in the background; its progress and final

@@ -937,3 +937,16 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .caption-translate-progress { display: flex; align-items: center; gap: 8px; font-size: 11px; color: #aeb7b3; }
 .caption-translate-progress progress { flex: 1; }
 .caption-language-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.resolve-sync-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
+.resolve-sync-badge { border-radius: 999px; padding: 1px 7px; font-size: 10px; background: #10241b; color: #7fd8a0; }
+.resolve-sync-badge.pending { background: #1a2a44; color: #9cc3ff; }
+.resolve-sync-dialog { width: min(640px, calc(100vw - 64px)); }
+.resolve-sync-dialog h3 { margin: 16px 0 6px; font-size: 14px; }
+.resolve-sync-dialog h4 { margin: 10px 0 4px; font-size: 12px; color: #9aabc2; }
+.resolve-sync-dialog progress { width: 100%; }
+.resolve-sync-counts { display: flex; gap: 18px; list-style: none; padding: 0; margin: 8px 0; }
+.resolve-sync-note { font-size: 12px; color: #9aabc2; }
+.resolve-sync-conflict { display: grid; gap: 4px; padding: 8px 10px; margin: 6px 0; border: 1px solid #3a414d; border-radius: 8px; font-size: 12px; }
+.resolve-sync-conflict-head { display: flex; justify-content: space-between; align-items: center; color: #ffda8b; }
+.resolve-sync-support ul { margin: 0; padding-left: 18px; font-size: 12px; color: #bdc5d4; }
+.resolve-sync-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }

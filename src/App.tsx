@@ -44,6 +44,7 @@ import { MenuButton, type MenuEntry } from './MenuButton'
 import { SettingsDialog, type SettingsTab } from './SettingsDialog'
 import type { McpStatus } from '../electron/mcp/config'
 import { ResolveStatusPill } from './resolve/ResolveStatusPill'
+import { ResolveSyncControl } from './resolve/ResolveSync'
 import { useResolveStatus } from './resolve/useResolveStatus'
 import type { ResolveProxyResult } from './core/resolveIpc'
 import { SilenceRemovalDialog } from './SilenceRemovalDialog'
@@ -2407,6 +2408,9 @@ export default function App() {
             : label
           return <span className={`resolve-pill${mismatched ? ' warning' : ' connected'}`} title={title}>{label}</span>
         })()}
+        {project.resolveLink && <ResolveSyncControl project={project} link={project.resolveLink} liveTimelineId={resolveLiveTimelineId}
+          onMessage={(tone, text) => setNotice({ tone, text })}
+          onSynced={(synced) => commit((current) => current.resolveLink ? { ...current, resolveLink: { ...current.resolveLink, synced } } : current)} />}
         <ResolveStatusPill onMessage={(tone, text) => setNotice({ tone, text })} />
         <span className={`save-status${saveStatus?.kind === 'error' ? ' save-status-error' : ''}`} role="status" title={projectPath ?? 'Save the project to enable autosave'}>{saveStatusText}</span>
         <MenuButton label="File" entries={fileEntries} />

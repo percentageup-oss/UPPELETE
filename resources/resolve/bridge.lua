@@ -227,6 +227,237 @@ handlers["renderCancel"] = function(params)
 end
 
 -- ---------------------------------------------------------------------------
+-- Sync to Resolve (06): Text+ clips on KathaCut's own video track. Batching and the diff live in
+-- KathaCut's TypeScript; each handler here does one short step. Every handler checks that Resolve
+-- still has the linked timeline open, and only ever touches items on the track index it was given.
+-- ---------------------------------------------------------------------------
+
+-- The only Text+ inputs KathaCut ever writes. Copied from LUA_INPUT_WHITELIST in
+-- src/resolve/textPlusInputs.ts; keep the two lists identical.
+local INPUT_WHITELIST = {
+  StyledText = true, Font = true, Style = true, Size = true,
+  Enabled1 = true, Red1 = true, Green1 = true, Blue1 = true, Alpha1 = true,
+  Enabled2 = true, Red2 = true, Green2 = true, Blue2 = true, Thickness2 = true,
+  Enabled3 = true,
+  Enabled4 = true,
+  Center = true,
+  LineSpacing = true,
+  CharacterSpacing = true,
+  HorizontalJustificationNew = true,
+}
+
+local TEMPLATE_FOLDER = "KathaCut"
+local KEY_TAG = "KathaCut.key"
+
+local function isString(value) return type(value) == "string" end
+
+local function requireTimeline(params)
+  local project = currentProject()
+  if not project then error("No Resolve project is open") end
+  local timeline = project:GetCurrentTimeline()
+  if not timeline then error("No timeline is open in Resolve") end
+  if type(params) ~= "table" or timeline:GetUniqueId() ~= params.timelineId then
+    error("Resolve has a different timeline open")
+  end
+  return project, timeline
+end
+
+local function findFolderNamed(folder, name, depth)
+  if depth > 4 then return nil end
+  local subs = folder:GetSubFolderList() or {}
+  for _, sub in pairs(subs) do
+    if sub:GetName() == name then return sub end
+  end
+  for _, sub in pairs(subs) do
+    local found = findFolderNamed(sub, name, depth + 1)
+    if found then return found end
+  end
+  return nil
+end
+
+local function findTemplate(mediaPool, clipName)
+  local folder = findFolderNamed(mediaPool:GetRootFolder(), TEMPLATE_FOLDER, 0)
+  if not folder then return nil end
+  for _, clip in pairs(folder:GetClipList() or {}) do
+    if clip:GetName() == clipName then return clip end
+  end
+  return nil
+end
+
+local function findTrackIndex(timeline, name)
+  local count = timeline:GetTrackCount("video") or 0
+  for index = 1, count do
+    if timeline:GetTrackName("video", index) == name then return index end
+  end
+  return nil
+end
+
+local function itemsOnTrack(timeline, trackIndex)
+  if type(trackIndex) ~= "number" or trackIndex < 1 or trackIndex > (timeline:GetTrackCount("video") or 0) then
+    error("The KathaCut track is gone")
+  end
+  return timeline:GetItemListInTrack("video", trackIndex) or {}
+end
+
+local function textPlusTool(item)
+  local comp = item:GetFusionCompByIndex(1)
+  if not comp then return nil, nil end
+  local tool = comp:FindToolByID("TextPlus")
+  if not tool then
+    for _, candidate in pairs(comp:GetToolList(false, "TextPlus") or {}) do tool = candidate; break end
+  end
+  return comp, tool
+end
+
+-- Writes one spec onto a Text+ clip: whitelisted inputs only, values used as plain data.
+local function applySpec(item, spec)
+  local comp, tool = textPlusTool(item)
+  if not comp or not tool then error("The clip has no Text+ tool") end
+  comp:Lock()
+  local ok, err = pcall(function()
+    if type(spec.inputs) == "table" then
+      for id, value in pairs(spec.inputs) do
+        if INPUT_WHITELIST[id] then
+          if type(value) == "table" then
+            if type(value.x) == "number" and type(value.y) == "number" then tool:SetInput(id, { value.x, value.y }) end
+          elseif type(value) == "number" or type(value) == "string" then
+            tool:SetInput(id, value)
+          end
+        end
+      end
+    end
+    if isString(spec.text) then tool:SetInput("StyledText", spec.text) end
+    -- Keyframes and Character Level Styling ranges come with brief 07.
+    comp:SetData(KEY_TAG, spec.key)
+  end)
+  comp:Unlock()
+  if not ok then error(err) end
+end
+
+handlers["ensureTemplate"] = function(params)
+  local project = requireTimeline(params)
+  local mediaPool = project:GetMediaPool()
+  if findTemplate(mediaPool, params.clipName) then return { imported = false } end
+  local previous = mediaPool:GetCurrentFolder()
+  mediaPool:SetCurrentFolder(mediaPool:GetRootFolder())
+  local ok = mediaPool:ImportFolderFromFile(params.drbPath)
+  if previous then mediaPool:SetCurrentFolder(previous) end
+  if not ok or not findTemplate(mediaPool, params.clipName) then
+    error("Could not import the KathaCut Text+ template into the Media Pool")
+  end
+  return { imported = true }
+end
+
+handlers["findTrack"] = function(params)
+  local _, timeline = requireTimeline(params)
+  return { trackIndex = findTrackIndex(timeline, params.name) or json.null }
+end
+
+handlers["ensureTrack"] = function(params)
+  local _, timeline = requireTimeline(params)
+  local index = findTrackIndex(timeline, params.name)
+  if index then return { trackIndex = index } end
+  if not timeline:AddTrack("video") then error("Resolve refused to add a video track") end
+  index = timeline:GetTrackCount("video")
+  timeline:SetTrackName("video", index, params.name)
+  return { trackIndex = index }
+end
+
+handlers["readClips"] = function(params)
+  local _, timeline = requireTimeline(params)
+  local clips = json.array({})
+  for _, item in pairs(itemsOnTrack(timeline, params.trackIndex)) do
+    local ok, entry = pcall(function()
+      local entry = { clipId = item:GetUniqueId(), startFrame = item:GetStart(), endFrame = item:GetEnd(), key = json.null, text = json.null }
+      local okTool, comp, tool = pcall(textPlusTool, item)
+      if okTool and comp then
+        local key = comp:GetData(KEY_TAG)
+        if isString(key) then
+          entry.key = key
+          if tool then
+            local text = tool:GetInput("StyledText")
+            if isString(text) then entry.text = text end
+          end
+        end
+      end
+      return entry
+    end)
+    if ok and entry and isString(entry.clipId) then table.insert(clips, entry) end
+  end
+  return { clips = clips }
+end
+
+handlers["insertClips"] = function(params)
+  local project, timeline = requireTimeline(params)
+  itemsOnTrack(timeline, params.trackIndex)
+  local mediaPool = project:GetMediaPool()
+  local template = findTemplate(mediaPool, params.templateName)
+  if not template then error("The KathaCut Text+ template is missing from the Media Pool") end
+  local infos = {}
+  for index, spec in ipairs(params.clips) do
+    infos[index] = {
+      mediaPoolItem = template, mediaType = 1, trackIndex = params.trackIndex,
+      recordFrame = spec.startFrame, startFrame = 0, endFrame = spec.endFrame - spec.startFrame - 1,
+    }
+  end
+  local placed = mediaPool:AppendToTimeline(infos)
+  if not placed then error("Resolve refused to place the Text+ clips") end
+  local results = json.array({})
+  for index, spec in ipairs(params.clips) do
+    local item = placed[index]
+    if not item then
+      table.insert(results, { key = spec.key, clipId = json.null, startFrame = json.null, endFrame = json.null, error = "Resolve did not place this clip" })
+    else
+      local ok, err = pcall(applySpec, item, spec)
+      if ok then
+        table.insert(results, { key = spec.key, clipId = item:GetUniqueId(), startFrame = item:GetStart(), endFrame = item:GetEnd(), error = json.null })
+      else
+        -- Don't leave an untagged clip behind that KathaCut could never manage again.
+        pcall(function() timeline:DeleteClips({ item }, false) end)
+        table.insert(results, { key = spec.key, clipId = json.null, startFrame = json.null, endFrame = json.null, error = tostring(err) })
+      end
+    end
+  end
+  return { clips = results }
+end
+
+handlers["updateClips"] = function(params)
+  local _, timeline = requireTimeline(params)
+  local byId = {}
+  for _, item in pairs(itemsOnTrack(timeline, params.trackIndex)) do byId[item:GetUniqueId()] = item end
+  local results = json.array({})
+  for _, entry in ipairs(params.clips) do
+    local item = byId[entry.clipId]
+    if not item then
+      table.insert(results, { clipId = entry.clipId, error = "The clip is no longer on the KathaCut track" })
+    else
+      local ok, err = pcall(applySpec, item, entry.spec)
+      table.insert(results, { clipId = entry.clipId, error = ok and json.null or tostring(err) })
+    end
+  end
+  return { clips = results }
+end
+
+handlers["deleteClips"] = function(params)
+  local _, timeline = requireTimeline(params)
+  local wanted = {}
+  local requested = 0
+  for _, clipId in ipairs(params.clipIds) do wanted[clipId] = true; requested = requested + 1 end
+  local items = {}
+  for _, item in pairs(itemsOnTrack(timeline, params.trackIndex)) do
+    if wanted[item:GetUniqueId()] then table.insert(items, item) end
+  end
+  if #items > 0 and not timeline:DeleteClips(items, false) then error("Resolve refused to delete the clips") end
+  return { deleted = #items, missing = requested - #items }
+end
+
+handlers["jumpTo"] = function(params)
+  local _, timeline = requireTimeline(params)
+  if not timeline:SetCurrentTimecode(params.timecode) then error("Resolve could not move the playhead") end
+  return {}
+end
+
+-- ---------------------------------------------------------------------------
 -- Launch KathaCut if it isn't already running and answering (app.json heartbeat under 5 s old).
 -- ---------------------------------------------------------------------------
 

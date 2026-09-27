@@ -22,7 +22,8 @@ import { agentRequestSchema, type AgentRequest, type AgentResponse } from '../sr
 import type { McpSettingsView, McpStatus } from './mcp/config'
 import type { RecentProjectView } from './projectLibrary'
 import {
-  resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema,
+  resolveProxyDoneSchema, resolveProxyProgressSchema, resolveStatusViewSchema, resolveSyncProgressSchema,
+  type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress, type ResolveSyncResult,
   type ResolveProxyDone, type ResolveProxyProgress, type ResolveStatus, type ResolveTimelineInfo,
 } from '../src/core/resolveIpc'
 import type { ResolvePluginInfo } from './resolve/install'
@@ -228,5 +229,16 @@ contextBridge.exposeInMainWorld('captionStudio', {
     }
     ipcRenderer.on('resolve:proxy-done', listener)
     return () => ipcRenderer.removeListener('resolve:proxy-done', listener)
+  },
+  resolveSyncPreview: (request: ResolveSyncPreviewRequest): Promise<ResolveSyncPreview> => ipcRenderer.invoke('resolve:sync-preview', request),
+  resolveSyncApply: (request: ResolveSyncApplyRequest): Promise<ResolveSyncResult> => ipcRenderer.invoke('resolve:sync-apply', request),
+  resolveJumpTo: (timelineId: string, frame: number): Promise<void> => ipcRenderer.invoke('resolve:jump-to', { timelineId, frame }),
+  onResolveSyncProgress: (callback: (progress: ResolveSyncProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      const parsed = resolveSyncProgressSchema.safeParse(value)
+      if (parsed.success) callback(parsed.data)
+    }
+    ipcRenderer.on('resolve:sync-progress', listener)
+    return () => ipcRenderer.removeListener('resolve:sync-progress', listener)
   },
 })

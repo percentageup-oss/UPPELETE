@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { projectMediaSchema } from './media'
+import { resolveLinkSchema } from './model'
+import { LUA_INPUT_WHITELIST } from '../resolve/textPlusInputs'
 
 /**
  * Mailbox protocol v1 (docs/plans/resolve-textplus/README.md): plain JSON files under
@@ -150,3 +152,106 @@ export const resolveStatusViewSchema = z.discriminatedUnion('state', [
   }),
 ])
 export type ResolveStatus = z.infer<typeof resolveStatusViewSchema>
+
+// ---------------------------------------------------------------------------------------------------------------
+// Sync to Resolve (06). Specs come from the renderer's planner (`src/resolve/textPlusPlan.ts`); main re-reads the
+// Resolve track and recomputes the diff itself (`src/resolve/syncDiff.ts`) rather than trusting a plan from the
+// renderer. Only whitelisted Text+ input ids pass validation; the Lua bridge checks the same whitelist again.
+// ---------------------------------------------------------------------------------------------------------------
+
+const inputIdSchema = z.string().refine((id) => LUA_INPUT_WHITELIST.includes(id), { message: 'Not a whitelisted Text+ input.' })
+const inputValueSchema = z.union([
+  z.number().finite(),
+  z.string().max(4000),
+  z.strictObject({ x: z.number().finite(), y: z.number().finite() }),
+])
+
+export const resolveSyncSpecSchema = z.strictObject({
+  key: z.string().min(1).max(256),
+  startFrame: z.number().int().nonnegative(),
+  endFrame: z.number().int().positive(),
+  text: z.string().max(4000),
+  inputs: z.record(inputIdSchema, inputValueSchema),
+  hash: z.string().min(1).max(64),
+}).refine((spec) => spec.endFrame > spec.startFrame, { message: 'A clip must be at least one frame long.' })
+export type ResolveSyncSpec = z.infer<typeof resolveSyncSpecSchema>
+
+const syncBaseSchema = {
+  timelineId: z.string().min(1).max(256),
+  trackName: z.string().min(1).max(64),
+  specs: z.array(resolveSyncSpecSchema).max(20000),
+  synced: resolveLinkSchema.shape.synced,
+}
+
+export const resolveSyncPreviewRequestSchema = z.strictObject(syncBaseSchema)
+export type ResolveSyncPreviewRequest = z.infer<typeof resolveSyncPreviewRequestSchema>
+
+export const resolveSyncApplyRequestSchema = z.strictObject({
+  ...syncBaseSchema,
+  decisions: z.record(z.string().max(256), z.enum(['keep-resolve', 'overwrite'])),
+})
+export type ResolveSyncApplyRequest = z.infer<typeof resolveSyncApplyRequestSchema>
+
+export const resolveSyncConflictViewSchema = z.strictObject({
+  key: z.string(),
+  kind: z.enum(['changed-in-resolve', 'deleted-in-resolve', 'untracked-in-resolve']),
+  clipId: z.string().optional(),
+  resolveText: z.string().nullable().optional(),
+  keptText: z.string().nullable(),
+  startFrame: z.number().int().optional(),
+})
+export type ResolveSyncConflictView = z.infer<typeof resolveSyncConflictViewSchema>
+
+/** What `resolve:sync-preview` returns: counts and conflicts only, never the specs themselves. */
+export const resolveSyncPreviewSchema = z.strictObject({
+  trackExists: z.boolean(),
+  insert: z.number().int(),
+  update: z.number().int(),
+  replace: z.number().int(),
+  remove: z.number().int(),
+  unchanged: z.number().int(),
+  foreign: z.number().int(),
+  conflicts: z.array(resolveSyncConflictViewSchema),
+})
+export type ResolveSyncPreview = z.infer<typeof resolveSyncPreviewSchema>
+
+export const resolveSyncResultSchema = z.strictObject({
+  synced: resolveLinkSchema.shape.synced,
+  errors: z.array(z.string()),
+})
+export type ResolveSyncResult = z.infer<typeof resolveSyncResultSchema>
+
+export const resolveSyncProgressSchema = z.strictObject({
+  done: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+  phase: z.enum(['template', 'track', 'delete', 'insert', 'update']),
+})
+export type ResolveSyncProgress = z.infer<typeof resolveSyncProgressSchema>
+
+export const resolveJumpRequestSchema = z.strictObject({ timelineId: z.string().min(1).max(256), frame: z.number().int().nonnegative() })
+
+// Bridge command results (06).
+export const resolveFindTrackResultSchema = z.strictObject({ trackIndex: z.number().int().positive().nullable() })
+export const resolveTrackResultSchema = z.strictObject({ trackIndex: z.number().int().positive() })
+export const resolveReadClipsResultSchema = z.strictObject({
+  clips: z.array(z.strictObject({
+    clipId: z.string().min(1),
+    startFrame: z.number().int(),
+    endFrame: z.number().int(),
+    key: z.string().nullable(),
+    text: z.string().nullable(),
+  })),
+})
+export const resolveInsertClipsResultSchema = z.strictObject({
+  clips: z.array(z.strictObject({
+    key: z.string(),
+    clipId: z.string().nullable(),
+    startFrame: z.number().int().nullable(),
+    endFrame: z.number().int().nullable(),
+    error: z.string().nullable(),
+  })),
+})
+export const resolveUpdateClipsResultSchema = z.strictObject({
+  clips: z.array(z.strictObject({ clipId: z.string(), error: z.string().nullable() })),
+})
+export const resolveDeleteClipsResultSchema = z.strictObject({ deleted: z.number().int().nonnegative(), missing: z.number().int().nonnegative() })
