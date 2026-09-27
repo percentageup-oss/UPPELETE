@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+    <resources>
+        <format name="FFVideoFormat1080p24" id="r0" width="1920" frameDuration="1/24s" height="1080"/>
+        <format name="FFVideoFormatRateUndefined" id="r1" width="1440" frameDuration="1/30s" height="2560"/>
+        <media name="Compound Clip 2" id="r5">
+            <sequence tcStart="0/1s" tcFormat="NDF" duration="911/24s" format="r0">
+                <spine>
+                    <asset-clip offset="0/1s" name="chatgpt-newplan.mp4" tcFormat="NDF" start="54928/15s" enabled="1" duration="52/3s" format="r1" ref="r3">
+                        <adjust-transform anchor="0 0" position="0 0" scale="1 1"/>
+                    </asset-clip>
+                    <asset-clip offset="52/3s" name="chatgpt-newplan.mp4" tcFormat="NDF" start="18396/5s" enabled="1" duration="165/8s" format="r1" ref="r4">
+                        <adjust-transform anchor="0 0" position="0 0" scale="1 1"/>
+                    </asset-clip>
+                </spine>
+            </sequence>
+        </media>
+        <asset name="chatgpt-newplan.mp4" audioSources="1" id="r2" start="3600/1s" duration="599/6s" audioChannels="2" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file://localhost/C:/Users/sadiq/Desktop/Content%20Creation/Shorts-2/126.%20australia/chatgpt-newplan.mp4"/>
+        </asset>
+        <asset name="chatgpt-newplan.mp4" audioSources="1" id="r3" start="3600/1s" duration="599/6s" audioChannels="2" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file://localhost/C:/Users/sadiq/Desktop/Content%20Creation/Shorts-2/126.%20australia/chatgpt-newplan.mp4"/>
+        </asset>
+        <asset name="chatgpt-newplan.mp4" audioSources="1" id="r4" start="3600/1s" duration="599/6s" audioChannels="2" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file://localhost/C:/Users/sadiq/Desktop/Content%20Creation/Shorts-2/126.%20australia/chatgpt-newplan.mp4"/>
+        </asset>
+        <asset name="captions-short-captions.mp4" audioSources="1" id="r6" start="0/1s" duration="3791/30s" audioChannels="2" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file://localhost/C:/Users/sadiq/Desktop/Content%20Creation/Shorts-2/127.%20captions/captions-short-captions.mp4"/>
+        </asset>
+    </resources>
+    <library>
+        <event name="Timeline 1 (Resolve)">
+            <project name="Timeline 1 (Resolve)">
+                <sequence tcStart="3600/1s" tcFormat="NDF" duration="421/2s" format="r0">
+                    <spine>
+                        <asset-clip offset="3600/1s" name="chatgpt-newplan.mp4" tcFormat="NDF" start="3600/1s" enabled="1" duration="1109/24s" format="r1" ref="r2">
+                            <adjust-transform anchor="0 0" position="0 0" scale="1 1"/>
+                        </asset-clip>
+                        <ref-clip offset="87509/24s" name="Compound Clip 2" start="0/1s" duration="911/24s" ref="r5"/>
+                        <asset-clip offset="22105/6s" name="captions-short-captions.mp4" tcFormat="NDF" start="0/1s" enabled="1" duration="379/3s" format="r1" ref="r6">
+                            <adjust-transform anchor="0 0" position="0 0" scale="1 1"/>
+                        </asset-clip>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

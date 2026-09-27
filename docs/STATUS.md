@@ -1,5 +1,31 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 13: compound clip spike findings (ADR 0010)
+
+**Changes:**
+- `docs/decisions/0010-resolve-compound-clips.md` (new): from one spike run (Resolve Studio 21.0.0.47, Windows).
+  OTIO carries a compound's inner edit as a nested `Stack` (`Resolve_OTIO."Sequence Type" = "Compound Clip"`)
+  and keeps titles and gaps; FCPXML 1.10 also carries the inner clips but drops Text+ and is written as a
+  directory bundle. Recommendation: OTIO, one synchronous export (≈0.01 s CPU). Rules recorded: match by
+  video-kind track index + record start + name; inner time starts at 0 and the outer trim is the Stack's
+  `source_range`; source times include the media Start TC, so subtract `available_range.start_time`; OTIO
+  quantises source times to the sequence rate (±1 media frame, same tolerance as ADR 0009); `target_url` is a
+  plain Windows path; the media reference is `media_references.DEFAULT_MEDIA` (`Clip.2`).
+- Evidence: `docs/decisions/evidence/resolve-compound-spike-2026-09-27.{txt,otio,fcpxml}`.
+
+**Verification:** not tested, typecheck only; findings are read from the user's spike output and cross-checked
+between the OTIO, FCPXML and C2 read-back.
+
+**Limitations:** the run's timeline had one untrimmed compound and no hand notes. Outer trim, mixed fps inside
+a compound, retime, nested compounds and nested timelines are unconfirmed (ADR 0010, "Unconfirmed").
+
+**Brief 14 differences (follow the ADR):** read `media_references[active_media_reference_key]`, not
+`media_reference`. The ADR suggests counting only tracks with file clips as "video tracks inside a compound",
+so a compound with a title on inner V2 (the tested one) is still unpacked.
+
+**Next:** brief 14 (unpack compound clips on import). Optionally re-run the spike on a timeline with a trimmed
+compound and a retimed inner clip to close the unconfirmed items.
+
 ## 2026-09-27 — Resolve Text+ 13: compound clip spike (script)
 
 **Changes:**
