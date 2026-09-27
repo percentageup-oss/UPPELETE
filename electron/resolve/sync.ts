@@ -28,7 +28,10 @@ const chunks = <T>(items: T[], size: number): T[][] => {
   return out
 }
 
-const bridgeSpec = (spec: ResolveSyncSpec) => ({ key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs })
+const bridgeSpec = (spec: ResolveSyncSpec) => ({
+  key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs,
+  keyframes: spec.keyframes, styleRanges: spec.styleRanges,
+})
 
 async function readRemote(bridge: ResolveBridge, timelineId: string, trackName: string): Promise<{ trackIndex: number | null; clips: RemoteClip[] }> {
   const { trackIndex } = await bridge.request('findTrack', { timelineId, name: trackName }, resolveFindTrackResultSchema)

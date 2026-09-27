@@ -19,6 +19,9 @@ export const TEXT_PLUS_INPUTS = {
   lineSpacing: 'LineSpacing',
   characterSpacing: 'CharacterSpacing',
   horizontalJustification: 'HorizontalJustificationNew',
+  // Write-on (ADR 0008 deviation: the real IDs are `Start`/`End`, not `WriteOnStart`/`WriteOnEnd`). Keyframing
+  // `End` is confirmed working (ADR 0009, E9); `progressive-word-reveal` (07) is the only motion that keys it.
+  writeOnStart: 'Start', writeOnEnd: 'End',
 } as const
 
 export const LUA_INPUT_WHITELIST: readonly string[] = Object.values(TEXT_PLUS_INPUTS)

@@ -79,7 +79,10 @@ export function CreateInResolveControl({ project, onLinked, onMessage }: {
       const measurer = createDomMeasurer(document)
       let textPlan
       try { textPlan = planTextPlus({ ...project, resolveLink: provisionalLink }, measurer.measure) } finally { measurer.dispose() }
-      const specs = textPlan.specs.map((spec) => ({ key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs, hash: spec.hash }))
+      const specs = textPlan.specs.map((spec) => ({
+        key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs,
+        keyframes: spec.keyframes, styleRanges: spec.styleRanges, hash: spec.hash,
+      }))
       const syncResult = specs.length
         ? await captionStudio.resolveSyncApply({ timelineId: result.timelineId, trackName: 'KathaCut', specs, synced: [], decisions: {} })
         : { synced: [], errors: [] }

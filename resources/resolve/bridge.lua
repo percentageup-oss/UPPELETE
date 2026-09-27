@@ -268,6 +268,8 @@ local INPUT_WHITELIST = {
   LineSpacing = true,
   CharacterSpacing = true,
   HorizontalJustificationNew = true,
+  -- Write-on (07): the real IDs are `Start`/`End`, not `WriteOnStart`/`WriteOnEnd` (ADR 0008 deviation).
+  Start = true, End = true,
 }
 
 local TEMPLATE_FOLDER = "KathaCut"
@@ -334,6 +336,22 @@ local function textPlusTool(item)
   return comp, tool
 end
 
+-- Attaches a BezierSpline with plain `[frame] = value` control points to a whitelisted input, replacing whatever
+-- that input held before (a plain value, or an earlier spline from a previous sync). Keyframing is confirmed
+-- working on the `End` input (ADR 0009, E9: `tool.End = comp:BezierSpline()`, then `tool.End[frame] = value`
+-- inside `Lock`/`Unlock`, read back correctly); attaching the same mechanism to other whitelisted inputs (e.g.
+-- `Alpha1` for phrase-fade) relies on Fusion's animation attachment being generic, not input-specific — a
+-- reasonable assumption, not itself a repeated spike result.
+local function applyKeyframe(comp, tool, entry)
+  if type(entry) ~= "table" or not INPUT_WHITELIST[entry.input] or type(entry.points) ~= "table" then return end
+  local spline = comp:BezierSpline()
+  tool[entry.input] = spline
+  for _, point in ipairs(entry.points) do
+    local frame, value = point[1], point[2]
+    if type(frame) == "number" and type(value) == "number" then tool[entry.input][frame] = value end
+  end
+end
+
 -- Writes one spec onto a Text+ clip: whitelisted inputs only, values used as plain data.
 local function applySpec(item, spec)
   local comp, tool = textPlusTool(item)
@@ -352,7 +370,13 @@ local function applySpec(item, spec)
       end
     end
     if isString(spec.text) then tool:SetInput("StyledText", spec.text) end
-    -- Keyframes and Character Level Styling ranges come with brief 07.
+    -- Plain inputs above (including the planner's Start=0/End=1 baseline) reset any input this spec no longer
+    -- animates; keyframes below then override the ones it does, so a clip re-synced from an earlier motion never
+    -- keeps a stale animation. Character Level Styling ranges aren't applied: the data format is unconfirmed by
+    -- the spike (ADR 0008/0009, "no data") and the planner never sends any (`spec.styleRanges` is always empty).
+    if type(spec.keyframes) == "table" then
+      for _, entry in ipairs(spec.keyframes) do applyKeyframe(comp, tool, entry) end
+    end
     comp:SetData(KEY_TAG, spec.key)
   end)
   comp:Unlock()

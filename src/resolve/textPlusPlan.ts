@@ -2,11 +2,12 @@ import type { CaptionProject, Cue } from '../core/model'
 import { displayedCues } from '../core/captionLanguages'
 import { compositionFor } from '../core/composition'
 import { captionClips, cuesInSequence } from '../core/timelineModel'
-import { DEFAULT_CAPTION_STYLE, resolveCaptionStyle, captionStyleInputs } from '../captions/style'
+import { DEFAULT_CAPTION_STYLE, MOTIONS, resolveCaptionStyle, captionStyleInputs, type CaptionMotion } from '../captions/style'
 import { layoutCaption, wordMotionAvailability, type MeasureText, type MotionCue } from '../captions/renderer'
 import { wordDisplayCue } from '../captions/wordDisplay'
 import { usToTimelineFrame } from './frames'
 import { stableStringify, fnv1a32Hex } from './specHash'
+import { computeMotion, type Keyframe } from './textPlusMotion'
 import {
   TEXT_PLUS_INPUTS, textPlusSize, centerFor, colorToRgba01, horizontalJustificationFor, styleNameFor, applyTextTransform,
 } from './textPlusInputs'
@@ -15,6 +16,18 @@ import {
  * (`src/captions/CaptionPreview.tsx`). No DOM/Electron import lives in this module or its dependencies below. */
 export type Measure = MeasureText
 
+/** Character Level Styling range (ADR units — **not sent yet**: the CLS data format and character-counting unit
+ * are both unconfirmed by the spike, ADR 0008/0009, "no data". Typed now so a future brief only has to fill in
+ * the Lua side once the format is confirmed; `planTextPlus` never populates this today. */
+export type TextPlusStyleRange = {
+  start: number; end: number
+  color?: { r: number; g: number; b: number }
+  sizeScale?: number
+  font?: string
+  style?: string
+  underline?: boolean
+}
+
 export type TextPlusClipSpec = {
   key: string // cue id, or `${cueId}#w${index}` in word-at-a-time display mode
   cueId: string
@@ -22,8 +35,8 @@ export type TextPlusClipSpec = {
   endFrame: number // exclusive
   text: string // with '\n' at KathaCut's line breaks
   inputs: Record<string, number | string | { x: number; y: number }>
-  keyframes: { input: string; points: [frame: number, value: number][] }[] // clip-relative frames; 07
-  styleRanges: unknown[] // Character Level Styling ranges; 07 defines the type
+  keyframes: Keyframe[] // clip-relative frames
+  styleRanges: TextPlusStyleRange[] // always empty today — see `TextPlusStyleRange`
   hash: string
 }
 
@@ -34,7 +47,12 @@ export type TextPlusPlan = {
   skipped: { cueId: string; reason: string }[]
 }
 
-type Draft = { key: string; cueId: string; motionCue: MotionCue }
+type Draft = {
+  key: string; cueId: string; motionCue: MotionCue
+  /** True only for a genuine word-at-a-time draft: the whole clip's text already *is* the single active word, so
+   * `active-word-highlight`/`word-pop` need no Character Level Styling (`textPlusMotion.ts`'s `computeMotion`). */
+  isWordDraft: boolean
+}
 
 /** One cue's effective style, resolved exactly as the preview resolves it (`App.tsx`'s `CaptionStage`). */
 function resolvedAppearanceOf(project: CaptionProject, cue: Cue) {
@@ -50,13 +68,13 @@ function draftsForCue(cue: Cue, wordDisplay: boolean): { drafts: Draft[]; fellBa
     const availability = wordMotionAvailability(cue)
     if (availability.enabled) {
       return {
-        drafts: cue.words.map((_, index) => ({ key: `${cue.id}#w${index}`, cueId: cue.id, motionCue: wordDisplayCue(cue, index) })),
+        drafts: cue.words.map((_, index) => ({ key: `${cue.id}#w${index}`, cueId: cue.id, motionCue: wordDisplayCue(cue, index), isWordDraft: true })),
         fellBackFromWordSplit: false, usedEstimatedWordSplit: availability.estimated,
       }
     }
-    return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue }], fellBackFromWordSplit: true, usedEstimatedWordSplit: false }
+    return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue, isWordDraft: false }], fellBackFromWordSplit: true, usedEstimatedWordSplit: false }
   }
-  return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue }], fellBackFromWordSplit: false, usedEstimatedWordSplit: false }
+  return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue, isWordDraft: false }], fellBackFromWordSplit: false, usedEstimatedWordSplit: false }
 }
 
 /**
@@ -85,26 +103,38 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   const resolvedByCueId = new Map<string, ReturnType<typeof resolvedAppearanceOf>>()
   let anyWordFallback = false, anyEstimatedWordSplit = false
   let anyGradient = false, anyGlow = false, anyDepth = false, anyRotation = false
-  let anyEmphasis = false, anyMotion = false, anyUnderline = false, anyTextTransform = false
+  let anyEmphasis = false, anyUnderline = false, anyTextTransform = false
 
   for (const cue of cues) {
     if (!cue.text.trim()) { skipped.push({ cueId: cue.id, reason: 'empty text' }); continue }
     const original = originalCueById.get(baseCueId(cue.id)) ?? cue
     const resolved = resolvedAppearanceOf(project, original)
     resolvedByCueId.set(cue.id, resolved)
-    const { style, appearance } = resolved
+    const { appearance } = resolved
     if (appearance.gradientEnabled || appearance.emphasisGradientEnabled) anyGradient = true
     if (appearance.glowEnabled || appearance.emphasisGlowEnabled) anyGlow = true
     if (appearance.depthEnabled) anyDepth = true
     if (appearance.rotation !== 0) anyRotation = true
     if (cue.emphasized?.length) anyEmphasis = true
-    if (style.motion !== 'static-clean') anyMotion = true
     if (appearance.underline || appearance.emphasisUnderline) anyUnderline = true
     if (appearance.textTransform !== 'none') anyTextTransform = true
     const { drafts: cueDrafts, fellBackFromWordSplit, usedEstimatedWordSplit } = draftsForCue(cue, wordDisplay)
     if (fellBackFromWordSplit) anyWordFallback = true
     if (usedEstimatedWordSplit) anyEstimatedWordSplit = true
     drafts.push(...cueDrafts)
+  }
+
+  // Worst level wins per motion kind (not-sent > approximated > sent); reasons accumulate across every cue/draft
+  // that used the kind, so the report covers every path a cue actually took (e.g. some cues gated on missing word
+  // timing, others on the unconfirmed CLS format).
+  const LEVEL_RANK: Record<SupportLevel, number> = { 'not-sent': 0, approximated: 1, sent: 2 }
+  const motionAgg = new Map<CaptionMotion, { level: SupportLevel; reasons: Set<string> }>()
+  let anyMotionEstimatedTiming = false
+  const noteMotion = (kind: CaptionMotion, level: SupportLevel, reason: string) => {
+    const existing = motionAgg.get(kind)
+    if (!existing) { motionAgg.set(kind, { level, reasons: new Set([reason]) }); return }
+    existing.reasons.add(reason)
+    if (LEVEL_RANK[level] < LEVEL_RANK[existing.level]) existing.level = level
   }
 
   const specs: TextPlusClipSpec[] = []
@@ -130,11 +160,13 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
 
     const fill = colorToRgba01(a.primaryColor)
     const outline = colorToRgba01(a.outlineColor)
+    const secondaryFill = colorToRgba01(a.secondaryColor)
+    const size = textPlusSize(a.fontSize, composition.width, link.width, link.height)
     const inputs: TextPlusClipSpec['inputs'] = {
       [TEXT_PLUS_INPUTS.text]: text,
       [TEXT_PLUS_INPUTS.font]: a.fontFamily,
       [TEXT_PLUS_INPUTS.style]: styleNameFor(a.fontWeight, a.fontItalic),
-      [TEXT_PLUS_INPUTS.size]: textPlusSize(a.fontSize, composition.width, link.width, link.height),
+      [TEXT_PLUS_INPUTS.size]: size,
       [TEXT_PLUS_INPUTS.fillEnabled]: 1,
       [TEXT_PLUS_INPUTS.fillRed]: fill.r, [TEXT_PLUS_INPUTS.fillGreen]: fill.g, [TEXT_PLUS_INPUTS.fillBlue]: fill.b, [TEXT_PLUS_INPUTS.fillAlpha]: fill.a,
       [TEXT_PLUS_INPUTS.outlineEnabled]: a.strokeEnabled ? 1 : 0,
@@ -146,9 +178,23 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
       [TEXT_PLUS_INPUTS.lineSpacing]: a.lineHeight,
       [TEXT_PLUS_INPUTS.characterSpacing]: a.letterSpacing,
       [TEXT_PLUS_INPUTS.horizontalJustification]: horizontalJustificationFor(a.alignment),
+      // Plain baseline (no animation) so a clip re-synced from an earlier motion never keeps a stale write-on
+      // keyframe: `applySpec` (bridge.lua) sets these before attaching any of this spec's own keyframes.
+      [TEXT_PLUS_INPUTS.writeOnStart]: 0, [TEXT_PLUS_INPUTS.writeOnEnd]: 1,
     }
 
-    const draftSpec: Omit<TextPlusClipSpec, 'hash'> = { key: draft.key, cueId: draft.cueId, startFrame, endFrame, text, inputs, keyframes: [], styleRanges: [] }
+    const motion = computeMotion({
+      motion: cueStyle.motion, motionSpeed: cueStyle.motionSpeed, cue: draft.motionCue, isWordDraft: draft.isWordDraft,
+      text, transform: a.textTransform, startFrame, endFrame, link, fillAlpha: fill.a,
+      secondaryFill: { r: secondaryFill.r, g: secondaryFill.g, b: secondaryFill.b }, emphasisScale: a.emphasisScale, baseSize: size,
+    })
+    Object.assign(inputs, motion.inputOverrides)
+    if (motion.outcome) {
+      noteMotion(cueStyle.motion, motion.outcome.level, motion.outcome.reason)
+      if (motion.outcome.estimated) anyMotionEstimatedTiming = true
+    }
+
+    const draftSpec: Omit<TextPlusClipSpec, 'hash'> = { key: draft.key, cueId: draft.cueId, startFrame, endFrame, text, inputs, keyframes: motion.keyframes, styleRanges: [] }
     specs.push({ ...draftSpec, hash: fnv1a32Hex(stableStringify(draftSpec)) })
   }
 
@@ -175,8 +221,14 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   if (anyDepth) push('3D depth', 'not-sent', 'No Text+ equivalent identified.')
   if (anyUnderline) push('Underline', 'not-sent', 'No confirmed Text+ input for underline.')
   if (anyRotation) push('Rotation', 'not-sent', 'No single confirmed Angle input exists yet (ADR 0008); the candidates (LayoutRotation/TransformRotation/AngleX,Y,Z) are untested.')
-  if (anyEmphasis) push('Emphasis', 'not-sent', 'coming in a later update')
-  if (anyMotion) push('Caption motion (word-pop, phrase-fade, etc.)', 'not-sent', 'coming in a later update')
+  if (anyEmphasis) {
+    push('Emphasis', 'not-sent', 'Character Level Styling\'s data format and character-counting unit are unconfirmed by the spike (ADR 0008/0009, "no data"); KathaCut doesn\'t guess at an unverified API contract, so emphasized-word coloring isn\'t sent.')
+  }
+  for (const motion of MOTIONS) {
+    const agg = motionAgg.get(motion.id)
+    if (agg) push(motion.label, agg.level, [...agg.reasons].join(' '))
+  }
+  if (anyMotionEstimatedTiming) push('Motion word timing', 'approximated', 'Some caption-motion keyframes are built from estimated word timing, not aligned to audio.')
   if (anyWordFallback) push('Word-at-a-time display', 'approximated', 'One or more cues fell back to whole-cue display because word timing was missing or invalid.')
   if (anyEstimatedWordSplit) push('Word-at-a-time timing', 'approximated', 'Some per-word Text+ clip timings come from estimated word timing, not aligned audio — not exact sync.')
 

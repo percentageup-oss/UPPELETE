@@ -23,9 +23,10 @@ const CONFLICT_LABEL = {
 } as const
 const LEVEL_LABEL = { sent: 'Sent', approximated: 'Approximated', 'not-sent': 'Not sent' } as const
 
-/** What the bridge needs from a planned clip. Keyframes and style ranges are brief 07's. */
+/** What the bridge needs from a planned clip (drops the planner-only `cueId`). */
 const toSyncSpec = (spec: TextPlusPlan['specs'][number]): ResolveSyncSpec => ({
-  key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs, hash: spec.hash,
+  key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs,
+  keyframes: spec.keyframes, styleRanges: spec.styleRanges, hash: spec.hash,
 })
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'The sync to DaVinci Resolve failed.'

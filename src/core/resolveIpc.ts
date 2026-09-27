@@ -166,12 +166,39 @@ const inputValueSchema = z.union([
   z.strictObject({ x: z.number().finite(), y: z.number().finite() }),
 ])
 
+/** One `[clip-relative frame, value]` control point on a whitelisted input's `BezierSpline` (07: `applySpec`
+ * attaches these after resetting the input to a plain value, so a clip re-synced from an earlier motion never
+ * keeps a stale animation). Frame counts are clip-relative, comp-local frame 0 = the clip's first frame (ADR 0008,
+ * T8). */
+const keyframePointSchema = z.tuple([z.number().int().nonnegative().max(1_000_000), z.number().finite()])
+export const resolveKeyframeSchema = z.strictObject({
+  input: inputIdSchema,
+  points: z.array(keyframePointSchema).min(1).max(64),
+})
+export type ResolveKeyframe = z.infer<typeof resolveKeyframeSchema>
+
+/** Character Level Styling range (ADR units — **not sent yet**, `src/resolve/textPlusPlan.ts`'s
+ * `TextPlusStyleRange`: the CLS data format and character-counting unit are both unconfirmed by the spike, ADR
+ * 0008/0009, "no data". Validated here so the shape is ready once a later brief confirms the format; the planner
+ * never actually populates it today. */
+const styleRangeSchema = z.strictObject({
+  start: z.number().int().nonnegative(),
+  end: z.number().int().positive(),
+  color: z.strictObject({ r: z.number().min(0).max(1), g: z.number().min(0).max(1), b: z.number().min(0).max(1) }).optional(),
+  sizeScale: z.number().positive().max(4).optional(),
+  font: z.string().max(200).optional(),
+  style: z.string().max(200).optional(),
+  underline: z.boolean().optional(),
+}).refine((range) => range.end > range.start, { message: 'A style range must cover at least one character.' })
+
 export const resolveSyncSpecSchema = z.strictObject({
   key: z.string().min(1).max(256),
   startFrame: z.number().int().nonnegative(),
   endFrame: z.number().int().positive(),
   text: z.string().max(4000),
   inputs: z.record(inputIdSchema, inputValueSchema),
+  keyframes: z.array(resolveKeyframeSchema).max(32),
+  styleRanges: z.array(styleRangeSchema).max(256),
   hash: z.string().min(1).max(64),
 }).refine((spec) => spec.endFrame > spec.startFrame, { message: 'A clip must be at least one frame long.' })
 export type ResolveSyncSpec = z.infer<typeof resolveSyncSpecSchema>

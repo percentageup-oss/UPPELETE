@@ -1,5 +1,73 @@
 # Status
 
+## 2026-09-27 — Resolve Text+ 07: emphasis + word animations in Text+
+
+**Changes:**
+- `src/resolve/charUnits.ts` (new, pure): `offsetInUnit`/`isGraphemeBoundary` (codepoint/UTF-8-byte/grapheme
+  counting, for the day Character Level Styling's format is confirmed) and `wordRanges(words, specText,
+  transform)` — locates each word's `[start, end)` in the text actually sent to Text+ (post line-wrap, post
+  `textTransform`), matching strictly in cue order and dropping (never partially placing) a word that doesn't
+  land on a grapheme boundary at both ends. Deviates from the brief's literal `wordRanges(cue, specText)`
+  signature (takes `words`+`transform` instead of a whole cue) — documented here per the brief's own "note the
+  difference" rule.
+- `src/resolve/textPlusMotion.ts` (new, pure): `computeMotion` maps one draft's requested `CaptionMotion` to
+  Text+ input overrides/keyframes plus an honest per-motion outcome (`sent`/`approximated`/`not-sent` + reason).
+  `phrase-fade` ramps the confirmed `Alpha1` fill-alpha input (200 ms/`motionSpeed`, mirroring `captionFrame`)
+  using the keyframe mechanism ADR 0009 (E9) confirmed only on `End` — reported `approximated`.
+  `progressive-word-reveal` steps the confirmed `End` (write-on) input at each word's start, to the word's
+  cumulative grapheme fraction of the final text (Text+'s own Write On counting unit is unconfirmed, so grapheme
+  count is used only because it can never split a cluster) — `approximated`; a word-at-a-time draft needs no
+  animation (already one word per clip) — `sent`. **`active-word-highlight`/`word-pop` need Character Level
+  Styling to color just the active word inside a longer clip, and CLS's data format is "no data" per ADR
+  0008/0009 — so both are `not-sent` in line mode.** In word-at-a-time display mode the whole clip *is* the
+  active word already, so both are achievable without CLS: the clip's fill is overridden to the secondary color
+  (`sent`), and `word-pop` additionally scales `Size` by the emphasis scale, without the sine pop
+  (`approximated`). Emphasis spans (`cue.emphasized`) stay `not-sent` outright for the same CLS reason — no
+  sub-clip fallback, since splitting displayed text to fake per-word color would change layout (forbidden).
+- `src/resolve/textPlusPlan.ts`: `TextPlusClipSpec.styleRanges` is now typed `TextPlusStyleRange[]` (always `[]`
+  — CLS isn't sent). Each draft now knows whether it's a genuine word-at-a-time draft (`Draft.isWordDraft`) and
+  calls `computeMotion`; its `inputOverrides` merge into the spec's inputs and its `keyframes` go on the spec.
+  Support report: motion entries are now per-`MOTIONS` kind (not one blanket "Caption motion" line), aggregated
+  worst-level-wins with every reason a cue hit; a new "Motion word timing" note flags estimated word timing used
+  by a motion's keyframes, separate from the existing word-at-a-time-display note.
+- `src/resolve/textPlusInputs.ts`: `TEXT_PLUS_INPUTS.writeOnStart`/`writeOnEnd` (`Start`/`End`).
+- `src/core/resolveIpc.ts`: `resolveSyncSpecSchema` gained `keyframes` (whitelisted input + up to 64
+  clip-relative `[frame, value]` points) and `styleRanges` (typed but always empty today), both zod-validated
+  with limits.
+- `resources/resolve/bridge.lua`: `INPUT_WHITELIST` gained `Start`/`End`; `applySpec` now applies
+  `spec.keyframes` via `comp:BezierSpline()` (the confirmed mechanism) after the plain inputs, so a clip
+  re-synced from an earlier motion always resets first (the planner always sends `Start:0, End:1` as a plain
+  baseline). `spec.styleRanges` is intentionally never read — no confirmed CLS format to apply it in.
+- `electron/resolve/sync.ts`, `src/resolve/ResolveSync.tsx`, `src/resolve/CreateInResolve.tsx`: forward
+  `keyframes`/`styleRanges` from the planned spec through to the bridge request (previously dropped).
+
+**Verification:** not tested, typecheck only (`npx tsc --noEmit -p .` clean, Windows 11). Real verification
+needs Resolve; see the brief's manual check.
+
+**Mapping table (motion → Text+ technique):**
+
+| KathaCut motion | Text+ technique | Support |
+|---|---|---|
+| `static-clean` | nothing extra | (baseline) |
+| `phrase-fade` | `Alpha1` keyframes, 200 ms/speed ramp | approximated |
+| `progressive-word-reveal`, line mode | `End` (write-on) keyframes, stepped per word, grapheme-fraction reveal | approximated |
+| `progressive-word-reveal`, word-at-a-time | none needed (one word per clip already) | sent |
+| `active-word-highlight`, word-at-a-time | static `Red1/Green1/Blue1` = secondary color | sent |
+| `active-word-highlight`, line mode | — (needs CLS) | not-sent |
+| `word-pop`, word-at-a-time | secondary color + static `Size × emphasisScale`, no sine | approximated |
+| `word-pop`, line mode | — (needs CLS) | not-sent |
+| Emphasis (`cue.emphasized`) | — (needs CLS) | not-sent |
+
+**Limitations:** Character Level Styling stays entirely unsent (data format and counting unit both "no data",
+ADR 0008/0009) — emphasis coloring and line-mode active-word/word-pop highlighting don't reach Resolve at all.
+The `Alpha1`/`End` keyframe *mechanism* is only confirmed on `End`; applying it elsewhere is a reasonable but
+unverified extrapolation. Write-on's reveal fraction assumes Text+ counts by grapheme, which is unconfirmed.
+`HorizontalJustificationNew`'s enum and portrait size calibration remain open from earlier briefs.
+
+**Next:** the user runs the manual check below in Resolve — especially whether write-on/phrase-fade read as
+intended and whether Character Level Styling ever becomes writable, which would let a later brief send emphasis
+and line-mode active-word/word-pop for real. Then brief 08 (docs + license inventory).
+
 ## 2026-09-27 — Resolve Text+ 12: KathaCut → Resolve, "Create in DaVinci"
 
 **Changes:**
