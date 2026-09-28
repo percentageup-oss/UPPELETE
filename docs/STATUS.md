@@ -1,5 +1,30 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 19 (run 2 findings): a working CLS write
+
+**Changes:** docs only. The user re-ran `cls-write-spike.lua` (Resolve Studio 21.0.0.47, Windows). Recorded in ADR
+0011 ("Write spike run 2"):
+- **Method D works (confirmed):** `item:ExportFusionComp` → add the `StyledTextCLS` tool and the `StyledText` link
+  in the file → `item:ImportFusionComp`. `ആൾട്ട്മാൻ` rendered red with its conjuncts intact, and `Sam` shrank from
+  base size 0.09 to 0.08. That confirms id `102` sets an absolute size.
+- **Failed (confirmed):** E, `LoadSettings(path)`. It returned `true` but dropped the value. Clearing with
+  `tool:SetInput("StyledText", plain)` also failed; the clip stayed styled. The clear to use is the same comp
+  round trip without the tool (a guess).
+- **Timing:** ~0.5 s CPU per clip with D. Styled clips need at most ~3 per bridge command, or start + poll.
+- The imported comp appears to replace the clip's comp. The spike's `LoadFusionCompByName` call was passed a
+  number by mistake, and styling still rendered.
+
+Evidence: `docs/decisions/evidence/resolve-cls-write-spike-2026-09-28-run2*`. Local paths in the `.comp` files are
+redacted, and the stills (6.2 MB each) weren't copied.
+
+**Verification:** docs only.
+
+**Limitations:** Keyframing is still no data (W3 was gated on method C), so brief 18 uses split clips. The
+round-trip clear and "import replaces the comp" are unconfirmed. Resolve Free and Mac haven't been tested.
+
+**Next:** brief 17. The ADR overrides step 3: use method D, not `SetInput`, re-tag the imported comp, and limit
+the styled batch size.
+
 ## 2026-09-28 — Resolve Text+ 19 (run 1 findings + run 2 script): CLS writes still unconfirmed
 
 **Changes:** The user ran `cls-write-spike.lua` on Resolve Studio 21.0.0.47 (Windows). All three methods failed:

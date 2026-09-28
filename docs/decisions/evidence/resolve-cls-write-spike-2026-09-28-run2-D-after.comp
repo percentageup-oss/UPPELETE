@@ -1,0 +1,109 @@
+Composition {
+	CurrentTime = 0,
+	RenderRange = { 0, 119 },
+	GlobalRange = { 0, 119 },
+	CurrentID = 6,
+	HiQ = true,
+	PlaybackUpdateMode = 0,
+	StereoMode = false,
+	Version = "DaVinci Resolve Studio 21.0.0.0047",
+	SavedOutputs = 0,
+	HeldTools = 0,
+	DisabledTools = 0,
+	LockedTools = 0,
+	AudioOffset = 0,
+	Resumable = true,
+	OutputClips = {
+	},
+	CustomData = {
+		TEMPLATE_ID = "Text+"
+	},
+	Tools = {
+		CharacterLevelStyling1 = StyledTextCLS {
+			CtrlWZoom = false,
+			Inputs = {
+				TransformRotation = Input { Value = 1, },
+				Softness = Input { Value = 1, },
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്", },
+				CharacterLevelStyling = Input {
+					Value = StyledText {
+						Array = {
+							{ 2401, 21, 29, Value = 1 },
+							{ 2402, 21, 29 },
+							{ 2403, 21, 29 },
+							{ 102, 17, 19, Value = 0.08 }
+						},
+						Value = ""
+					},
+				}
+			},
+		},
+		Template = TextPlus {
+			Inputs = {
+				GlobalOut = Input { Value = 119, },
+				Width = Input { Value = 1920, },
+				Height = Input { Value = 1080, },
+				UseFrameFormatSettings = Input { Value = 1, },
+				StyledText = Input {
+					SourceOp = "CharacterLevelStyling1",
+					Source = "StyledText",
+				},
+				Font = Input { Value = "Anek Malayalam", },
+				Style = Input { Value = "SemiBold", },
+				Size = Input { Value = 0.09, },
+				VerticalJustificationNew = Input { Value = 3, },
+				HorizontalJustificationNew = Input { Value = 3, }
+			},
+			ViewInfo = OperatorInfo { Pos = { 220, 49.5 } },
+		},
+		MediaOut1 = Saver {
+			Inputs = {
+				Index = Input { Value = "0", },
+				Input = Input {
+					SourceOp = "Template",
+					Source = "Output",
+				}
+			},
+			ViewInfo = OperatorInfo { Pos = { 440, 49.5 } },
+		}
+	},
+	Frames = {
+	},
+	Prefs = {
+		Comp = {
+			Interactive = {
+				Proxy = {
+					Scale = 1,
+				},
+			},
+			Views = {
+				Defaults = {
+					Viewer = {
+						Layer = "",
+					},
+					Guides = {
+						SafeTitle = true,
+						SafeImage = true,
+						Center = true,
+					},
+				},
+			},
+			Paths = {
+				Map = {
+					["ResolveCaches:"] = "<redacted local path>",
+				},
+			},
+			FrameFormat = {
+				Rate = 24,
+				GuideRatio = 1.77777777777778,
+				DepthFull = 3,
+				DepthPreview = 3,
+				DepthInteractive = 3,
+			},
+			LastFile = "<redacted local path>",
+			Unsorted = {
+				GlobalEnd = 119
+			},
+		}
+	},
+}

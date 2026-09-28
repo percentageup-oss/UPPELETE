@@ -1,0 +1,52 @@
+INFO SETUP current timeline at start: Timeline 1
+INFO S0 product=DaVinci Resolve Studio version=21.0.0.47
+INFO SETUP created scratch timeline: KathaCut CLS write spike 1790573256
+INFO PARSE-snippet {
+	Tools = ordered() {
+		CharacterLevelStyling1 = StyledTextCLS {
+			Inputs = {
+				CharacterLevelStyling = Input {
+					Value = StyledText {
+						Array = {
+							{ 2401, 21, 29, Value = 1 },
+							{ 2402, 21, 29 },
+							{ 2403, 21, 29 },
+							{ 102, 17, 19, Value = 0.08 }
+						},
+						Value = ""
+					}
+				},
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്" },
+				TransformRotation = Input { Value = 1 },
+				Softness = Input { Value = 1 }
+			},
+			CtrlWZoom = false
+		}
+	}
+}
+PASS PARSE bmd.readstring parsed the snippet: {Tools={__flags=3145728, CharacterLevelStyling1={__ctor="StyledTextCLS", Inputs={TransformRotation={Value=1, __ctor="Input", __flags=1048832}, CharacterLevelStyling={Value={Value="", __ctor="StyledText", Array=<table, depth limit>}, __ctor="Input"}, Softness={Value=1, __ctor="Input", __flags=1048832}, Text={Value="പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്", __ctor="Input", __flags=1048832}}, CtrlWZoom=false}}}
+PASS A-paste-call ok=true result=false
+INFO A-paste-connect skipped: no modifier tool found after paste (regId search)
+Switch to the Edit page now (needed for every still export below).
+INFO A-paste-result modifierRegId=nil stillExportOk=true timecode=01:00:02:12 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+PASS B-loadsettings-connect tool.StyledText:ConnectTo(mod.StyledText) ok=true err=nil
+PASS B-loadsettings-call ok=true result=false
+INFO B-loadsettings-result stillExportOk=true timecode=01:00:07:13 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+PASS C-setinput-connect tool.StyledText:ConnectTo(mod.StyledText) ok=true err=nil
+PASS C-setinput-call ok=true result=nil
+INFO C-setinput-result stillExportOk=true timecode=01:00:12:14 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+PASS D-importcomp-call textPlusName=Template ImportFusionComp ok=true result=Composition (0x000002AB80C45600) [App: 'Resolve' on 127.0.0.1, UUID: a9fa9475-336a-42ce-bfa8-bd5ac347c51d] compNames={1="Composition 1", __flags=4194304} LoadFusionCompByName(4194304) ok=true result=nil
+INFO D-importcomp-result exportedCompIndex=1 stillExportOk=true timecode=01:00:17:15 dumpLooksStyled=true newTextPlusFound=true (hint only; read D-after.comp and look at the still)
+PASS E-settingsfile-connect tool.StyledText:ConnectTo(mod.StyledText) ok=true err=nil
+PASS E-settingsfile-call SaveSettings ok=true LoadSettings(path) ok=true result=true
+INFO E-settingsfile-still-connected true
+INFO E-settingsfile-result exportedCompIndex=1 stillExportOk=true timecode=01:00:22:16 dumpLooksStyled=false (hint only; read E-after.comp and look at the still)
+INFO SUMMARY first method whose dump looked styled: D
+PASS W2-retry-disconnect method=D ok=true err=nil
+INFO W2-retry-still path=C:\Users\sadiq\AppData\Local\Temp\kathacut-cls-write-clear.png timecode=01:00:17:15 exportOk=true note=confirm by eye that the text still reads correctly, plain
+INFO W3-retry skipped: keyframing needs method C (SetInput) to have worked; got D
+PASS W4-retry method=D appended=50 cpuSeconds=24.937
+DONE
+output folder=C:\Users\sadiq\AppData\Local\Temp
+INFO CLEANUP restored original timeline: true
+Done, report at C:\Users\sadiq\AppData\Local\Temp\kathacut-cls-write-spike.txt

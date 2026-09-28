@@ -81,7 +81,9 @@ tried used the old guessed shape/ids/unit, so **no write has ever been confirmed
 with ADR 0011's confirmed values; its findings extend ADR 0011's "Write method" section. 17 sends emphasis (blocked
 until 19 confirms a write). 18 moves the styling word by word: one clip with keyframes if 19 confirms that works,
 otherwise one clip per word step with the full line text (user decision). Run order: 15 → (user runs it) → 16 →
-19 → (user runs it) → ADR 0011 update → 17 → 18.
+19 → (user runs it) → ADR 0011 update → 17 → 18. **19 is done (2026-09-28):** the write that works is an
+`ExportFusionComp` → edit → `ImportFusionComp` round trip (ADR 0011, "Write spike run 2"). Brief 17 must use that
+instead of the `SetInput` its step 3 assumes. Keyframing is still no data, so 18 uses split clips.
 
 **Gate:** if the spike (02) finds that Resolve's Text+ breaks Malayalam shaping, **stop after 02** and tell the
 user. AGENTS.md forbids broken Malayalam shaping, so the Text+-only choice would have to be revisited (the

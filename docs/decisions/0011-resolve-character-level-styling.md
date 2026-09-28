@@ -1,10 +1,9 @@
 # ADR 0011 — Resolve Character Level Styling (CLS) spike findings
 
-Date: 2026-09-28. Status: **Partly unblocked.** The data shape, the property ids for colour, size, underline
-and style, and the counting unit are now **confirmed** from a hand-styled clip. **Writing** CLS from a script
-is still unconfirmed. Every write this spike tried used the old guessed ids and shape, so none of them tested
-the real format. Briefs 17 and 18 need one more short write spike before they can send anything (see the end
-of this ADR).
+Date: 2026-09-28. Status: **Unblocked for brief 17.** The data shape, the property ids for colour, size,
+underline and style, and the counting unit are **confirmed** from a hand-styled clip. A working script **write**
+is confirmed by brief 19 run 2: export the clip's Fusion comp, add the CLS tool in the file, and import it again
+(method D, below). Keyframing is still **no data**, so brief 18 uses split clips.
 
 Source: two runs of `resources/resolve/dev/cls-spike.lua` (brief 15) in **DaVinci Resolve Studio 21.0.0.47 on
 Windows**.
@@ -149,11 +148,57 @@ clip was stored:
 Verify with `ExportFusionComp`, which dumps the whole comp whatever is selected, and a still. `cls-write-spike.lua`
 run 2 tries both (attempts D and E).
 
+### Write spike run 2 (brief 19, 2026-09-28): comp file round trip works
+
+Source: `evidence/resolve-cls-write-spike-2026-09-28-run2.txt`, `…-run2-D.comp` (the file imported),
+`…-run2-D-after.comp` (the comp read back), `…-run2-E.setting` and `…-run2-E-after.comp`. Local paths in the
+`.comp` files are redacted. Stills weren't copied (6.2 MB each). Session checked them by eye. A-C failed again,
+as in run 1.
+
+**D, the working write method (confirmed).**
+1. `item:ExportFusionComp(path, 1)` writes the clip's comp, with the `Template` TextPlus and `MediaOut1`.
+2. Parse it with `bmd.readstring`. Add `Tools.CharacterLevelStyling1 = StyledTextCLS { Inputs = {
+   CharacterLevelStyling = Input { Value = StyledText { Array = …, Value = "" } }, Text = Input { Value = <text> }
+   } }`. Replace the Template's `StyledText` input with `Input { SourceOp = "CharacterLevelStyling1", Source =
+   "StyledText" }`. Write it back with `bmd.writestring`.
+3. `item:ImportFusionComp(path)` returns a `Composition` object.
+
+The read-back `D-after.comp` holds the four ranges exactly as written (`{2401, 21, 29, Value = 1}`, `2402`,
+`2403`, `{102, 17, 19, Value = 0.08}`) and the link. The still `kathacut-cls-write-D.png` shows **`ആൾട്ട്മാൻ`
+red with its conjuncts shaped correctly**, and `Sam` visibly **smaller**. The clip's base `Size` was 0.09, so 0.08
+shrinks it (`Sam` is ~157 px wide against ~175 px in the plain stills, ≈ 0.89 ≈ 0.08 / 0.09). This confirms that
+`102` is an **absolute** size, not a multiplier. Every other Template input in the exported file survives the
+round trip (`Font`, `Style`, `Size`, justification).
+
+Details of D that need handling in the bridge:
+- After the import, `GetFusionCompNameList()` returned only `{ "Composition 1" }` and `GetFusionCompCount()`
+  returned 1, yet the imported (styled) comp is what renders. So on a Text+ title, the import appears to
+  **replace** the comp rather than add one (**guess**; the name list may be stale). The spike's
+  `LoadFusionCompByName` call was passed the list's `__flags` number by mistake (`LoadFusionCompByName(4194304)
+  → nil`), so it did nothing. The styling rendered without it. The bridge should skip non-string entries in the
+  name list, load the newest comp by name if there is more than one, and delete older KathaCut comps
+  (`DeleteFusionCompByName`) so repeated syncs don't pile comps up on the clip.
+- `comp:SetData(...)` tags set before the import may not survive. The tag has to be written on the comp that
+  `ImportFusionComp` returns.
+- The file is written to disk and read back by Resolve. Write it under KathaCut's own cache or temp directory,
+  never next to the user's media.
+
+**E, `SaveSettings` → edit → `LoadSettings(path)`: failed (confirmed).** `LoadSettings(path)` returned `true`,
+and the file had the ranges (`…-run2-E.setting`). But `E-after.comp` has the connected modifier with **no**
+`CharacterLevelStyling` input, and the still is plain. `LoadSettings` drops the value, as `SetInput` does.
+
 ## Clear method (W2)
 
 Partly confirmed: setting `StyledText` to a plain value and emptying the array both return `ok=true`, and the
 text still reads correctly. Whether this removes real styling is unconfirmed, because no write ever applied
 any. The simplest clear is likely to delete the modifier tool, or not create one for clips without emphasis.
+
+**Run 2 update:** `tool:SetInput("StyledText", <plain text>)` on the D clip's Text+ tool returned `ok=true`,
+but the clear still (`kathacut-cls-write-clear.png`) is **still styled**, so it does **not** clear (confirmed).
+It's possible that the tool handle from `ImportFusionComp`'s returned comp isn't the live one. Either way,
+`SetInput` isn't a usable clear. The clear to use is the same round trip as the write: export the comp, remove
+`CharacterLevelStyling1` and put back `StyledText = Input { Value = <text> }`, then import. That is **guess**
+(untested), but it only uses calls D confirmed.
 
 ## Keyframing (W3)
 
@@ -167,14 +212,23 @@ two stills.
 50 clips). That's far over the ~2 s budget for one command at `INSERT_BATCH` (50) or `UPDATE_BATCH` (20). Bulk
 CLS writes must use start + poll. Re-measure once the real write method is known.
 
+**Run 2 (method D):** `cpuSeconds=24.937` for 50 clips, each doing insert + `ExportFusionComp` + parse/edit +
+`ImportFusionComp`. That's the same ~500 ms per clip. The insert seems to dominate, and the file round trip adds
+little. This is `os.clock()` CPU time, not wall time, which includes disk I/O. So a styled clip costs ≈ 0.5 s or
+more. Brief 17 should run the CLS round trip for **at most 3 clips per bridge command** (≈ 1.5 s), or run it as a
+start + poll command. Keep `UPDATE_BATCH`/`INSERT_BATCH` as they are for clips with no styling (**guess**; measure
+wall time in the real sync).
+
 ## Consequences for 17/18
 
 - 17: CLS entries are `{ id, cpStart, cpEndInclusive, Value | String }` with the ids above. Emphasis colour =
   2401-2403, scale = 102 (absolute) and underline = 105. Word ranges come from grapheme/word boundaries,
-  converted to code points. **Blocked** until a write spike confirms one write method. Brief 19 run 1 ruled out
-  `SetInput`, `LoadSettings(table)` and `Paste(table)`.
-- 18: split clips (the fallback) unless the write spike shows keyframed CLS working.
-- Both: bulk writes use start + poll.
+  converted to code points. Write with **method D**: `ExportFusionComp` → add the CLS tool and link →
+  `ImportFusionComp`. Clear by the same round trip without the tool. `SetInput`, `LoadSettings` (table or path)
+  and `Paste` don't work. Size `102` = `baseSize × emphasisScale`, absolute. Re-tag the imported comp.
+- 18: **split clips** (the user's fallback). Keyframed CLS is still no data, since W3 never ran with a working
+  write.
+- Both: at most ~3 styled clips per bridge command, or start + poll.
 
 ## Open questions (for the user)
 
@@ -186,7 +240,8 @@ CLS writes must use start + poll. Re-measure once the real write method is known
 
 ## Unconfirmed
 
-- A working script write, and keyframing.
+- Keyframing, and the round-trip clear (a **guess** built from confirmed calls).
+- Whether `ImportFusionComp` replaces or adds a comp on a Text+ title.
 - `\n` counting, and astral characters (UTF-16 vs code points).
 - The meaning of `1002`, and alpha `2404`.
 - Resolve Free and Mac.

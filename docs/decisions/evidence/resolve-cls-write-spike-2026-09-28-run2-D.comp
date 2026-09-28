@@ -1,0 +1,113 @@
+Composition {
+	HeldTools = 0,
+	HiQ = true,
+	PlaybackUpdateMode = 0,
+	StereoMode = false,
+	Resumable = true,
+	Frames = {
+	},
+	Tools = {
+		MediaOut1 = Saver {
+			Inputs = {
+				Index = Input { Value = "0" },
+				Input = Input {
+					Source = "Output",
+					SourceOp = "Template"
+				}
+			},
+			ViewInfo = OperatorInfo { Pos = { 440, 49.5 } }
+		},
+		Template = TextPlus {
+			Inputs = {
+				StyledText = Input {
+					Source = "StyledText",
+					SourceOp = "CharacterLevelStyling1"
+				},
+				HorizontalJustificationNew = Input { Value = 3 },
+				Width = Input { Value = 1920 },
+				VerticalJustificationNew = Input { Value = 3 },
+				Style = Input { Value = "Semibold" },
+				Font = Input { Value = "Anek Malayalam" },
+				GlobalOut = Input { Value = 119 },
+				UseFrameFormatSettings = Input { Value = 1 },
+				Size = Input { Value = 0.09 },
+				Height = Input { Value = 1080 }
+			},
+			ViewInfo = OperatorInfo { Pos = { 220, 49.5 } }
+		},
+		CharacterLevelStyling1 = StyledTextCLS {
+			Inputs = {
+				TransformRotation = Input { Value = 1 },
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്" },
+				Softness = Input { Value = 1 },
+				CharacterLevelStyling = Input {
+					Value = StyledText {
+						Value = "",
+						Array = {
+							{ 2401, 21, 29, Value = 1 },
+							{ 2402, 21, 29 },
+							{ 2403, 21, 29 },
+							{ 102, 17, 19, Value = 0.08 }
+						}
+					}
+				}
+			},
+			CtrlWZoom = false
+		}
+	},
+	CustomData = {
+		TEMPLATE_ID = "Text+"
+	},
+	DisabledTools = 0,
+	Version = "DaVinci Resolve Studio 21.0.0.0047",
+	LockedTools = 0,
+	OutputClips = {
+	},
+	GlobalRange = { 0, 119 },
+	AudioOffset = 0,
+	Prefs = {
+		Comp = {
+			FrameFormat = {
+				GuideRatio = 1.77777777777778,
+				DepthFull = 3,
+				DepthInteractive = 3,
+				DepthPreview = 3,
+				Rate = 24
+			},
+			LastFile = "<redacted local path>",
+			Unsorted = {
+				GlobalEnd = 119
+			},
+			Paths = {
+				Map = {
+					["ResolveCaches:"] = "<redacted local path>",
+				}
+			},
+			Views = {
+				Defaults = {
+					Guides = {
+						SafeImage = true,
+						SafeTitle = true,
+						Center = true
+					},
+					Viewer = {
+						Layer = ""
+					}
+				},
+				View1 = {
+				}
+			},
+			SpellCheck = {
+			},
+			Interactive = {
+				Proxy = {
+					Scale = 1
+				}
+			}
+		}
+	},
+	CurrentID = 3,
+	RenderRange = { 0, 119 },
+	SavedOutputs = 0,
+	CurrentTime = 0
+}
