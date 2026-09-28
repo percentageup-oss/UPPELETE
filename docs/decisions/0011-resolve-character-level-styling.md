@@ -116,6 +116,39 @@ rely on Resolve to fix bad boundaries.
 
   Verify with `CopySettings` and a still, not `GetInput`.
 
+### Write spike result (brief 19, 2026-09-28): all three methods failed
+
+Source: `cls-write-spike.lua`, Resolve Studio 21.0.0.47, Windows
+(`evidence/resolve-cls-write-spike-2026-09-28.txt`, `…-A/B/C.setting`). The three stills (6,232,017 bytes each,
+not copied) all show the same plain white caption. Nothing is red or bigger. The ranges used the confirmed unit:
+`ആൾട്ട്മാൻ` = `{21, 29}` and `Sam` = `{17, 19}` (`PARSE-snippet`).
+
+- **`bmd.readstring` works (confirmed).** It returns plain tables tagged with `__ctor = "StyledTextCLS"`,
+  `"Input"` and `"StyledText"`, plus `__flags` (`PASS PARSE`). So the constructor is kept as data. It isn't a
+  live object.
+- **Paste (A): failed (confirmed).** `comp:Paste(parsed)` returned `false`, and no modifier tool existed
+  afterwards (`A-paste-connect skipped`). The A dump is empty because `CopySettings()` with no argument copies only
+  the selected tools, and nothing was selected. The still and the missing tool are the evidence.
+- **LoadSettings with a table (B): failed (confirmed).** `mod:LoadSettings(parsed.Tools.CharacterLevelStyling1)`
+  returned `false`. The B dump has the connected modifier with `Text`, `Softness` and `TransformRotation`, but no
+  `CharacterLevelStyling` input.
+- **SetInput with the parsed value (C): failed (confirmed).** `mod:SetInput("CharacterLevelStyling", value)`
+  returned `nil` without an error. The C dump is the same as B's, with no `CharacterLevelStyling`. This dump is
+  valid evidence: the R1-1 dump shows that a `CopySettings()` of a styled modifier does include that input.
+- Connecting is still confirmed (`tool.StyledText:ConnectTo(mod.StyledText) ok=true`, B and C).
+- W2, W3 and W4 were skipped, so clear, keyframing and timing are still **no data**.
+
+**Conclusion:** a `StyledText` value can't be pushed into a live tool through `SetInput`, `LoadSettings(table)`
+or `Paste(table)`. The next candidates go through a **file** that Resolve parses itself, just as the hand-styled
+clip was stored:
+1. `item:ExportFusionComp(path, 1)`, then add the `CharacterLevelStyling1` tool to the exported comp and link
+   `StyledText` to it, then `item:ImportFusionComp(path)` and `item:LoadFusionCompByName(name)`.
+2. `mod:SaveSettings(path)`, then add the `CharacterLevelStyling` input to that file, then
+   `mod:LoadSettings(path)` (a path, not a table).
+
+Verify with `ExportFusionComp`, which dumps the whole comp whatever is selected, and a still. `cls-write-spike.lua`
+run 2 tries both (attempts D and E).
+
 ## Clear method (W2)
 
 Partly confirmed: setting `StyledText` to a plain value and emptying the array both return `ok=true`, and the
@@ -138,7 +171,8 @@ CLS writes must use start + poll. Re-measure once the real write method is known
 
 - 17: CLS entries are `{ id, cpStart, cpEndInclusive, Value | String }` with the ids above. Emphasis colour =
   2401-2403, scale = 102 (absolute) and underline = 105. Word ranges come from grapheme/word boundaries,
-  converted to code points. **Blocked** until the write spike confirms one write call.
+  converted to code points. **Blocked** until a write spike confirms one write method. Brief 19 run 1 ruled out
+  `SetInput`, `LoadSettings(table)` and `Paste(table)`.
 - 18: split clips (the fallback) unless the write spike shows keyframed CLS working.
 - Both: bulk writes use start + poll.
 

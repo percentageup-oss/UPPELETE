@@ -1,5 +1,27 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 19 (run 1 findings + run 2 script): CLS writes still unconfirmed
+
+**Changes:** The user ran `cls-write-spike.lua` on Resolve Studio 21.0.0.47 (Windows). All three methods failed:
+`Paste(table)` returned `false` and added no tool, `LoadSettings(table)` returned `false`, and
+`SetInput("CharacterLevelStyling", parsedValue)` returned `nil`. The B and C dumps have no
+`CharacterLevelStyling` input, and all three stills are plain. `bmd.readstring` works: it returns `__ctor`-tagged
+tables. Recorded in ADR 0011 ("Write spike result"). Evidence is in
+`docs/decisions/evidence/resolve-cls-write-spike-2026-09-28*`. The stills are 6.2 MB each, so they weren't copied.
+The script now also tries two file-based methods: **D** `ExportFusionComp`, add the CLS tool and link in the file,
+then `ImportFusionComp` + `LoadFusionCompByName`; **E** `SaveSettings(path)`, add the input, then
+`LoadSettings(path)`. Both are verified with `ExportFusionComp`, which dumps the whole comp whatever is selected.
+Also fixed: A-C didn't move the playhead past their own clip, so each clip was inserted on top of the previous
+one. The keyframe clip is renamed K.
+
+**Verification:** `npx luaparse` (syntax only). Not run against Resolve.
+
+**Limitations:** Clear, keyframing and timing are still no data. If D and E also fail, emphasis probably needs a
+different path, such as one `.setting` title template per style.
+
+**Next:** the user re-runs `cls-write-spike.lua` (SPIKE5.md, run 2) and sends back the report, the
+`.comp`/`.setting` files, and what the D and E stills show. Briefs 17 and 18 stay blocked.
+
 ## 2026-09-28 — Resolve Text+ 19: CLS write-method spike (brief added)
 
 **Changes:** docs + a new spike script only; no app code. ADR 0011 (run 2) confirmed the CLS data shape,

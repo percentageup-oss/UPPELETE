@@ -1,0 +1,12 @@
+{
+	Tools = ordered() {
+		CharacterLevelStyling1 = StyledTextCLS {
+			Inputs = {
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്" },
+				Softness = Input { Value = 1 },
+				TransformRotation = Input { Value = 1 }
+			},
+			CtrlWZoom = false
+		}
+	}
+}

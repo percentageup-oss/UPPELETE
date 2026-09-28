@@ -11,6 +11,12 @@ everything happens on its own scratch clips.
 It only creates and edits its own new timeline (`KathaCut CLS write spike <numbers>`) and its own Text+
 clips there.
 
+**Run 2 (current script):** run 1 showed that methods A-C (Paste, LoadSettings with a table, SetInput)
+return without an error but apply nothing (ADR 0011, "Write spike result"). The script now also tries
+**D** (export the clip's Fusion comp, add the styling in the file, re-import it) and **E** (save the
+modifier's settings to a file, add the styling, load the file back). Re-copy the script over the old one
+before running it.
+
 ## 1. Install the script
 
 Copy `resources/resolve/dev/cls-write-spike.lua` into Resolve's Scripts folder, same place as the earlier
@@ -38,20 +44,20 @@ leaves it in the project when it's done; you don't need to delete it.
 
 Before sending anything back, open the temp folder the script prints and look at:
 
-- `kathacut-cls-write-A.png`, `kathacut-cls-write-B.png`, `kathacut-cls-write-C.png` — each should show
-  the same two-line caption. **Did any of them show `ആൾട്ട്മാൻ` in red, and `Sam` visibly larger than the
-  rest of the text?** Note which file(s), if any.
+- `kathacut-cls-write-A.png` through `kathacut-cls-write-E.png` — each should show the same one-line
+  caption. **Did any of them show `ആൾട്ട്മാൻ` in red, and `Sam` visibly larger than the rest of the
+  text?** Note which file(s), if any. D and E are the new ones; A-C are expected to stay plain again.
 - If the console log's `SUMMARY` line names a working method, also check:
   - `kathacut-cls-write-clear.png` — should be **plain again**, no red or resized word, text still
     readable.
-  - `kathacut-cls-write-D-frame5.png` and `-D-frame15.png` — frame 5 should show **`Sam`** red, frame 15
+  - `kathacut-cls-write-K-frame5.png` and `-K-frame15.png` (only if method C worked) — frame 5 should show **`Sam`** red, frame 15
     should show **`ആൾട്ട്മാൻ`** red. Say whether that's what you see, or whether it's reversed, the same,
     or neither is red.
 
 ## 4. Send back
 
 - `kathacut-cls-write-spike.txt` — the full console report.
-- Every `kathacut-cls-write-*.setting` file (A/B/C) in the temp folder.
+- Every `kathacut-cls-write-*.setting` and `kathacut-cls-write-*.comp` file in the temp folder.
 - Every `kathacut-cls-write-*.png` file.
 - Your answers to the "look at the three stills yourself" questions above.
 

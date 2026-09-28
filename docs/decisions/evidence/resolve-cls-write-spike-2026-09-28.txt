@@ -1,0 +1,45 @@
+INFO SETUP current timeline at start: Timeline 1
+INFO S0 product=DaVinci Resolve Studio version=21.0.0.47
+INFO SETUP created scratch timeline: KathaCut CLS write spike 1790572652
+INFO PARSE-snippet {
+	Tools = ordered() {
+		CharacterLevelStyling1 = StyledTextCLS {
+			Inputs = {
+				CharacterLevelStyling = Input {
+					Value = StyledText {
+						Array = {
+							{ 2401, 21, 29, Value = 1 },
+							{ 2402, 21, 29 },
+							{ 2403, 21, 29 },
+							{ 102, 17, 19, Value = 0.08 }
+						},
+						Value = ""
+					}
+				},
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്" },
+				TransformRotation = Input { Value = 1 },
+				Softness = Input { Value = 1 }
+			},
+			CtrlWZoom = false
+		}
+	}
+}
+PASS PARSE bmd.readstring parsed the snippet: {Tools={__flags=3145728, CharacterLevelStyling1={CtrlWZoom=false, __ctor="StyledTextCLS", Inputs={CharacterLevelStyling={__ctor="Input", Value={Value="", __ctor="StyledText", Array=<table, depth limit>}}, TransformRotation={Value=1, __ctor="Input", __flags=1048832}, Softness={Value=1, __ctor="Input", __flags=1048832}, Text={Value="പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാൻ വിളിച്ചിട്ട് പറഞ്ഞത്", __ctor="Input", __flags=1048832}}}}}
+PASS A-paste-call ok=true result=false
+INFO A-paste-connect skipped: no modifier tool found after paste (regId search)
+Switch to the Edit page now (needed for every still export below).
+INFO A-paste-result modifierRegId=nil stillExportOk=true timecode=01:00:02:12 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+PASS B-loadsettings-connect tool.StyledText:ConnectTo(mod.StyledText) ok=true err=nil
+PASS B-loadsettings-call ok=true result=false
+INFO B-loadsettings-result stillExportOk=true timecode=01:00:05:00 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+PASS C-setinput-connect tool.StyledText:ConnectTo(mod.StyledText) ok=true err=nil
+PASS C-setinput-call ok=true result=nil
+INFO C-setinput-result stillExportOk=true timecode=01:00:07:12 dumpLooksStyled=false (hint only; read the .setting and look at the still)
+INFO SUMMARY first method whose dump looked styled: none
+INFO W2-retry skipped: no working write method (see A/B/C above)
+INFO W3-retry skipped: keyframing needs method C (SetInput) to have worked; got nil
+INFO W4-retry skipped: no working write method
+DONE
+output folder=C:\Users\sadiq\AppData\Local\Temp
+INFO CLEANUP restored original timeline: true
+Done, report at C:\Users\sadiq\AppData\Local\Temp\kathacut-cls-write-spike.txt

@@ -15,6 +15,12 @@ in order:
 All three build the value FROM A .setting STRING via bmd.readstring, not a plain Lua table (ADR 0011,
 "Write method: not confirmed").
 
+Run 1 (2026-09-28): 1-3 all returned without error but applied nothing (ADR 0011, "Write spike result").
+Run 2 adds two FILE-based attempts, where Resolve parses the StyledText value itself:
+  D. item:ExportFusionComp -> add the CLS tool + link in the file -> item:ImportFusionComp + LoadFusionCompByName
+  E. mod:SaveSettings(path) -> add the CharacterLevelStyling input in the file -> mod:LoadSettings(path)
+D and E verify with item:ExportFusionComp (the whole comp, independent of tool selection).
+
 Verification note (ADR 0011): GetInput("CharacterLevelStyling") returns "" even when styling IS present.
 This script therefore never uses GetInput to check its own work — only comp:CopySettings() dumps (which
 the user reads) and exported stills (which the user looks at).
@@ -278,6 +284,45 @@ local function safeIndex(t, ...)
   return cur
 end
 
+local function readTextFile(path)
+  local f = io.open(path, "rb")
+  if not f then
+    return nil
+  end
+  local text = f:read("*a")
+  f:close()
+  return text
+end
+
+local function deepCopy(value, seen)
+  seen = seen or {}
+  if type(value) ~= "table" then
+    return value
+  end
+  if seen[value] then
+    return seen[value]
+  end
+  local copy = {}
+  seen[value] = copy
+  for k, v in pairs(value) do
+    copy[deepCopy(k, seen)] = deepCopy(v, seen)
+  end
+  return copy
+end
+
+-- First entry of a bmd.readstring'd `ordered()` tools table whose constructor is `ctor`.
+local function entryByCtor(tools, ctor)
+  if type(tools) ~= "table" then
+    return nil, nil
+  end
+  for k, v in pairs(tools) do
+    if type(v) == "table" and v.__ctor == ctor then
+      return k, v
+    end
+  end
+  return nil, nil
+end
+
 -- A hint only (ADR 0011: GetInput can't be trusted; the user's read of the dump and the still are what
 -- actually confirm a write). True if the dump text contains one of ADR 0011's confirmed ids attached to a
 -- non-empty Array.
@@ -407,6 +452,7 @@ local parsed
 local workingMethod -- "A" | "B" | "C" | nil, the first attempt whose dump looked styled
 local workingClsItem -- the timeline item whose modifier is connected and (maybe) styled, for W2
 local workingModTool
+local workingTextTool -- the Text+ tool in the comp that is actually loaded (D swaps the comp)
 
 local function ensureEditPage()
   log("Switch to the Edit page now (needed for every still export below).")
@@ -546,7 +592,9 @@ local function runAttemptPaste()
       workingMethod = "A"
       workingClsItem = item
       workingModTool = mod
+      workingTextTool = tool
     end
+    advancePlayheadPast(item)
   end)
 end
 
@@ -593,7 +641,9 @@ local function runAttemptLoadSettings()
       workingMethod = "B"
       workingClsItem = item
       workingModTool = mod
+      workingTextTool = tool
     end
+    advancePlayheadPast(item)
   end)
 end
 
@@ -640,7 +690,168 @@ local function runAttemptSetInput()
       workingMethod = "C"
       workingClsItem = item
       workingModTool = mod
+      workingTextTool = tool
     end
+    advancePlayheadPast(item)
+  end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Shared by D, E and W4: dump the item's loaded comp to a file (whole comp, whatever is selected).
+-- ---------------------------------------------------------------------------
+
+local function exportItemComp(item, path)
+  local countOk, count = pcall(function() return item:GetFusionCompCount() end)
+  local index = (countOk and tonumber(count)) or 1
+  local ok, result = pcall(function() return item:ExportFusionComp(path, index) end)
+  return ok and result and readTextFile(path) or nil, index
+end
+
+-- D: ExportFusionComp -> edit the file -> ImportFusionComp + LoadFusionCompByName.
+-- Returns (ok, detail, comp, tool) where comp/tool are the newly loaded ones.
+local function applyViaImportComp(item, tag)
+  local beforePath = joinPath(tempDir, "kathacut-cls-write-" .. tag .. "-before.comp")
+  local exportOk, exportResult = pcall(function() return item:ExportFusionComp(beforePath, 1) end)
+  local beforeText = exportOk and exportResult and readTextFile(beforePath)
+  if not beforeText then
+    return false, string.format("ExportFusionComp(path, 1) ok=%s result=%s", tostring(exportOk), tostring(exportResult))
+  end
+  local readOk, compTable = pcall(function() return bmd.readstring(beforeText) end)
+  local tools = readOk and safeIndex(compTable, "Tools")
+  local tpName, tp = entryByCtor(tools, "TextPlus")
+  if not tp then
+    return false, "exported comp parsed=" .. tostring(readOk) .. " but has no TextPlus tool in .Tools"
+  end
+  tools.CharacterLevelStyling1 = deepCopy(safeIndex(parsed, "Tools", "CharacterLevelStyling1"))
+  tp.Inputs = tp.Inputs or {}
+  tp.Inputs.StyledText = { __ctor = "Input", SourceOp = "CharacterLevelStyling1", Source = "StyledText" }
+  local writeOk, outText = pcall(function() return bmd.writestring(compTable) end)
+  if not writeOk or not outText then
+    return false, "bmd.writestring(edited comp) failed: " .. tostring(outText)
+  end
+  local compPath = joinPath(tempDir, "kathacut-cls-write-" .. tag .. ".comp")
+  writeTextFile(compPath, outText)
+
+  local importOk, imported = pcall(function() return item:ImportFusionComp(compPath) end)
+  local namesOk, names = pcall(function() return item:GetFusionCompNameList() end)
+  local lastName
+  if namesOk and type(names) == "table" then
+    for _, n in pairs(names) do lastName = n end
+  end
+  local loadOk, loaded = false, nil
+  if lastName then
+    loadOk, loaded = pcall(function() return item:LoadFusionCompByName(lastName) end)
+  end
+  local detail = string.format(
+    "textPlusName=%s ImportFusionComp ok=%s result=%s compNames=%s LoadFusionCompByName(%s) ok=%s result=%s",
+    tostring(tpName), tostring(importOk), tostring(imported), namesOk and serialize(names, 2) or "<error>",
+    tostring(lastName), tostring(loadOk), tostring(loaded))
+
+  local comp = (importOk and type(imported) ~= "boolean" and imported) or (loadOk and type(loaded) ~= "boolean" and loaded) or nil
+  local tool
+  if comp then
+    pcall(function() tool = comp:FindToolByID("TextPlus") end)
+  end
+  return importOk and loadOk, detail, comp, tool
+end
+
+-- E: mod:SaveSettings(path) -> add the CharacterLevelStyling input -> mod:LoadSettings(path).
+local function applyViaSettingsFile(mod, tag)
+  local savedPath = joinPath(tempDir, "kathacut-cls-write-" .. tag .. "-before.setting")
+  local saveOk, saveResult = pcall(function() return mod:SaveSettings(savedPath) end)
+  local savedText = saveOk and readTextFile(savedPath)
+  if not savedText then
+    return false, string.format("SaveSettings(path) ok=%s result=%s (no file)", tostring(saveOk), tostring(saveResult))
+  end
+  local readOk, t = pcall(function() return bmd.readstring(savedText) end)
+  local _, clsTool = entryByCtor(readOk and safeIndex(t, "Tools"), "StyledTextCLS")
+  if not clsTool then
+    return false, "saved settings parsed=" .. tostring(readOk) .. " but have no StyledTextCLS tool in .Tools"
+  end
+  clsTool.Inputs = clsTool.Inputs or {}
+  clsTool.Inputs.CharacterLevelStyling = deepCopy(safeIndex(parsed, "Tools", "CharacterLevelStyling1", "Inputs", "CharacterLevelStyling"))
+  local writeOk, outText = pcall(function() return bmd.writestring(t) end)
+  if not writeOk or not outText then
+    return false, "bmd.writestring(edited settings) failed: " .. tostring(outText)
+  end
+  local path = joinPath(tempDir, "kathacut-cls-write-" .. tag .. ".setting")
+  writeTextFile(path, outText)
+  local loadOk, loadResult = pcall(function() return mod:LoadSettings(path) end)
+  return loadOk and loadResult ~= false, string.format("SaveSettings ok=%s LoadSettings(path) ok=%s result=%s",
+    tostring(saveOk), tostring(loadOk), tostring(loadResult))
+end
+
+local function runAttemptImportComp()
+  test("D-importcomp", function()
+    if not parsed then
+      record("INFO", "D-importcomp", "skipped: no parsed snippet (see PARSE)")
+      return
+    end
+    local item, comp, tool = newScratchClip()
+    if not item or not comp or not tool then
+      record("INFO", "D-importcomp", "skipped: could not create scratch clip D")
+      return
+    end
+    local ok, detail, newComp, newTool = applyViaImportComp(item, "D")
+    record(ok and "PASS" or "FAIL", "D-importcomp-call", detail)
+
+    local afterText, index = exportItemComp(item, joinPath(tempDir, "kathacut-cls-write-D-after.comp"))
+    ensureEditPageOnce()
+    local exportOk, tc = exportStillMid(item, joinPath(tempDir, "kathacut-cls-write-D.png"))
+    local looksStyled = dumpLooksStyled(afterText)
+    record("INFO", "D-importcomp-result", string.format(
+      "exportedCompIndex=%s stillExportOk=%s timecode=%s dumpLooksStyled=%s newTextPlusFound=%s (hint only; read D-after.comp and look at the still)",
+      tostring(index), tostring(exportOk), tostring(tc), tostring(looksStyled), tostring(newTool ~= nil)))
+
+    if looksStyled and not workingMethod then
+      workingMethod = "D"
+      workingClsItem = item
+      workingTextTool = newTool
+    end
+    advancePlayheadPast(item)
+  end)
+end
+
+local function runAttemptSettingsFile()
+  test("E-settingsfile", function()
+    if not parsed then
+      record("INFO", "E-settingsfile", "skipped: no parsed snippet (see PARSE)")
+      return
+    end
+    local item, comp, tool = newScratchClip()
+    if not item or not comp or not tool then
+      record("INFO", "E-settingsfile", "skipped: could not create scratch clip E")
+      return
+    end
+    local addOk, mod = pcall(function() return comp:AddTool("StyledTextCLS") end)
+    if not addOk or not mod then
+      record("INFO", "E-settingsfile", "skipped: comp:AddTool('StyledTextCLS') failed")
+      advancePlayheadPast(item)
+      return
+    end
+    local via, attempts = tryConnect(tool, mod)
+    record(via and "PASS" or "FAIL", "E-settingsfile-connect", table.concat(attempts, " | "))
+
+    local ok, detail = applyViaSettingsFile(mod, "E")
+    record(ok and "PASS" or "FAIL", "E-settingsfile-call", detail)
+    local connOk, connected = pcall(function() return tool.StyledText:GetConnectedOutput() end)
+    record("INFO", "E-settingsfile-still-connected", connOk and tostring(connected ~= nil) or "<error>")
+
+    local afterText, index = exportItemComp(item, joinPath(tempDir, "kathacut-cls-write-E-after.comp"))
+    ensureEditPageOnce()
+    local exportOk, tc = exportStillMid(item, joinPath(tempDir, "kathacut-cls-write-E.png"))
+    local looksStyled = dumpLooksStyled(afterText)
+    record("INFO", "E-settingsfile-result", string.format(
+      "exportedCompIndex=%s stillExportOk=%s timecode=%s dumpLooksStyled=%s (hint only; read E-after.comp and look at the still)",
+      tostring(index), tostring(exportOk), tostring(tc), tostring(looksStyled)))
+
+    if looksStyled and not workingMethod then
+      workingMethod = "E"
+      workingClsItem = item
+      workingModTool = mod
+      workingTextTool = tool
+    end
+    advancePlayheadPast(item)
   end)
 end
 
@@ -651,10 +862,10 @@ end
 local function runClearRetry()
   test("W2-retry", function()
     if not workingMethod or not workingClsItem then
-      record("INFO", "W2-retry", "skipped: no working write method (see A/B/C above)")
+      record("INFO", "W2-retry", "skipped: no working write method (see A-E above)")
       return
     end
-    local comp, tool = textPlusTool(workingClsItem)
+    local tool = workingTextTool or select(2, textPlusTool(workingClsItem))
     if not tool then
       record("INFO", "W2-retry", "skipped: no Text+ tool on the working clip")
       return
@@ -697,7 +908,7 @@ local function runKeyframeRetry()
 
     local item, comp, tool = newScratchClip()
     if not item or not comp or not tool then
-      record("INFO", "W3-retry", "skipped: could not create scratch clip D")
+      record("INFO", "W3-retry", "skipped: could not create scratch clip K")
       return
     end
     local addOk, mod = pcall(function() return comp:AddTool("StyledTextCLS") end)
@@ -723,8 +934,8 @@ local function runKeyframeRetry()
 
     ensureEditPageOnce()
     local startF = item:GetStart()
-    local path5 = joinPath(tempDir, "kathacut-cls-write-D-frame5.png")
-    local path15 = joinPath(tempDir, "kathacut-cls-write-D-frame15.png")
+    local path5 = joinPath(tempDir, "kathacut-cls-write-K-frame5.png")
+    local path15 = joinPath(tempDir, "kathacut-cls-write-K-frame15.png")
     local ok5, tc5 = exportStillAtFrame(startF + 5, path5)
     local ok15, tc15 = exportStillAtFrame(startF + 15, path15)
     record("INFO", "W3-retry-stills", string.format(
@@ -749,10 +960,17 @@ local function runTimingRetry()
     local t0 = os.clock()
     for _ = 1, 50 do
       local item, comp, tool = newScratchClip()
-      if item and comp and tool then
+      if item and comp and tool and workingMethod == "D" then
+        placed = placed + 1
+        applyViaImportComp(item, "W4")
+        advancePlayheadPast(item)
+      elseif item and comp and tool then
         placed = placed + 1
         local addOk, mod = pcall(function() return comp:AddTool("StyledTextCLS") end)
-        if addOk and mod then
+        if addOk and mod and workingMethod == "E" then
+          tryConnect(tool, mod)
+          applyViaSettingsFile(mod, "W4")
+        elseif addOk and mod then
           tryConnect(tool, mod)
           if workingMethod == "C" then
             local clsValue = safeIndex(parsed, "Tools", "CharacterLevelStyling1", "Inputs", "CharacterLevelStyling", "Value")
@@ -800,6 +1018,8 @@ local function main()
   runAttemptPaste()
   runAttemptLoadSettings()
   runAttemptSetInput()
+  runAttemptImportComp()
+  runAttemptSettingsFile()
   record("INFO", "SUMMARY", "first method whose dump looked styled: " .. tostring(workingMethod or "none"))
   runClearRetry()
   runKeyframeRetry()
