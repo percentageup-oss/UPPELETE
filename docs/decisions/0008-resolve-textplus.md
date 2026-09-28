@@ -151,9 +151,9 @@ or per-word styling work (emphasis, brief 07) until a follow-up spike run comple
 
 **Update (2026-09-28, brief 15/16, ADR 0011):** a purpose-built CLS spike confirmed the modifier's tool ID
 (`StyledTextCLS`) and connection call (`tool.StyledText:ConnectTo(mod.StyledText)`), and narrowed the property-id
-guesses, but the counting unit is still **no data** (the hand-styled clip was skipped again) and the one write
-attempt made didn't visibly apply. Still **blocked** for briefs 17/18 — see ADR 0011 for the full breakdown and
-what a follow-up run needs to confirm.
+guesses. A second run with a hand-styled clip confirmed the data shape, numeric property ids and the counting
+unit (0-based code points, end inclusive). A working script write is still unconfirmed, so briefs 17 and 18 wait
+on one more write spike. See ADR 0011.
 
 ## Tagging (T12)
 

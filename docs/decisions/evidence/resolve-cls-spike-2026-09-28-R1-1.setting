@@ -1,0 +1,55 @@
+{
+	Tools = ordered() {
+		Template = TextPlus {
+			ViewInfo = OperatorInfo { Pos = { 220, 49.5 } },
+			Inputs = {
+				VerticalJustificationNew = Input { Value = 3 },
+				HorizontalJustificationNew = Input { Value = 3 },
+				Thickness2 = Input { Value = 0.04 },
+				Red2 = Input { Value = 0 },
+				Font = Input { Value = "Anek Malayalam" },
+				Softness3 = Input { Value = 1 },
+				StyledText = Input {
+					Source = "StyledText",
+					SourceOp = "CharacterLevelStyling1"
+				},
+				Size = Input { Value = 0.0411522633744856 },
+				Style = Input { Value = "Bold" },
+				GlobalOut = Input { Value = 27 },
+				Width = Input { Value = 1920 },
+				Height = Input { Value = 1080 },
+				UseFrameFormatSettings = Input { Value = 1 },
+				Center = Input { Value = { 0.5, 0.20393006993007 } },
+				LineSpacing = Input { Value = 1.11692844677138 },
+				Enabled2 = Input { Value = 1 },
+				Enabled3 = Input { Value = 1 },
+				Softness2 = Input { Value = 1 }
+			},
+			CtrlWZoom = false
+		},
+		CharacterLevelStyling1 = StyledTextCLS {
+			Inputs = {
+				CharacterLevelStyling = Input {
+					Value = StyledText {
+						Array = {
+							{ 2401, 21, 31, Value = 1 },
+							{ 2402, 21, 31 },
+							{ 2403, 21, 31 },
+							{ 102, 21, 31, Value = 0.08 },
+							{ 1002, 1, 17 },
+							{ 1002, 18, 18 },
+							{ 1002, 19, 19 },
+							{ 105, 17, 19, Value = 1 },
+							{ 109, 55, 60, String = "Bold" }
+						},
+						Value = ""
+					}
+				},
+				TransformRotation = Input { Value = 1 },
+				Text = Input { Value = "പ്രൈം മിനിസ്റ്റർ Sam ആൾട്ട്മാനെ ഡയറക്റ്റ് വിളിച്ചിട്ട് പറഞ്ഞത്" },
+				Softness = Input { Value = 1 }
+			},
+			CtrlWZoom = false
+		}
+	}
+}

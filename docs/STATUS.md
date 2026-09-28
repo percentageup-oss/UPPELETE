@@ -1,5 +1,28 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 16 (run 2): CLS format and counting unit confirmed
+
+**Changes:** docs only. The user re-ran `cls-spike.lua` with a hand-styled Text+ clip (R1). ADR 0011 is
+rewritten from it:
+- CLS lives in the `StyledTextCLS` modifier's `CharacterLevelStyling` input as
+  `StyledText { Array = { {propId, start, end, Value|String}, … }, Value = "" }`. Property ids are numeric:
+  2401-2403 colour RGB (a missing `Value` means 0), 102 absolute size, 105 underline, 109 style string, and 1002
+  unknown.
+- The unit is **0-based code points with an inclusive end**: `Sam` = `{17, 19}`.
+- `GetInput` returns `""` even for real styling, so CLS can only be read through `CopySettings()`.
+
+Evidence: `docs/decisions/evidence/resolve-cls-spike-2026-09-28-{run2.txt,R1-1.setting}`.
+
+**Verification:** docs only.
+
+**Limitations:** the write, clear and keyframe tests still used the old guessed ids and shape, so a working
+script write is unconfirmed, and the stills were unchanged again. How `\n` counts, what id 1002 means, and alpha
+are unconfirmed. Four questions for the user are in ADR 0011 ("Open questions").
+
+**Next:** a small write spike: build the value from a `.setting` string via `bmd.readstring`, then try `Paste`,
+`LoadSettings` and `SetInput`, and check the results with `CopySettings` and a still. Also try one keyframed
+value. Briefs 17 and 18 start after that.
+
 ## 2026-09-28 — Resolve Text+ 16: CLS spike findings → ADR 0011
 
 **Changes:** docs only. Turned the user's brief 15 report (hand prep skipped again) into
