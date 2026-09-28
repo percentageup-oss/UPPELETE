@@ -1,5 +1,33 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 16: CLS spike findings → ADR 0011
+
+**Changes:** docs only. Turned the user's brief 15 report (hand prep skipped again) into
+`docs/decisions/0011-resolve-character-level-styling.md`. Confirmed: the modifier's tool ID (`StyledTextCLS`,
+named `CharacterLevelStyling1`) and the connection call (`tool.StyledText:ConnectTo(mod.StyledText)`, `ok=true`
+every time). Narrowed the property-id guesses from R0's `GetInputList()` dump: a per-range color override is more
+likely the plain `Red/Green/Blue/Alpha` quad gated by `OverrideColor`, not the `Red1/Green1/Blue1/Alpha1` base-fill
+quad W1 guessed; size is more likely `SizeX`/`SizeY` (a multiplier), not the absolute `Size` input W1 guessed.
+Timing confirmed: ~500 ms CPU/clip for insert+connect+write, so any bulk CLS command in briefs 17/18 needs start +
+poll, not one synchronous call.
+
+**Still blocked:** the character counting unit has **no data** — R1 (reading a hand-styled clip) was skipped
+again, and R2's offsets are TypeScript's `graphemes()` output, not a real Resolve value to compare against. The
+one write attempt (W1b, `SetInput`) reported `ok=true` but read back empty and produced no visible change across
+all four stills (identical file size, and identical by eye — checked directly). W3's keyframe test inherited that
+same failure, so it answers nothing about whether CLS can be animated in one clip; brief 18 stays on the user's
+split-clips fallback. Method (a), `Paste()`, was never attempted (nothing to edit yet at dump time).
+
+**Verification:** docs only, no code touched.
+
+**Limitations:** every property-id guess above is still a guess, refined by real default-value evidence but not
+by an actual styled range. The write method is unconfirmed either way (empty readback + unchanged stills isn't
+proof `SetInput` can't work, only that this run's guessed shape didn't).
+
+**Next:** a follow-up spike run with the hand prep actually completed (a real R1 `.setting` dump) is required
+before briefs 17 and 18 can start. That run should also re-test the write with the corrected property-id guesses
+above, sourced from R1 rather than R0's defaults.
+
 ## 2026-09-27 — Resolve Text+ 15: Character Level Styling spike (script)
 
 **Changes:**

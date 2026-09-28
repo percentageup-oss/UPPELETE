@@ -149,6 +149,12 @@ video track 2) before this run. The CLS data format, whether `SetInput` can writ
 counting unit (code points / UTF-8 bytes / graphemes) are all **unresolved**. This blocks any per-character
 or per-word styling work (emphasis, brief 07) until a follow-up spike run completes T11.
 
+**Update (2026-09-28, brief 15/16, ADR 0011):** a purpose-built CLS spike confirmed the modifier's tool ID
+(`StyledTextCLS`) and connection call (`tool.StyledText:ConnectTo(mod.StyledText)`), and narrowed the property-id
+guesses, but the counting unit is still **no data** (the hand-styled clip was skipped again) and the one write
+attempt made didn't visibly apply. Still **blocked** for briefs 17/18 — see ADR 0011 for the full breakdown and
+what a follow-up run needs to confirm.
+
 ## Tagging (T12)
 
 - `comp:SetData("KathaCut.cueId", "cue-123")` then `comp:GetData(...)` returned `"cue-123"` — confirmed
