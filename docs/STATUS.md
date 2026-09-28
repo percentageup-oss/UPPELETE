@@ -1,5 +1,64 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 17: send caption emphasis via Character Level Styling
+
+**Changes:** Emphasized words now reach Resolve as Character Level Styling ranges (ADR 0011), instead of the
+whole-cue "not-sent" the support matrix showed before.
+- `src/resolve/charUnits.ts`: `TEXT_PLUS_CHAR_UNIT = 'codepoint'`, confirmed by ADR 0011 (0-based code points, end
+  inclusive — the only ADR range in the codebase that's inclusive, everywhere else is half-open).
+- `src/resolve/textPlusStyleRanges.ts` (new): `emphasisStyleRanges` locates each emphasized word with the
+  existing `wordRanges` (grapheme-boundary-safe; a word it can't find verbatim is dropped, never split), colors it
+  with `secondaryColor`, and adds `sizeScale`/`style`/`underline` only when they differ from the base. Spotlight
+  mode adds a dim range (`alpha`) over every non-emphasized stretch, split so it never covers a literal `\n`
+  (newline counting under the ADR's unit is unconfirmed). `emphasisTextTransform` is applied to just that word's
+  substring in the sent text, but only when it keeps the exact UTF-16 length — otherwise that one word is styled
+  without the transform, since a length change would move every other range. Deviates from the brief's literal
+  wording in one place: words are *located* using the base `textTransform` (what's actually baked into the sent
+  text), not `resolvedEmphasisTransform` — otherwise a distinct emphasis transform would make `wordRanges` fail to
+  find the word at all, dropping its styling entirely, not just its transform.
+- `src/resolve/textPlusPlan.ts`: passes `emphasized` into the line-wrap layout (only when the whole-text transform
+  kept the string's length, so offsets stay valid), then builds `styleRanges` and a possibly-transformed `text`
+  from `emphasisStyleRanges`. Support report: emphasis colour/size/weight/italic/underline are `sent`; emphasis
+  text transform and spotlight dim (alpha id `2404`, only a guess in the ADR) are `approximated`; emphasis font
+  family is `not-sent` — **ADR 0011's property table has no confirmed id for a per-range font family** (only
+  `109`, a style *name* string), so the brief's `font` field on `TextPlusStyleRange` was dropped rather than sent
+  with a made-up id.
+- `src/core/resolveIpc.ts`'s `styleRangeSchema`: added `alpha`, removed `font` (same reason), end is now
+  `nonnegative` and inclusive (was `positive`/exclusive) to match the ADR's unit.
+- `resources/resolve/bridge.lua`: `applyClsRoundTrip` implements ADR 0011's method D — `ExportFusionComp` → parse
+  with `bmd.readstring` → add/replace `CharacterLevelStyling1` (built from a formatted string parsed the same way
+  the confirmed-working write spike built it, not a hand-built `__ctor` table) and repoint the Template's
+  `StyledText` input → `bmd.writestring` → `ImportFusionComp`. Clearing (`styleRanges` empty) reuses the same round
+  trip with the CLS tool removed and `StyledText` reset to a plain value — the ADR's own clear method is an
+  unconfirmed guess, since no write ever worked before this brief to test clearing against. `applySpec` only runs
+  the round trip when a clip's spec has ranges to write, or is tagged (`KEY_TAG .. ".cls"`, set on the *imported*
+  comp — a tag set before `ImportFusionComp` doesn't survive it, ADR 0011) from a previous sync as having CLS to
+  remove, so a plain clip never pays the ~0.5s export/import cost.
+- `electron/resolve/sync.ts`: `chunkForCls` caps a batch at 3 clips whose `styleRanges` is non-empty (ADR 0011
+  "Timing"), while a batch of only plain clips still uses the full `INSERT_BATCH`/`UPDATE_BATCH`.
+- `src/resolve/ResolveSync.tsx`: when there's nothing to sync but the support list has a `not-sent` item, a note
+  points at "What Resolve gets" instead of leaving the disabled button unexplained.
+- Added `src/resolve/textPlusStyleRanges.test.ts` (new test coverage for this directory): grapheme-safe Malayalam
+  word location, code-point/inclusive-end conversion, dropped-word handling, spotlight newline exclusion, and the
+  length-preserving transform check.
+
+**Verification:** `npx tsc --noEmit -p .` and `npx luaparse resources/resolve/bridge.lua` both pass.
+`npx vitest run src/resolve/textPlusStyleRanges.test.ts` passes (7 tests). Not run against Resolve — the write
+round trip (method D) is the same mechanism ADR 0011's spike confirmed works for a *hand-built* snippet, but this
+brief's generalized version (arbitrary range counts, arbitrary text) has not itself been exercised in Resolve.
+
+**Limitations:** Per the manual check below, unverified in a real Resolve session. The clear round trip is a
+guess (ADR 0011 never confirmed it). Emphasis font family never reaches Resolve (no confirmed id). Word-at-a-time
+`active-word-highlight`/`word-pop` in line mode still needs a keyframed CLS value (brief 18, split clips instead —
+CLS keyframing is still "no data"). `\n` inside an emphasized word's own range can't happen (emphasized words are
+single words), but a spotlight dim range adjacent to a line break relies on the codebase's "most likely one code
+point" assumption for the character *after* the excluded `\n`, which is also unconfirmed.
+
+**Next:** the user runs the manual check (below) in Resolve Studio 21.0.0.47 on Windows: emphasize a Malayalam
+word and an English word, Sync, confirm only those words are colored/scaled and the Malayalam conjunct shapes
+correctly; switch to spotlight and confirm dimming; remove emphasis and confirm it clears. Then brief 18
+(word-at-a-time highlight via split clips).
+
 ## 2026-09-28 — Resolve Text+ 19 (run 2 findings): a working CLS write
 
 **Changes:** docs only. The user re-ran `cls-write-spike.lua` (Resolve Studio 21.0.0.47, Windows). Recorded in ADR

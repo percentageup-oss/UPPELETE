@@ -177,19 +177,19 @@ export const resolveKeyframeSchema = z.strictObject({
 })
 export type ResolveKeyframe = z.infer<typeof resolveKeyframeSchema>
 
-/** Character Level Styling range (ADR units — **not sent yet**, `src/resolve/textPlusPlan.ts`'s
- * `TextPlusStyleRange`: the CLS data format and character-counting unit are both unconfirmed by the spike, ADR
- * 0008/0009, "no data". Validated here so the shape is ready once a later brief confirms the format; the planner
- * never actually populates it today. */
+/** Character Level Styling range (ADR 0011 units: 0-based code points, `start`/`end` both inclusive — the ADR's
+ * confirmed counting unit, unlike every other 0-based/exclusive-end range in this file), `src/resolve/
+ * textPlusStyleRanges.ts`'s `TextPlusStyleRange`. No `font` field: the ADR's property table has no confirmed id
+ * for a per-range font family. */
 const styleRangeSchema = z.strictObject({
   start: z.number().int().nonnegative(),
-  end: z.number().int().positive(),
+  end: z.number().int().nonnegative(),
   color: z.strictObject({ r: z.number().min(0).max(1), g: z.number().min(0).max(1), b: z.number().min(0).max(1) }).optional(),
+  alpha: z.number().min(0).max(1).optional(),
   sizeScale: z.number().positive().max(4).optional(),
-  font: z.string().max(200).optional(),
   style: z.string().max(200).optional(),
   underline: z.boolean().optional(),
-}).refine((range) => range.end > range.start, { message: 'A style range must cover at least one character.' })
+}).refine((range) => range.end >= range.start, { message: 'A style range must cover at least one character.' })
 
 export const resolveSyncSpecSchema = z.strictObject({
   key: z.string().min(1).max(256),

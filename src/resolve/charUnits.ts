@@ -1,11 +1,18 @@
 import { graphemes, graphemeBoundaries } from '../core/captionText'
 
 /**
- * Character-counting units a Text+ range boundary could conceivably use. **No unit is confirmed by the spike**
- * (ADR 0008/0009: Character Level Styling's data format and counting unit are both "no data" / unconfirmed) — this
- * type exists for the day that changes, not because KathaCut currently writes ranges in any of them.
+ * Character-counting units a Text+ range boundary could conceivably use. The unit is now confirmed
+ * (ADR 0011 "Counting unit"): Resolve's Character Level Styling counts **0-based Unicode code points**, with the
+ * range end **inclusive** — see `TEXT_PLUS_CHAR_UNIT` below. `utf8byte` and `grapheme` stay in the union only
+ * because `offsetInUnit` still supports them (useful for the ADR's own debugging/spikes); KathaCut never sends
+ * either to Resolve.
  */
 export type CharUnit = 'codepoint' | 'utf8byte' | 'grapheme'
+
+/** The unit Resolve's Character Level Styling actually counts in (ADR 0011): 0-based code points. UTF-16 index
+ * and code-point index coincide for Malayalam and English (both BMP-only); they'd differ only for an astral
+ * character (e.g. emoji), which the spike never covered. */
+export const TEXT_PLUS_CHAR_UNIT: CharUnit = 'codepoint'
 
 /** Count of whole `unit`s in `text` from its start up to the UTF-16 index `utf16Index`. Never call this with an
  * index that doesn't land on a grapheme boundary of `text` — a Text+ range must never split a Malayalam conjunct

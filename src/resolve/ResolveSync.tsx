@@ -166,6 +166,8 @@ function ResolveSyncDialog({ review, trackName, onJump, onCancel, onSync }: {
         <ul>{items.map((item) => <li key={item.feature}><strong>{item.feature}</strong>{item.note ? ` — ${item.note}` : ''}</li>)}</ul>
       </div>)}
     </section>}
+    {nothingToDo && levels.some((group) => group.level === 'not-sent') &&
+      <p className="resolve-sync-note">Nothing to sync. Some styling can’t be sent to Resolve; see “What Resolve gets” below.</p>}
     <div className="dialog-actions">
       <button type="button" onClick={onCancel}>Cancel</button>
       <button type="button" className="accent" disabled={nothingToDo} onClick={() => onSync(decisions)}>{nothingToDo ? 'Nothing to sync' : 'Sync'}</button>

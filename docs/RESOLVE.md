@@ -223,9 +223,12 @@ that hit it. Never trust a level below `sent` as pixel-identical to the KathaCut
 | `progressive-word-reveal`, word-at-a-time display | **sent** | no animation needed — already one word per clip |
 | `active-word-highlight`, word-at-a-time display | **sent** | the whole clip fill is overridden to the secondary color |
 | `word-pop`, word-at-a-time display | **approximated** | secondary color + static `Size × emphasisScale`, no sine pop |
-| `active-word-highlight` / `word-pop`, line mode | **not-sent** | needs Character Level Styling to color one word inside a longer clip; CLS's data format is unresolved |
-| Emphasis spans (`cue.emphasized`) | **not-sent** | same CLS reason; no sub-clip fallback (would change line layout, forbidden) |
-| Gradient fill, glow, 3D depth, underline | **not-sent** | no Text+ equivalent identified |
+| `active-word-highlight` / `word-pop`, line mode | **not-sent** | needs Character Level Styling to color one word inside a longer clip; brief 18 (split clips), not yet built |
+| Emphasis colour, size, weight/italic/underline | **sent** | Character Level Styling ids confirmed from a hand-styled clip (ADR 0011); emphasized words are located on grapheme boundaries only |
+| Emphasis text transform | **approximated** | applied to the emphasized word's own substring only when it keeps the exact UTF-16 length; skipped for that word otherwise |
+| Emphasis spotlight dim | **approximated** | uses fill-alpha id 2404, which ADR 0011 only guesses at by sequence |
+| Emphasis font family | **not-sent** | ADR 0011 has no confirmed per-range font-family id (only a style *name* string) |
+| Gradient fill, glow, 3D depth, base (non-emphasis) underline | **not-sent** | no Text+ equivalent identified |
 | Rotation | **not-sent** | no single confirmed rotation input exists (`Angle` doesn't appear in the input dump; `LayoutRotation`/`TransformRotation`/per-level `AngleX/Y/Z` are untested candidates) |
 | `HorizontalJustificationNew` enum mapping | **unresolved** | a single line renders centred on `Center` at every tested value (0/1/2); only affects multi-line text, which the spike never tested |
 
@@ -250,11 +253,15 @@ that hit it. Never trust a level below `sent` as pixel-identical to the KathaCut
   Resolve; only video clips (**Create in DaVinci**) and caption Text+ clips (**Sync**) do.
 - **Batch sizes are measured, not guaranteed.** `INSERT_BATCH` (50 Text+ clips per Resolve command) and
   the media/clip batch sizes in "Create in DaVinci" come from one spike measurement (ADR 0009, E7) on
-  one machine; they are not adaptive to slower hardware.
-- **Character Level Styling never gets used.** Its data format and character-counting unit are
-  completely unresolved (ADR 0008/0009 "no data"), so no per-character or per-word Resolve-side styling
-  is possible yet — this is the reason emphasis and line-mode word highlighting stay `not-sent` in the
-  [support matrix](#text-support-matrix).
+  one machine; they are not adaptive to slower hardware. A clip that writes or clears Character Level
+  Styling costs far more per clip (~0.5s, ADR 0011 "Timing"), so `chunkForCls` (`electron/resolve/sync.ts`)
+  caps a batch at 3 such clips regardless of `INSERT_BATCH`/`UPDATE_BATCH` — also a spike measurement, not
+  adaptive.
+- **Character Level Styling writes emphasis, not yet word-at-a-time highlighting.** ADR 0011 confirmed the data
+  shape, property ids and counting unit, and brief 17 sends emphasized-word colour/size/weight/underline through
+  it (a file round trip — `ExportFusionComp` → edit → `ImportFusionComp`, since `SetInput`/`LoadSettings`/`Paste`
+  of a CLS value are confirmed no-ops). `active-word-highlight`/`word-pop` in line mode still needs a *keyframed*
+  CLS value, which is still unconfirmed (ADR 0011 "Keyframing: no data") — brief 18 uses split clips instead.
 - **Multiple KathaCut windows, or multiple Resolve projects with scripts running, are not guarded
   against** — there's no single-instance lock on either side.
 

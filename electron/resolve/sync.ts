@@ -28,6 +28,26 @@ const chunks = <T>(items: T[], size: number): T[][] => {
   return out
 }
 
+/** ADR 0011 ("Timing"): a Character Level Styling write costs ~0.5s of Resolve CPU time per clip (the
+ * `ExportFusionComp`/`ImportFusionComp` round trip), well over the ~2s per-command budget beyond ~3 clips — so a
+ * batch never carries more than `maxStyled` CLS clips, whatever `styled` says, even though plain clips still batch
+ * at the full `maxTotal` size the ADR left unchanged. */
+function chunkForCls<T>(items: T[], maxTotal: number, styled: (item: T) => boolean, maxStyled = 3): T[][] {
+  const out: T[][] = []
+  let current: T[] = []
+  let styledCount = 0
+  for (const item of items) {
+    const isStyled = styled(item)
+    if (current.length >= maxTotal || (isStyled && styledCount >= maxStyled)) {
+      out.push(current); current = []; styledCount = 0
+    }
+    current.push(item)
+    if (isStyled) styledCount++
+  }
+  if (current.length) out.push(current)
+  return out
+}
+
 const bridgeSpec = (spec: ResolveSyncSpec) => ({
   key: spec.key, startFrame: spec.startFrame, endFrame: spec.endFrame, text: spec.text, inputs: spec.inputs,
   keyframes: spec.keyframes, styleRanges: spec.styleRanges,
@@ -104,7 +124,7 @@ export async function applySync(bridge: ResolveBridge, request: ResolveSyncApply
         progress('delete', batch.length)
       }
 
-      for (const batch of chunks(inserts, INSERT_BATCH)) {
+      for (const batch of chunkForCls(inserts, INSERT_BATCH, (spec) => spec.styleRanges.length > 0)) {
         const { clips } = await bridge.request('insertClips', { timelineId, trackIndex, templateName: TEMPLATE_CLIP_NAME, clips: batch.map(bridgeSpec) }, resolveInsertClipsResultSchema, COMMAND_TIMEOUT_MS)
         const specByKey = new Map(batch.map((spec) => [spec.key, spec]))
         let failed = 0
@@ -121,7 +141,7 @@ export async function applySync(bridge: ResolveBridge, request: ResolveSyncApply
         if (failed) throw new Error(`${failed} clip${failed === 1 ? '' : 's'} could not be placed in Resolve.`)
       }
 
-      for (const batch of chunks(plan.update, UPDATE_BATCH)) {
+      for (const batch of chunkForCls(plan.update, UPDATE_BATCH, (item) => item.spec.styleRanges.length > 0)) {
         const { clips } = await bridge.request('updateClips', { timelineId, trackIndex, clips: batch.map((item) => ({ clipId: item.clipId, spec: bridgeSpec(item.spec) })) }, resolveUpdateClipsResultSchema, COMMAND_TIMEOUT_MS)
         const errorById = new Map(clips.map((clip) => [clip.clipId, clip.error]))
         let failed = 0

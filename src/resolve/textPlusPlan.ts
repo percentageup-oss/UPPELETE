@@ -10,33 +10,26 @@ import { stableStringify, fnv1a32Hex } from './specHash'
 import { computeMotion, type Keyframe } from './textPlusMotion'
 import {
   TEXT_PLUS_INPUTS, textPlusSize, centerFor, colorToRgba01, horizontalJustificationFor, styleNameFor, applyTextTransform,
+  textPlusCharacterSpacing, textPlusOutlineThickness, textPlusLineSpacing,
 } from './textPlusInputs'
+import { emphasisStyleRanges, type TextPlusStyleRange } from './textPlusStyleRanges'
+import { TEXT_PLUS_CHAR_UNIT } from './charUnits'
+
+export type { TextPlusStyleRange } from './textPlusStyleRanges'
 
 /** Injected measurer for `layoutCaption`'s line-break pass; the renderer passes `createDomMeasurer().measure`
  * (`src/captions/CaptionPreview.tsx`). No DOM/Electron import lives in this module or its dependencies below. */
 export type Measure = MeasureText
-
-/** Character Level Styling range (ADR units — **not sent yet**: the CLS data format and character-counting unit
- * are both unconfirmed by the spike, ADR 0008/0009, "no data". Typed now so a future brief only has to fill in
- * the Lua side once the format is confirmed; `planTextPlus` never populates this today. */
-export type TextPlusStyleRange = {
-  start: number; end: number
-  color?: { r: number; g: number; b: number }
-  sizeScale?: number
-  font?: string
-  style?: string
-  underline?: boolean
-}
 
 export type TextPlusClipSpec = {
   key: string // cue id, or `${cueId}#w${index}` in word-at-a-time display mode
   cueId: string
   startFrame: number // absolute Resolve record frame (inclusive)
   endFrame: number // exclusive
-  text: string // with '\n' at KathaCut's line breaks
+  text: string // with '\n' at KathaCut's line breaks; emphasized-word substrings may carry their own text transform
   inputs: Record<string, number | string | { x: number; y: number }>
   keyframes: Keyframe[] // clip-relative frames
-  styleRanges: TextPlusStyleRange[] // always empty today — see `TextPlusStyleRange`
+  styleRanges: TextPlusStyleRange[] // emphasized words' Character Level Styling ranges (ADR 0011); empty if none
   hash: string
 }
 
@@ -103,7 +96,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   const resolvedByCueId = new Map<string, ReturnType<typeof resolvedAppearanceOf>>()
   let anyWordFallback = false, anyEstimatedWordSplit = false
   let anyGradient = false, anyGlow = false, anyDepth = false, anyRotation = false
-  let anyEmphasis = false, anyUnderline = false, anyTextTransform = false
+  let anyEmphasis = false, anyUnderline = false, anyTextTransform = false, anyEmphasisFontFamily = false, anySpotlight = false
 
   for (const cue of cues) {
     if (!cue.text.trim()) { skipped.push({ cueId: cue.id, reason: 'empty text' }); continue }
@@ -115,8 +108,12 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     if (appearance.glowEnabled || appearance.emphasisGlowEnabled) anyGlow = true
     if (appearance.depthEnabled) anyDepth = true
     if (appearance.rotation !== 0) anyRotation = true
-    if (cue.emphasized?.length) anyEmphasis = true
-    if (appearance.underline || appearance.emphasisUnderline) anyUnderline = true
+    if (cue.emphasized?.length) {
+      anyEmphasis = true
+      if (appearance.emphasisFontFamily && appearance.emphasisFontFamily !== appearance.fontFamily) anyEmphasisFontFamily = true
+      if (appearance.emphasisMode === 'spotlight') anySpotlight = true
+    }
+    if (appearance.underline) anyUnderline = true
     if (appearance.textTransform !== 'none') anyTextTransform = true
     const { drafts: cueDrafts, fellBackFromWordSplit, usedEstimatedWordSplit } = draftsForCue(cue, wordDisplay)
     if (fellBackFromWordSplit) anyWordFallback = true
@@ -154,9 +151,15 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
 
     const transformedText = applyTextTransform(draft.motionCue.text, a.textTransform)
     const layoutInputsBase = captionStyleInputs(cueStyle, composition)
-    const layoutInputs = { ...layoutInputsBase, font: { ...layoutInputsBase.font, readiness: 'ready' as const } }
+    // `emphasized`'s offsets are into `draft.motionCue.text`; only reuse them for line-wrap measurement (so Text+'s
+    // wraps match the preview's, ADR 0011/05) when the whole-text transform didn't change the string's length —
+    // otherwise they'd point at the wrong characters. `emphasisStyleRanges` below locates words by content, not by
+    // these offsets, so it always runs regardless.
+    const layoutEmphasized = transformedText.length === draft.motionCue.text.length ? draft.motionCue.emphasized : undefined
+    const layoutInputs = { ...layoutInputsBase, font: { ...layoutInputsBase.font, readiness: 'ready' as const }, emphasized: layoutEmphasized }
     const layout = layoutCaption(transformedText, layoutInputs, measure)
-    const text = layout.lines.length ? layout.lines.map((line) => line.text).join('\n') : transformedText
+    const wrappedText = layout.lines.length ? layout.lines.map((line) => line.text).join('\n') : transformedText
+    const { text, ranges: styleRanges } = emphasisStyleRanges(wrappedText, draft.motionCue.emphasized, a, TEXT_PLUS_CHAR_UNIT)
 
     const fill = colorToRgba01(a.primaryColor)
     const outline = colorToRgba01(a.outlineColor)
@@ -171,12 +174,12 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
       [TEXT_PLUS_INPUTS.fillRed]: fill.r, [TEXT_PLUS_INPUTS.fillGreen]: fill.g, [TEXT_PLUS_INPUTS.fillBlue]: fill.b, [TEXT_PLUS_INPUTS.fillAlpha]: fill.a,
       [TEXT_PLUS_INPUTS.outlineEnabled]: a.strokeEnabled ? 1 : 0,
       [TEXT_PLUS_INPUTS.outlineRed]: outline.r, [TEXT_PLUS_INPUTS.outlineGreen]: outline.g, [TEXT_PLUS_INPUTS.outlineBlue]: outline.b,
-      [TEXT_PLUS_INPUTS.outlineThickness]: a.outlineWidth,
+      [TEXT_PLUS_INPUTS.outlineThickness]: textPlusOutlineThickness(a.outlineWidth, a.fontSize),
       [TEXT_PLUS_INPUTS.shadowEnabled]: a.shadowEnabled ? 1 : 0,
       [TEXT_PLUS_INPUTS.backgroundEnabled]: a.backgroundEnabled ? 1 : 0,
       [TEXT_PLUS_INPUTS.center]: centerFor(a.horizontal, a.vertical),
-      [TEXT_PLUS_INPUTS.lineSpacing]: a.lineHeight,
-      [TEXT_PLUS_INPUTS.characterSpacing]: a.letterSpacing,
+      [TEXT_PLUS_INPUTS.lineSpacing]: textPlusLineSpacing(a.lineHeight),
+      [TEXT_PLUS_INPUTS.characterSpacing]: textPlusCharacterSpacing(a.letterSpacing, a.fontSize),
       [TEXT_PLUS_INPUTS.horizontalJustification]: horizontalJustificationFor(a.alignment),
       // Plain baseline (no animation) so a clip re-synced from an earlier motion never keeps a stale write-on
       // keyframe: `applySpec` (bridge.lua) sets these before attaching any of this spec's own keyframes.
@@ -194,7 +197,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
       if (motion.outcome.estimated) anyMotionEstimatedTiming = true
     }
 
-    const draftSpec: Omit<TextPlusClipSpec, 'hash'> = { key: draft.key, cueId: draft.cueId, startFrame, endFrame, text, inputs, keyframes: motion.keyframes, styleRanges: [] }
+    const draftSpec: Omit<TextPlusClipSpec, 'hash'> = { key: draft.key, cueId: draft.cueId, startFrame, endFrame, text, inputs, keyframes: motion.keyframes, styleRanges }
     specs.push({ ...draftSpec, hash: fnv1a32Hex(stableStringify(draftSpec)) })
   }
 
@@ -207,11 +210,11 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     push('Font size', 'approximated', 'Size = em size ÷ frame height, measured on one 16:9 still (ADR 0009); fonts with different metrics and portrait timelines are unmeasured.')
     push('Primary color (fill)', 'sent', 'Uses the same Red1/Green1/Blue1/Alpha1 mechanism T9 confirmed working for the outline color.')
     push('Outline enable + color', 'sent', 'Enabled2/Red2/Green2/Blue2 confirmed set-and-read-back correctly by T9.')
-    push('Outline thickness', 'approximated', 'Thickness2 is assumed by analogy with Thickness1; not exercised by the spike (ADR 0008).')
+    push('Outline thickness', 'approximated', 'Thickness2 is assumed by analogy with Thickness1 and scaled as outline px ÷ font px; neither is confirmed (ADR 0008).')
     push('Shadow', 'approximated', 'Only Enabled3 (on/off) is confirmed; shadow color/blur/offset have no confirmed input IDs, so KathaCut\'s shadow styling is not sent — Resolve\'s own default shadow renders when enabled.')
     push('Background box', 'approximated', 'Only Enabled4 (on/off) is confirmed; box color/opacity have no confirmed input IDs and are not sent.')
     push('Position', 'sent', 'Center\'s y axis points up, confirmed on a rendered still (ADR 0009).')
-    push('Line spacing / letter spacing', 'approximated', 'LineSpacing/CharacterSpacing input IDs are confirmed present, but their effect on rendering was not exercised by the spike (ADR 0008).')
+    push('Line spacing / letter spacing', 'approximated', 'LineSpacing/CharacterSpacing input IDs are confirmed present; CharacterSpacing is sent as 1 + letter-spacing px ÷ font px (1 = normal), a guessed scale. LineSpacing is sent as KathaCut\'s line height ÷ Anek Malayalam\'s natural 1.4325 em line height, so other fonts are approximate (ADR 0008).')
     push('Alignment', 'approximated', 'HorizontalJustificationNew\'s mapping is unconfirmed: values 0/1/2 render a single line identically (ADR 0009); multi-line alignment uses a guessed 0/1/2 = left/center/right.')
     push('Line breaks', 'approximated', 'Lines are joined with \'\\n\' to match KathaCut\'s own wrapping, but no confirmed Resolve input sets Text+\'s own layout/wrap width, so Text+ could still re-wrap inside its own text box.')
   }
@@ -222,8 +225,13 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   if (anyUnderline) push('Underline', 'not-sent', 'No confirmed Text+ input for underline.')
   if (anyRotation) push('Rotation', 'not-sent', 'No single confirmed Angle input exists yet (ADR 0008); the candidates (LayoutRotation/TransformRotation/AngleX,Y,Z) are untested.')
   if (anyEmphasis) {
-    push('Emphasis', 'not-sent', 'Character Level Styling\'s data format and character-counting unit are unconfirmed by the spike (ADR 0008/0009, "no data"); KathaCut doesn\'t guess at an unverified API contract, so emphasized-word coloring isn\'t sent.')
+    push('Emphasis colour', 'sent', 'Character Level Styling ids 2401/2402/2403 (fill R/G/B) are confirmed from a hand-styled clip (ADR 0011); emphasized words are located on grapheme boundaries only — a word that can\'t be found verbatim is left unstyled, not split.')
+    push('Emphasis size', 'sent', 'CLS id 102 is confirmed absolute, not a multiplier (ADR 0011); sent as the base Size input × emphasisScale.')
+    push('Emphasis weight / italic / underline', 'sent', 'CLS ids 109 (style name, String) and 105 (underline) are confirmed from the same hand-styled clip (ADR 0011).')
+    push('Emphasis text transform', 'approximated', 'Applied to the emphasized word\'s own substring in the sent text only when it keeps the exact UTF-16 length; ADR 0011 has no per-range text-transform id, and a length-changing transform (e.g. German ß -> SS) is skipped for that one word.')
+    if (anySpotlight) push('Emphasis spotlight dim', 'approximated', 'Uses fill-alpha id 2404, which ADR 0011 only guesses at by sequence — no hand-styled evidence covered it.')
   }
+  if (anyEmphasisFontFamily) push('Emphasis font family', 'not-sent', 'ADR 0011\'s property table has no confirmed id for a per-range font family (only 109, a style *name* string), so a distinct emphasis font never reaches Resolve; the base Font input is sent for the whole clip instead.')
   for (const motion of MOTIONS) {
     const agg = motionAgg.get(motion.id)
     if (agg) push(motion.label, agg.level, [...agg.reasons].join(' '))

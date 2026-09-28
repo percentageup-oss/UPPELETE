@@ -47,8 +47,10 @@ Text+ clips with incremental diff/conflict handling, and create a new Resolve ti
 edit. Implemented and typechecked; not yet run end-to-end by the user in a real Resolve session (see
 STATUS.md).
 Follow-ups: an opt-in "auto-sync when idle", a proxy-cache cleanup policy, refreshing a proxy without
-losing the caption link, and a rendered-overlay mode for effects Text+ can't represent (emphasis and
-line-mode word highlighting today, pending Character Level Styling's data format).
+losing the caption link, and a rendered-overlay mode for effects Text+ still can't represent (gradient
+fill, glow, 3D depth, rotation, and line-mode `active-word-highlight`/`word-pop`, the last pending a
+*keyframed* Character Level Styling value — still unconfirmed, ADR 0011). Emphasis itself now reaches
+Resolve via Character Level Styling (ADR 0011, brief 17).
 
 ## 5. Distribution
 - Validate macOS Apple Silicon and Windows x64 clean installation.

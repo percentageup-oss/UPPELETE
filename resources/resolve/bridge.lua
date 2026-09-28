@@ -302,13 +302,47 @@ local function findFolderNamed(folder, name, depth)
   return nil
 end
 
-local function findTemplate(mediaPool, clipName)
-  local folder = findFolderNamed(mediaPool:GetRootFolder(), TEMPLATE_FOLDER, 0)
-  if not folder then return nil end
-  for _, clip in ipairs(folder:GetClipList() or {}) do
-    if clip:GetName() == clipName then return clip end
+-- Every bin named TEMPLATE_FOLDER, not just the first: a hand-made spike bin of the same name must not hide the
+-- one imported from the .drb.
+local function foldersNamed(folder, name, depth, out)
+  if depth > 4 then return out end
+  for _, sub in ipairs(folder:GetSubFolderList() or {}) do
+    if sub:GetName() == name then out[#out + 1] = sub end
+    foldersNamed(sub, name, depth + 1, out)
   end
-  return nil
+  return out
+end
+
+local function isTitleClip(clip)
+  local ok, kind = pcall(function() return clip:GetClipProperty("Type") end)
+  return ok and isString(kind) and (kind:find("Title") ~= nil or kind:find("Generator") ~= nil)
+end
+
+-- Prefers an exact name match; falls back to any Fusion title in a KathaCut bin, since the name Resolve reports for
+-- the imported generator is unconfirmed (the .drb XML says `Fusion Title`, which is also its `Type`).
+local function findTemplate(mediaPool, clipName)
+  local fallback
+  for _, folder in ipairs(foldersNamed(mediaPool:GetRootFolder(), TEMPLATE_FOLDER, 0, {})) do
+    for _, clip in ipairs(folder:GetClipList() or {}) do
+      if clip:GetName() == clipName then return clip end
+      if not fallback and isTitleClip(clip) then fallback = clip end
+    end
+  end
+  return fallback
+end
+
+local function describeTemplateBins(mediaPool)
+  local parts = {}
+  for _, folder in ipairs(foldersNamed(mediaPool:GetRootFolder(), TEMPLATE_FOLDER, 0, {})) do
+    local names = {}
+    for _, clip in ipairs(folder:GetClipList() or {}) do
+      local ok, kind = pcall(function() return clip:GetClipProperty("Type") end)
+      names[#names + 1] = tostring(clip:GetName()) .. " [" .. tostring(ok and kind or "?") .. "]"
+    end
+    parts[#parts + 1] = "{" .. table.concat(names, ", ") .. "}"
+  end
+  if #parts == 0 then return "no " .. TEMPLATE_FOLDER .. " bin" end
+  return TEMPLATE_FOLDER .. " bins: " .. table.concat(parts, " ")
 end
 
 local function findTrackIndex(timeline, name)
@@ -323,7 +357,13 @@ local function itemsOnTrack(timeline, trackIndex)
   if type(trackIndex) ~= "number" or trackIndex < 1 or trackIndex > (timeline:GetTrackCount("video") or 0) then
     error("The KathaCut track is gone")
   end
-  return timeline:GetItemListInTrack("video", trackIndex) or {}
+  -- Resolve's list tables can carry a non-object numeric entry (see findFolderNamed); callers index every item,
+  -- so drop anything that isn't a timeline item here instead of in each loop.
+  local items = {}
+  for _, item in pairs(timeline:GetItemListInTrack("video", trackIndex) or {}) do
+    if type(item) ~= "number" then table.insert(items, item) end
+  end
+  return items
 end
 
 local function textPlusTool(item)
@@ -352,6 +392,183 @@ local function applyKeyframe(comp, tool, entry)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- Character Level Styling (CLS): ADR 0011 (docs/decisions/0011-resolve-character-level-styling.md). Ranges live
+-- on a separate StyledTextCLS modifier tool feeding the Text+ tool's StyledText input. `SetInput`, `LoadSettings`
+-- (table or path) and `Paste` of that value all confirmed silently do nothing ("Write method"/"Write spike
+-- result"). The only write that took effect is a **file round trip**: export the clip's Fusion comp,
+-- add/replace/remove the CLS tool and the Template's StyledText link in the exported text, then import it back
+-- (method D). This costs ~0.5s of Resolve CPU time per clip (ADR 0011 "Timing"), so `applySpec` only runs it when
+-- this sync actually adds, changes or removes emphasis styling — never for a plain clip — matching the
+-- at-most-3-per-command budget `electron/resolve/sync.ts`'s `chunkForCls` enforces.
+-- ---------------------------------------------------------------------------
+
+-- ADR 0011's confirmed CLS property ids ("Property ids (confirmed from the hand-styled ranges)"). `109` (style
+-- name) takes a String value; every other field takes a number `Value`. `alpha` (2404) is the ADR's own
+-- unconfirmed guess "by sequence" — used only for the spotlight-dim ranges `emphasisStyleRanges` (05/planner)
+-- builds.
+local CLS_PROPERTY_WHITELIST = { colorR = 2401, colorG = 2402, colorB = 2403, alpha = 2404, size = 102, underline = 105, style = 109 }
+
+local function readTextFile(path)
+  local f = io.open(path, "rb")
+  if not f then return nil end
+  local text = f:read("*a")
+  f:close()
+  return text
+end
+
+-- Same tmp-then-rename pattern as `writeJson`, for a plain-text `.comp` file.
+local function writeTextFile(path, content)
+  local tmpPath = path .. ".tmp"
+  local f = io.open(tmpPath, "w")
+  if not f then return false end
+  f:write(content)
+  f:close()
+  os.remove(path)
+  return os.rename(tmpPath, path) and true or false
+end
+
+local function deepCopy(value, seen)
+  seen = seen or {}
+  if type(value) ~= "table" then return value end
+  if seen[value] then return seen[value] end
+  local copy = {}
+  seen[value] = copy
+  for k, v in pairs(value) do copy[deepCopy(k, seen)] = deepCopy(v, seen) end
+  return copy
+end
+
+-- Safely walks a chain of table keys, returning nil instead of erroring if any step isn't a table.
+local function safeIndex(t, ...)
+  local cur = t
+  for _, k in ipairs({ ... }) do
+    if type(cur) ~= "table" then return nil end
+    cur = cur[k]
+  end
+  return cur
+end
+
+-- First entry of a parsed `.comp`'s `Tools` table whose constructor is `ctor` (e.g. "TextPlus"); `.comp`/
+-- `.setting` files are Lua-syntax data (`bmd.readstring`/`bmd.writestring`), and BMD tags each parsed block with
+-- a plain `__ctor` string field, not a Lua metatable (ADR 0011: "kept as data. It isn't a live object").
+local function entryByCtor(tools, ctor)
+  if type(tools) ~= "table" then return nil, nil end
+  for k, v in pairs(tools) do
+    if type(v) == "table" and v.__ctor == ctor then return k, v end
+  end
+  return nil, nil
+end
+
+-- One `{ id, start, end, Value = n }` / `{ id, start, end, String = s }` literal per whitelisted field a style
+-- range actually sets; `range["end"]` (not `range.end`, a reserved word in Lua). `baseSize` is this clip's own
+-- `Size` input (`spec.inputs`), since CLS id 102 is an *absolute* size, not a multiplier (ADR 0011).
+local function clsArrayEntries(range, baseSize, out)
+  if type(range) ~= "table" or type(range.start) ~= "number" or type(range["end"]) ~= "number" then return end
+  local s, e = range.start, range["end"]
+  if type(range.color) == "table" then
+    local c = range.color
+    if type(c.r) == "number" then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.colorR, s = s, e = e, value = c.r } end
+    if type(c.g) == "number" then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.colorG, s = s, e = e, value = c.g } end
+    if type(c.b) == "number" then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.colorB, s = s, e = e, value = c.b } end
+  end
+  if type(range.alpha) == "number" then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.alpha, s = s, e = e, value = range.alpha } end
+  if type(range.sizeScale) == "number" and type(baseSize) == "number" then
+    out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.size, s = s, e = e, value = baseSize * range.sizeScale }
+  end
+  if range.underline == true then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.underline, s = s, e = e, value = 1 } end
+  if isString(range.style) then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.style, s = s, e = e, str = range.style } end
+end
+
+local function clsArrayLiteral(entries)
+  local parts = {}
+  for _, entry in ipairs(entries) do
+    if entry.str then
+      parts[#parts + 1] = string.format("{ %d, %d, %d, String = %s }", entry.id, entry.s, entry.e, string.format("%q", entry.str))
+    else
+      parts[#parts + 1] = string.format("{ %d, %d, %d, Value = %s }", entry.id, entry.s, entry.e, tostring(entry.value))
+    end
+  end
+  return "{ " .. table.concat(parts, ", ") .. " }"
+end
+
+-- The exact block shape ADR 0011 confirmed from a hand-styled clip's `.setting` dump ("Data shape"), built as a
+-- string and parsed with `bmd.readstring` — the one construction method the write spike (brief 19) confirmed
+-- Resolve actually accepts for this particular structure (unlike a hand-built `__ctor` table, which was never
+-- tried for the CLS tool itself). `%q` Lua-escapes `text` (which may contain literal '\n's, quotes, backslashes).
+local function clsToolSnippet(entries, text)
+  return string.format([[{
+  Tools = ordered() {
+    CharacterLevelStyling1 = StyledTextCLS {
+      Inputs = {
+        CharacterLevelStyling = Input { Value = StyledText { Array = %s, Value = "" } },
+        Text = Input { Value = %s },
+        TransformRotation = Input { Value = 1 },
+        Softness = Input { Value = 1 }
+      }
+    }
+  }
+}]], clsArrayLiteral(entries), string.format("%q", text))
+end
+
+-- Writes (or clears) `spec.styleRanges` via ADR 0011's method D: export the clip's Fusion comp, edit the parsed
+-- text and import it back. Returns the (comp, tool) pair the import produced — the caller must use these, not
+-- whatever it started with: `ImportFusionComp` appears to *replace* the comp on a Text+ title (ADR 0011), so the
+-- old `comp`/`tool` may no longer be the live ones.
+local function applyClsRoundTrip(item, spec, path)
+  local exportOk, exportResult = pcall(function() return item:ExportFusionComp(path, 1) end)
+  if not exportOk or not exportResult then error("Could not export the clip's Fusion comp for Character Level Styling") end
+  local text = readTextFile(path)
+  if not text then error("Character Level Styling export file is missing") end
+  local parseOk, compTable = pcall(function() return bmd.readstring(text) end)
+  if not parseOk or type(compTable) ~= "table" then error("Could not parse the exported Fusion comp") end
+  local tools = compTable.Tools
+  local _, tp = entryByCtor(tools, "TextPlus")
+  if not tp then error("The exported comp has no Text+ tool") end
+  tp.Inputs = tp.Inputs or {}
+
+  local baseSize = safeIndex(spec, "inputs", "Size")
+  local array = {}
+  for _, range in ipairs(spec.styleRanges or {}) do clsArrayEntries(range, baseSize, array) end
+
+  if #array > 0 then
+    local snippetOk, parsedSnippet = pcall(function() return bmd.readstring(clsToolSnippet(array, spec.text or "")) end)
+    local clsTool = snippetOk and safeIndex(parsedSnippet, "Tools", "CharacterLevelStyling1")
+    if not clsTool then error("Could not build the Character Level Styling block") end
+    tools.CharacterLevelStyling1 = deepCopy(clsTool)
+    -- Proven directly (not via a snippet) by the write spike, method D.
+    tp.Inputs.StyledText = { __ctor = "Input", SourceOp = "CharacterLevelStyling1", Source = "StyledText" }
+  else
+    tools.CharacterLevelStyling1 = nil
+    tp.Inputs.StyledText = { __ctor = "Input", Value = spec.text or "" }
+  end
+
+  local writeOk, outText = pcall(function() return bmd.writestring(compTable) end)
+  if not writeOk or not isString(outText) then error("Could not serialize the edited Fusion comp") end
+  if not writeTextFile(path, outText) then error("Could not write the edited Fusion comp file") end
+
+  local importOk, imported = pcall(function() return item:ImportFusionComp(path) end)
+  local comp = importOk and type(imported) ~= "boolean" and imported or nil
+  if not comp then
+    -- Fallback the write spike also tried: load the most recently imported comp by name.
+    local namesOk, names = pcall(function() return item:GetFusionCompNameList() end)
+    local lastName
+    if namesOk and type(names) == "table" then
+      for _, name in pairs(names) do if isString(name) then lastName = name end end
+    end
+    if lastName then
+      local loadOk, loaded = pcall(function() return item:LoadFusionCompByName(lastName) end)
+      if loadOk and type(loaded) ~= "boolean" then comp = loaded end
+    end
+  end
+  if not comp then error("Could not import the styled Fusion comp back into the clip") end
+  local newTool = comp:FindToolByID("TextPlus")
+  if not newTool then
+    for _, candidate in pairs(comp:GetToolList(false, "TextPlus") or {}) do newTool = candidate; break end
+  end
+  if not newTool then error("The re-imported comp has no Text+ tool") end
+  return comp, newTool
+end
+
 -- Writes one spec onto a Text+ clip: whitelisted inputs only, values used as plain data.
 local function applySpec(item, spec)
   local comp, tool = textPlusTool(item)
@@ -372,8 +589,7 @@ local function applySpec(item, spec)
     if isString(spec.text) then tool:SetInput("StyledText", spec.text) end
     -- Plain inputs above (including the planner's Start=0/End=1 baseline) reset any input this spec no longer
     -- animates; keyframes below then override the ones it does, so a clip re-synced from an earlier motion never
-    -- keeps a stale animation. Character Level Styling ranges aren't applied: the data format is unconfirmed by
-    -- the spike (ADR 0008/0009, "no data") and the planner never sends any (`spec.styleRanges` is always empty).
+    -- keeps a stale animation.
     if type(spec.keyframes) == "table" then
       for _, entry in ipairs(spec.keyframes) do applyKeyframe(comp, tool, entry) end
     end
@@ -381,6 +597,19 @@ local function applySpec(item, spec)
   end)
   comp:Unlock()
   if not ok then error(err) end
+
+  -- Character Level Styling round trip, only when this sync actually needs one: either this spec has ranges to
+  -- write, or the clip carried CLS from an earlier sync (tagged below) that this spec no longer wants, which must
+  -- be cleared. A clip that never had CLS and doesn't need it now never pays the export/import cost.
+  local hadCls = comp:GetData(KEY_TAG .. ".cls") == true
+  local wantsCls = type(spec.styleRanges) == "table" and #spec.styleRanges > 0
+  if wantsCls or hadCls then
+    local safeId = tostring(item:GetUniqueId()):gsub("[^%w-]", "_")
+    local scratchPath = joinPath(mailboxDir, "cls-" .. safeId .. ".comp")
+    local newComp = applyClsRoundTrip(item, spec, scratchPath)
+    newComp:SetData(KEY_TAG, spec.key)
+    newComp:SetData(KEY_TAG .. ".cls", wantsCls)
+  end
 end
 
 handlers["ensureTemplate"] = function(params)
@@ -391,8 +620,11 @@ handlers["ensureTemplate"] = function(params)
   mediaPool:SetCurrentFolder(mediaPool:GetRootFolder())
   local ok = mediaPool:ImportFolderFromFile(params.drbPath)
   if previous then mediaPool:SetCurrentFolder(previous) end
-  if not ok or not findTemplate(mediaPool, params.clipName) then
-    error("Could not import the KathaCut Text+ template into the Media Pool")
+  if not findTemplate(mediaPool, params.clipName) then
+    local file = io.open(params.drbPath, "rb")
+    if file then file:close() end
+    error("Could not import the KathaCut Text+ template into the Media Pool (ImportFolderFromFile returned " ..
+      tostring(ok) .. (file and "" or "; template file not found") .. "; " .. describeTemplateBins(mediaPool) .. ")")
   end
   return { imported = true }
 end
@@ -446,7 +678,8 @@ handlers["insertClips"] = function(params)
   for index, spec in ipairs(params.clips) do
     infos[index] = {
       mediaPoolItem = template, mediaType = 1, trackIndex = params.trackIndex,
-      recordFrame = spec.startFrame, startFrame = 0, endFrame = spec.endFrame - spec.startFrame - 1,
+      -- endFrame is exclusive for a title template: `- 1` here placed every clip one frame short.
+      recordFrame = spec.startFrame, startFrame = 0, endFrame = spec.endFrame - spec.startFrame,
     }
   end
   local placed = mediaPool:AppendToTimeline(infos)
