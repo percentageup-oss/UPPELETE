@@ -223,7 +223,8 @@ that hit it. Never trust a level below `sent` as pixel-identical to the KathaCut
 | `progressive-word-reveal`, word-at-a-time display | **sent** | no animation needed — already one word per clip |
 | `active-word-highlight`, word-at-a-time display | **sent** | the whole clip fill is overridden to the secondary color |
 | `word-pop`, word-at-a-time display | **approximated** | secondary color + static `Size × emphasisScale`, no sine pop |
-| `active-word-highlight` / `word-pop`, line mode | **not-sent** | needs Character Level Styling to color one word inside a longer clip; brief 18 (split clips), not yet built |
+| `active-word-highlight`, line mode | **sent** | split into one Text+ clip per word step, full line text on every step (layout never shifts); Character Level Styling colours the active word (brief 18; keyframing a single clip is still ADR 0011 "no data") |
+| `word-pop`, line mode | **approximated** | same split-clip mechanism, plus a static Character Level Styling size scale on the active word — no sine pop animation |
 | Emphasis colour, size, weight/italic/underline | **sent** | Character Level Styling ids confirmed from a hand-styled clip (ADR 0011); emphasized words are located on grapheme boundaries only |
 | Emphasis text transform | **approximated** | applied to the emphasized word's own substring only when it keeps the exact UTF-16 length; skipped for that word otherwise |
 | Emphasis spotlight dim | **approximated** | uses fill-alpha id 2404, which ADR 0011 only guesses at by sequence |
@@ -257,11 +258,18 @@ that hit it. Never trust a level below `sent` as pixel-identical to the KathaCut
   Styling costs far more per clip (~0.5s, ADR 0011 "Timing"), so `chunkForCls` (`electron/resolve/sync.ts`)
   caps a batch at 3 such clips regardless of `INSERT_BATCH`/`UPDATE_BATCH` — also a spike measurement, not
   adaptive.
-- **Character Level Styling writes emphasis, not yet word-at-a-time highlighting.** ADR 0011 confirmed the data
-  shape, property ids and counting unit, and brief 17 sends emphasized-word colour/size/weight/underline through
-  it (a file round trip — `ExportFusionComp` → edit → `ImportFusionComp`, since `SetInput`/`LoadSettings`/`Paste`
-  of a CLS value are confirmed no-ops). `active-word-highlight`/`word-pop` in line mode still needs a *keyframed*
-  CLS value, which is still unconfirmed (ADR 0011 "Keyframing: no data") — brief 18 uses split clips instead.
+- **Character Level Styling writes emphasis and full-line active-word motion, but not by keyframing.** ADR 0011
+  confirmed the data shape, property ids and counting unit; brief 17 sends emphasized-word
+  colour/size/weight/underline through it (a file round trip — `ExportFusionComp` → edit → `ImportFusionComp`,
+  since `SetInput`/`LoadSettings`/`Paste` of a CLS value are confirmed no-ops). A single *keyframed* CLS value is
+  still unconfirmed (ADR 0011 "Keyframing: no data"), so brief 18's `active-word-highlight`/`word-pop` in line
+  mode instead splits each cue into one Text+ clip per word step, back to back, every step carrying the full line
+  text with only the active word's Character Level Styling range changing — the layout never shifts between
+  steps. If a word is both emphasized (with its own, distinct, length-preserving text transform) and the active
+  word in the same step, `activeWordRange` (`textPlusStyleRanges.ts`) locates it by the *base* text transform, so
+  it can silently miss adding the active-word range on that one step (the word keeps its emphasis styling; it
+  just isn't additionally highlighted as active that step) — a narrow, undocumented-until-now edge case, not a
+  crash.
 - **Multiple KathaCut windows, or multiple Resolve projects with scripts running, are not guarded
   against** — there's no single-instance lock on either side.
 

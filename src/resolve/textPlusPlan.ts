@@ -12,7 +12,7 @@ import {
   TEXT_PLUS_INPUTS, textPlusSize, centerFor, colorToRgba01, horizontalJustificationFor, styleNameFor, applyTextTransform,
   textPlusCharacterSpacing, textPlusOutlineThickness, textPlusLineSpacing,
 } from './textPlusInputs'
-import { emphasisStyleRanges, type TextPlusStyleRange } from './textPlusStyleRanges'
+import { emphasisStyleRanges, activeWordRange, mergeActiveWordRange, type TextPlusStyleRange } from './textPlusStyleRanges'
 import { TEXT_PLUS_CHAR_UNIT } from './charUnits'
 
 export type { TextPlusStyleRange } from './textPlusStyleRanges'
@@ -45,6 +45,10 @@ type Draft = {
   /** True only for a genuine word-at-a-time draft: the whole clip's text already *is* the single active word, so
    * `active-word-highlight`/`word-pop` need no Character Level Styling (`textPlusMotion.ts`'s `computeMotion`). */
   isWordDraft: boolean
+  /** Set only for a full-line active-word split draft (brief 18, `activeWordDrafts` below): which word in
+   * `motionCue.words` is active during this draft's window. `motionCue` still carries every word and the full
+   * cue text — only `startUs`/`endUs` narrow — so the spec loop locates and styles just this one word. */
+  activeWordIndex?: number
 }
 
 /** One cue's effective style, resolved exactly as the preview resolves it (`App.tsx`'s `CaptionStage`). */
@@ -53,10 +57,36 @@ function resolvedAppearanceOf(project: CaptionProject, cue: Cue) {
   return { style, appearance: style.appearance }
 }
 
+/**
+ * Full-line active-word split (brief 18): one Text+ clip per word step, back to back, instead of a single
+ * keyframed clip (ADR 0011 "Keyframing": no data). Windows partition `[cue.startUs, cue.endUs)` exactly like
+ * `wordDisplay.ts`'s `activeWordIndex` (hold through gaps): a lead-in draft with no active word when the cue
+ * starts before its first word, then one draft per word from that word's start to the next word's start (or the
+ * cue's end for the last word). Every draft keeps the cue's full text, words and emphasis — only
+ * `startUs`/`endUs` narrow — so Text+'s layout never shifts between steps. Only called once
+ * `wordMotionAvailability(cue).enabled` is confirmed by the caller (no invented timing, AGENTS.md).
+ */
+function activeWordDrafts(cue: Cue): Draft[] {
+  const words = cue.words
+  const drafts: Draft[] = []
+  if (words[0].startUs > cue.startUs) {
+    drafts.push({ key: `${cue.id}#a0`, cueId: cue.id, motionCue: { ...cue, endUs: words[0].startUs }, isWordDraft: false })
+  }
+  words.forEach((word, index) => {
+    const endUs = index + 1 < words.length ? words[index + 1].startUs : cue.endUs
+    drafts.push({
+      key: `${cue.id}#a${index + 1}`, cueId: cue.id, motionCue: { ...cue, startUs: word.startUs, endUs }, isWordDraft: false, activeWordIndex: index,
+    })
+  })
+  return drafts
+}
+
 /** Splits a line cue into one draft per shown word when the project displays captions word-at-a-time and this
- * cue's word timing can drive it; otherwise (line mode, or incomplete/invalid word timing) one draft for the
- * whole cue. Returns whether this cue fell back from a requested word split, for the support report. */
-function draftsForCue(cue: Cue, wordDisplay: boolean): { drafts: Draft[]; fellBackFromWordSplit: boolean; usedEstimatedWordSplit: boolean } {
+ * cue's word timing can drive it; into one active-word draft per word step (above) when it displays full lines
+ * but the motion needs the active word (`active-word-highlight`/`word-pop`) and word timing can drive it;
+ * otherwise (line mode, a different motion, or incomplete/invalid word timing) one draft for the whole cue.
+ * Returns whether this cue fell back from a requested word split, for the support report. */
+function draftsForCue(cue: Cue, wordDisplay: boolean, motion: CaptionMotion): { drafts: Draft[]; fellBackFromWordSplit: boolean; usedEstimatedWordSplit: boolean } {
   if (wordDisplay) {
     const availability = wordMotionAvailability(cue)
     if (availability.enabled) {
@@ -66,6 +96,9 @@ function draftsForCue(cue: Cue, wordDisplay: boolean): { drafts: Draft[]; fellBa
       }
     }
     return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue, isWordDraft: false }], fellBackFromWordSplit: true, usedEstimatedWordSplit: false }
+  }
+  if ((motion === 'active-word-highlight' || motion === 'word-pop') && wordMotionAvailability(cue).enabled) {
+    return { drafts: activeWordDrafts(cue), fellBackFromWordSplit: false, usedEstimatedWordSplit: false }
   }
   return { drafts: [{ key: cue.id, cueId: cue.id, motionCue: cue, isWordDraft: false }], fellBackFromWordSplit: false, usedEstimatedWordSplit: false }
 }
@@ -115,7 +148,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     }
     if (appearance.underline) anyUnderline = true
     if (appearance.textTransform !== 'none') anyTextTransform = true
-    const { drafts: cueDrafts, fellBackFromWordSplit, usedEstimatedWordSplit } = draftsForCue(cue, wordDisplay)
+    const { drafts: cueDrafts, fellBackFromWordSplit, usedEstimatedWordSplit } = draftsForCue(cue, wordDisplay, resolved.style.motion)
     if (fellBackFromWordSplit) anyWordFallback = true
     if (usedEstimatedWordSplit) anyEstimatedWordSplit = true
     drafts.push(...cueDrafts)
@@ -159,12 +192,27 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     const layoutInputs = { ...layoutInputsBase, font: { ...layoutInputsBase.font, readiness: 'ready' as const }, emphasized: layoutEmphasized }
     const layout = layoutCaption(transformedText, layoutInputs, measure)
     const wrappedText = layout.lines.length ? layout.lines.map((line) => line.text).join('\n') : transformedText
-    const { text, ranges: styleRanges } = emphasisStyleRanges(wrappedText, draft.motionCue.emphasized, a, TEXT_PLUS_CHAR_UNIT)
+    const { text, ranges: emphasisRanges } = emphasisStyleRanges(wrappedText, draft.motionCue.emphasized, a, TEXT_PLUS_CHAR_UNIT)
 
     const fill = colorToRgba01(a.primaryColor)
     const outline = colorToRgba01(a.outlineColor)
     const secondaryFill = colorToRgba01(a.secondaryColor)
     const size = textPlusSize(a.fontSize, composition.width, link.width, link.height)
+
+    // Full-line active-word split (brief 18): colour the one word active during this draft's window via
+    // Character Level Styling, merged with this cue's own emphasis ranges (17) — `mergeActiveWordRange` makes
+    // the active word win where a spotlight dim range would otherwise cover it.
+    let styleRanges = emphasisRanges
+    if (draft.activeWordIndex !== undefined && draft.motionCue.words) {
+      const active = activeWordRange(
+        text, draft.motionCue.words, draft.activeWordIndex,
+        (word) => applyTextTransform(word, a.textTransform),
+        { r: secondaryFill.r, g: secondaryFill.g, b: secondaryFill.b },
+        cueStyle.motion === 'word-pop' ? a.emphasisScale : undefined,
+        TEXT_PLUS_CHAR_UNIT,
+      )
+      if (active) styleRanges = mergeActiveWordRange(emphasisRanges, active)
+    }
     const inputs: TextPlusClipSpec['inputs'] = {
       [TEXT_PLUS_INPUTS.text]: text,
       [TEXT_PLUS_INPUTS.font]: a.fontFamily,

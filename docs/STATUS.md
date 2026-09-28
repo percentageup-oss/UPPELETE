@@ -1,5 +1,48 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 18: full-line active-word highlight and word pop
+
+**Changes:** `active-word-highlight`/`word-pop` in full-line display now reach Resolve — previously `not-sent`
+(`textPlusMotion.ts`). ADR 0011 "Keyframing" confirmed a single keyframed Character Level Styling clip is still
+"no data", so this follows the user's fallback (`docs/plans/resolve-textplus/18-cls-word-motion.md`): **split
+clips**, one Text+ clip per word step, back to back, each carrying the cue's full line text so the layout never
+shifts.
+- `src/resolve/textPlusPlan.ts`: `activeWordDrafts(cue)` (new) partitions `[cue.startUs, cue.endUs)` exactly like
+  `wordDisplay.ts`'s hold-through-gaps `activeWordIndex` — a lead-in draft with no active word when the cue
+  starts before its first word, then one draft per word from that word's start to the next word's start (or the
+  cue's end for the last word). `draftsForCue` now takes the cue's resolved `motion` and calls it when the
+  project displays full lines, the motion is `active-word-highlight`/`word-pop`, and
+  `wordMotionAvailability(cue).enabled`. Each draft's `motionCue` keeps the cue's full text/words/emphasis;
+  the existing "shorter than one frame" skip (already generic) drops a lead-in draft with no room. The spec loop
+  builds the active word's Character Level Styling range (`activeWordRange`) and merges it with the cue's own
+  emphasis ranges (17) via `mergeActiveWordRange`, both new in `textPlusStyleRanges.ts`.
+- `src/resolve/textPlusStyleRanges.ts`: `activeWordRange(text, words, index, transform, fill, scale, unit)`
+  locates one word with the existing `wordRanges` (grapheme-boundary-safe, same as emphasis) and returns its CLS
+  range, or `null` if it can't be found verbatim — never guesses. `mergeActiveWordRange` appends the active
+  word's range last (wins where a property collides) and splits any spotlight dim range (`alpha`) that overlaps
+  it, so the word being spoken is never dimmed; every other emphasis range (colour, size, style, underline)
+  passes through untouched, since an active word that's also emphasized already carries the same
+  `secondaryColor`/`emphasisScale` — the extra range is redundant, not conflicting.
+- `src/resolve/textPlusMotion.ts`: `computeMotion`'s `!isWordDraft` branch for these two motions no longer
+  returns `not-sent`; it reports `sent` (`active-word-highlight`) or `approximated` (`word-pop`, no sine pop),
+  since the styling itself is now built in `textPlusPlan.ts`'s spec loop, not as an input override here.
+- No `bridge.lua` or IPC schema change: split clips reuse brief 17's generic `styleRanges` write path and
+  `syncDiff`'s key-based diff (new `#a0`/`#aN` keys insert; switching back to static removes them) verbatim.
+
+**Verification:** `npx tsc --noEmit -p .` only, per this plan's testing override
+(`docs/plans/resolve-textplus/README.md`). Not run against Resolve.
+
+**Limitations:** Per the manual check below, unverified in a real Resolve session. Word pop is static size only,
+no sine pop (out of scope). If a word is both emphasized (with its own, distinct, length-preserving text
+transform) and the active word in the same step, `activeWordRange` locates it by the cue's *base* text
+transform, so it can silently miss adding the active-word range that one step — the word keeps its emphasis
+styling, just without the extra active-word highlight for that step; a narrow edge case, not a crash. Per-clip
+Character Level Styling still costs ~0.5s (ADR 0011 "Timing"), so a cue with many words now costs one round trip
+per word step, capped by the existing `chunkForCls` batch limit.
+
+**Next:** the user runs the manual check (below) in Resolve and reports back; calibrate or revisit the merge
+rule if a real spotlight + active-word-highlight combination looks wrong.
+
 ## 2026-09-28 — Resolve Text+ 17: send caption emphasis via Character Level Styling
 
 **Changes:** Emphasized words now reach Resolve as Character Level Styling ranges (ADR 0011), instead of the

@@ -156,15 +156,20 @@ export function computeMotion(p: MotionParams): MotionResult {
     }
   }
 
-  // active-word-highlight, word-pop: both need to color just the active word. Without a confirmed Character Level
-  // Styling format (ADR 0008/0009: "no data"), the only way to do that without changing the clip's displayed text
-  // (forbidden — it would change the on-screen layout) is when the clip's whole text already *is* one word.
+  // active-word-highlight, word-pop: colour just the active word. Word-at-a-time display already makes the
+  // whole clip the active word (plain input overrides below, no CLS needed). Otherwise (line mode),
+  // `draftsForCue` (textPlusPlan.ts) has already split this cue into one clip per word step and added the
+  // active word's Character Level Styling range (ADR 0011) to the spec's `styleRanges` — this branch only
+  // reports that (keyframing a single clip is still "no data", ADR 0011 "Keyframing").
   if (!p.isWordDraft) {
     return {
       inputOverrides: {}, keyframes: [],
       outcome: {
-        level: 'not-sent',
-        reason: 'Character Level Styling\'s data format is unconfirmed by the spike (ADR 0008/0009, "no data"); the active word can\'t be coloured without it, and splitting the clip\'s own text to fake it would change the on-screen layout.',
+        level: p.motion === 'word-pop' ? 'approximated' : 'sent',
+        reason: p.motion === 'word-pop'
+          ? 'Split into one clip per word step, each keeping the full line text so the layout never shifts (ADR 0011 "Keyframing": a single keyframed clip is no data); Character Level Styling colours and statically scales the active word on each step, without the sine pop animation.'
+          : 'Split into one clip per word step, each keeping the full line text so the layout never shifts (ADR 0011 "Keyframing": a single keyframed clip is no data); Character Level Styling colours the active word on each step.',
+        estimated: availability.estimated,
       },
     }
   }

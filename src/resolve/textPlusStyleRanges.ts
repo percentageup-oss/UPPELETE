@@ -104,3 +104,52 @@ function pushDimRanges(out: TextPlusStyleRange[], outText: string, from: number,
   }
   if (to > start) out.push({ start, end: to, alpha: SPOTLIGHT_DIM })
 }
+
+/**
+ * Character Level Styling range for the single word at `index` in `words` (brief 18's full-line active-word
+ * highlight/pop) — located in `text` the exact same way `emphasisStyleRanges` locates emphasized words
+ * (`wordRanges`, grapheme-boundary only, `transform` applied per word). Returns null when the word isn't found
+ * verbatim (never guesses at a boundary). `scale` is only carried as `sizeScale` when given and different from
+ * `1` — word-pop passes `emphasisScale`, active-word-highlight passes `undefined`. Pure; already converted to
+ * `unit` like `emphasisStyleRanges`'s own return, so the caller never mixes unit spaces.
+ */
+export function activeWordRange(
+  text: string,
+  words: readonly { text: string }[],
+  index: number,
+  transform: (word: string) => string,
+  fill: { r: number; g: number; b: number },
+  scale: number | undefined,
+  unit: CharUnit,
+): TextPlusStyleRange | null {
+  const { ranges } = wordRanges(words, text, transform)
+  const located = ranges.find((range) => range.wordIndex === index)
+  if (!located) return null
+  const range: TextPlusStyleRange = {
+    start: offsetInUnit(text, located.start, unit),
+    end: offsetInUnit(text, located.end, unit) - 1,
+    color: fill,
+  }
+  if (scale !== undefined && scale !== 1) range.sizeScale = scale
+  return range
+}
+
+/**
+ * Merges the active word's range (above) into the cue's own emphasis ranges (brief 17), active word last so it
+ * wins where they land on the exact same span. The only real conflict is spotlight dimming: a dim range
+ * (`alpha`) that overlaps the active word's span is split to exclude it, so the word being spoken is never
+ * dimmed. Every other emphasis range passes through unchanged — an active word that's also emphasized already
+ * carries the same secondary colour/scale (both draw from `secondaryColor`/`emphasisScale`), so appending the
+ * active range alongside it is redundant, not conflicting, and emphasis-only properties (style, underline) are
+ * never touched.
+ */
+export function mergeActiveWordRange(ranges: readonly TextPlusStyleRange[], active: TextPlusStyleRange): TextPlusStyleRange[] {
+  const out: TextPlusStyleRange[] = []
+  for (const range of ranges) {
+    if (range.alpha === undefined || range.end < active.start || range.start > active.end) { out.push(range); continue }
+    if (range.start < active.start) out.push({ ...range, end: active.start - 1 })
+    if (range.end > active.end) out.push({ ...range, start: active.end + 1 })
+  }
+  out.push(active)
+  return out
+}
