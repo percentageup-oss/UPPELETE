@@ -462,7 +462,7 @@ end
 -- One `{ id, start, end, Value = n }` / `{ id, start, end, String = s }` literal per whitelisted field a style
 -- range actually sets; `range["end"]` (not `range.end`, a reserved word in Lua). `baseSize` is this clip's own
 -- `Size` input (`spec.inputs`), since CLS id 102 is an *absolute* size, not a multiplier (ADR 0011).
-local function clsArrayEntries(range, baseSize, out)
+local function clsArrayEntries(range, baseSize, out, mapStyle)
   if type(range) ~= "table" or type(range.start) ~= "number" or type(range["end"]) ~= "number" then return end
   local s, e = range.start, range["end"]
   if type(range.color) == "table" then
@@ -476,7 +476,7 @@ local function clsArrayEntries(range, baseSize, out)
     out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.size, s = s, e = e, value = baseSize * range.sizeScale }
   end
   if range.underline == true then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.underline, s = s, e = e, value = 1 } end
-  if isString(range.style) then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.style, s = s, e = e, str = range.style } end
+  if isString(range.style) then out[#out + 1] = { id = CLS_PROPERTY_WHITELIST.style, s = s, e = e, str = mapStyle and mapStyle(range.style) or range.style } end
 end
 
 local function clsArrayLiteral(entries)
@@ -514,7 +514,7 @@ end
 -- text and import it back. Returns the (comp, tool) pair the import produced — the caller must use these, not
 -- whatever it started with: `ImportFusionComp` appears to *replace* the comp on a Text+ title (ADR 0011), so the
 -- old `comp`/`tool` may no longer be the live ones.
-local function applyClsRoundTrip(item, spec, path)
+local function applyClsRoundTrip(item, spec, path, mapStyle)
   local exportOk, exportResult = pcall(function() return item:ExportFusionComp(path, 1) end)
   if not exportOk or not exportResult then error("Could not export the clip's Fusion comp for Character Level Styling") end
   local text = readTextFile(path)
@@ -528,7 +528,7 @@ local function applyClsRoundTrip(item, spec, path)
 
   local baseSize = safeIndex(spec, "inputs", "Size")
   local array = {}
-  for _, range in ipairs(spec.styleRanges or {}) do clsArrayEntries(range, baseSize, array) end
+  for _, range in ipairs(spec.styleRanges or {}) do clsArrayEntries(range, baseSize, array, mapStyle) end
 
   if #array > 0 then
     local snippetOk, parsedSnippet = pcall(function() return bmd.readstring(clsToolSnippet(array, spec.text or "")) end)
@@ -569,15 +569,125 @@ local function applyClsRoundTrip(item, spec, path)
   return comp, newTool
 end
 
--- Writes one spec onto a Text+ clip: whitelisted inputs only, values used as plain data.
+-- ---------------------------------------------------------------------------
+-- Font fallback. Text+ takes any Font/Style string and silently draws Arial when Resolve doesn't have that exact
+-- face, so the requested style is checked against Fusion's font list first. When it's missing, the nearest
+-- available weight of the same family is used instead (italic kept where possible). Windows' legacy naming files
+-- static weights as their own family ("Anek Malayalam SemiBold" / "Regular"), so those count as the same family.
+-- ---------------------------------------------------------------------------
+
+-- Longer names first: "semibold" must match before "bold", "extralight" before "light".
+local WEIGHT_NAMES = {
+  { "extralight", 200 }, { "ultralight", 200 }, { "semibold", 600 }, { "demibold", 600 }, { "extrabold", 800 },
+  { "ultrabold", 800 }, { "hairline", 100 }, { "thin", 100 }, { "light", 300 }, { "regular", 400 }, { "normal", 400 },
+  { "book", 400 }, { "medium", 500 }, { "bold", 700 }, { "black", 900 }, { "heavy", 900 },
+}
+
+local function squash(name) return (tostring(name):lower():gsub("[%s%-_]", "")) end
+
+-- Weight and italic of a style name; weight nil when no weight word is in it.
+local function styleWeight(name)
+  local flat = squash(name)
+  local italic = flat:find("italic") ~= nil or flat:find("oblique") ~= nil
+  for _, entry in ipairs(WEIGHT_NAMES) do
+    if flat:find(entry[1], 1, true) then return entry[2], italic end
+  end
+  return nil, italic
+end
+
+local function isWeightName(name)
+  local flat = squash(name)
+  for _, entry in ipairs(WEIGHT_NAMES) do if flat == entry[1] then return true end end
+  return false
+end
+
+local fontListCache, fontListAt = nil, nil
+-- { [family] = { [style] = path } }, re-read at most every 10 s so a font installed mid-session is picked up.
+local function fontList()
+  local now = os.time()
+  if fontListAt and now - fontListAt < 10 then return fontListCache or nil end
+  local ok, list = pcall(function()
+    local fu = resolve:Fusion() or fusion
+    return fu.FontManager:GetFontList()
+  end)
+  fontListCache = (ok and type(list) == "table" and next(list) ~= nil) and list or false
+  fontListAt = now
+  return fontListCache or nil
+end
+
+-- Returns the Font/Style to write, plus a note when they differ from what was asked (nil otherwise). Without a
+-- readable font list the request passes through unchanged, as before.
+local function resolveFont(family, style)
+  local list = fontList()
+  if not list or not isString(family) then return family, style, nil end
+  local wantStyle = isString(style) and style or "Regular"
+  local wantWeight, wantItalic = styleWeight(wantStyle)
+  wantWeight = wantWeight or 400
+  local base = family:lower()
+  local best, bestScore = nil, nil
+  for fam, styles in pairs(list) do
+    if type(fam) == "string" and type(styles) == "table" then
+      local lower = fam:lower()
+      local suffix = nil
+      if lower == base then suffix = ""
+      elseif lower:sub(1, #base + 1) == base .. " " and isWeightName(lower:sub(#base + 2)) then suffix = lower:sub(#base + 2) end
+      if suffix then
+        for key, value in pairs(styles) do
+          local styleName = type(key) == "string" and key or (type(value) == "string" and value or nil)
+          if styleName then
+            if suffix == "" and styleName:lower() == wantStyle:lower() then return fam, styleName, nil end
+            local weight, italic = styleWeight(suffix .. " " .. styleName)
+            weight = weight or 400
+            -- Nearest weight; italic mismatch costs more than any weight gap; ties go to the heavier face, then
+            -- the plain family, then by name so the pick doesn't depend on table order.
+            local score = math.abs(weight - wantWeight) * 10 + (italic ~= wantItalic and 100000 or 0)
+              + (weight < wantWeight and 1 or 0) + (suffix == "" and 0 or 2)
+            local label = fam .. "\0" .. styleName
+            if not bestScore or score < bestScore or (score == bestScore and label < best.label) then
+              best, bestScore = { family = fam, style = styleName, label = label }, score
+            end
+          end
+        end
+      end
+    end
+  end
+  if not best then
+    return family, style, "Resolve doesn't have the font “" .. family .. "”, so it shows a fallback font. On Windows, install the font for all users and restart Resolve."
+  end
+  local shown = best.family .. (best.style:lower() == "regular" and best.family ~= family and "" or " " .. best.style)
+  return best.family, best.style, "“" .. family .. " " .. wantStyle .. "” isn't available in Resolve; used “" .. shown .. "” instead."
+end
+
+-- Writes one spec onto a Text+ clip: whitelisted inputs only, values used as plain data. Returns a font note
+-- (see `resolveFont`) or nil.
 local function applySpec(item, spec)
   local comp, tool = textPlusTool(item)
   if not comp or not tool then error("The clip has no Text+ tool") end
+  local font, style, fontNote = nil, nil, nil
+  if type(spec.inputs) == "table" and isString(spec.inputs.Font) then
+    font, style, fontNote = resolveFont(spec.inputs.Font, spec.inputs.Style)
+  elseif type(spec.inputs) == "table" then
+    style = spec.inputs.Style
+  end
+  -- Per-word CLS styles (e.g. an italic emphasis) name faces of the same family, so they get the same fallback.
+  local mapStyle = nil
+  if font then
+    mapStyle = function(wanted)
+      local family, mapped, note = resolveFont(spec.inputs.Font, wanted)
+      if family ~= font then return wanted end
+      if note and not fontNote then fontNote = note end
+      return mapped
+    end
+  end
   comp:Lock()
   local ok, err = pcall(function()
+    -- Font first, then Style: setting Font resets Style to the family's default face, so a Style written before
+    -- it (pairs() order is arbitrary) was lost — and a family with no "Regular" face then drew in Arial.
+    if font then tool:SetInput("Font", font) end
+    if isString(style) then tool:SetInput("Style", style) end
     if type(spec.inputs) == "table" then
       for id, value in pairs(spec.inputs) do
-        if INPUT_WHITELIST[id] then
+        if INPUT_WHITELIST[id] and id ~= "Font" and id ~= "Style" then
           if type(value) == "table" then
             if type(value.x) == "number" and type(value.y) == "number" then tool:SetInput(id, { value.x, value.y }) end
           elseif type(value) == "number" or type(value) == "string" then
@@ -606,10 +716,11 @@ local function applySpec(item, spec)
   if wantsCls or hadCls then
     local safeId = tostring(item:GetUniqueId()):gsub("[^%w-]", "_")
     local scratchPath = joinPath(mailboxDir, "cls-" .. safeId .. ".comp")
-    local newComp = applyClsRoundTrip(item, spec, scratchPath)
+    local newComp = applyClsRoundTrip(item, spec, scratchPath, mapStyle)
     newComp:SetData(KEY_TAG, spec.key)
     newComp:SetData(KEY_TAG .. ".cls", wantsCls)
   end
+  return fontNote
 end
 
 handlers["ensureTemplate"] = function(params)
@@ -668,18 +779,38 @@ handlers["readClips"] = function(params)
   return { clips = clips }
 end
 
+-- "29.97 DF", "24.000" -> number; nil when unreadable.
+local function parseFps(value)
+  local fps = tonumber(tostring(value or ""):match("%d+%.?%d*"))
+  if fps and fps > 0 then return fps end
+  return nil
+end
+
+local function templateFps(template)
+  local ok, value = pcall(function() return template:GetClipProperty("FPS") end)
+  return ok and parseFps(value) or nil
+end
+
 handlers["insertClips"] = function(params)
   local project, timeline = requireTimeline(params)
   itemsOnTrack(timeline, params.trackIndex)
   local mediaPool = project:GetMediaPool()
   local template = findTemplate(mediaPool, params.templateName)
   if not template then error("The KathaCut Text+ template is missing from the Media Pool") end
+  -- AppendToTimeline's startFrame/endFrame count in the media pool item's own fps, not the timeline's (ADR 0009,
+  -- E6). The template .drb's title is 24 fps, so on a 30 fps timeline every clip came out 1.25x long and its
+  -- neighbour's head was trimmed. Scale the length into template frames; Resolve floors the converted length,
+  -- so a quarter-frame margin lands on the exact timeline length whether it floors or rounds.
+  local timelineFps = parseFps(timeline:GetSetting("timelineFrameRate"))
+  local sourceFps = templateFps(template)
+  local ratio = (timelineFps and sourceFps and math.abs(timelineFps - sourceFps) > 0.001) and sourceFps / timelineFps or nil
   local infos = {}
   for index, spec in ipairs(params.clips) do
+    local length = spec.endFrame - spec.startFrame
     infos[index] = {
       mediaPoolItem = template, mediaType = 1, trackIndex = params.trackIndex,
       -- endFrame is exclusive for a title template: `- 1` here placed every clip one frame short.
-      recordFrame = spec.startFrame, startFrame = 0, endFrame = spec.endFrame - spec.startFrame,
+      recordFrame = spec.startFrame, startFrame = 0, endFrame = ratio and (length + 0.25) * ratio or length,
     }
   end
   local placed = mediaPool:AppendToTimeline(infos)
@@ -692,7 +823,7 @@ handlers["insertClips"] = function(params)
     else
       local ok, err = pcall(applySpec, item, spec)
       if ok then
-        table.insert(results, { key = spec.key, clipId = item:GetUniqueId(), startFrame = item:GetStart(), endFrame = item:GetEnd(), error = json.null })
+        table.insert(results, { key = spec.key, clipId = item:GetUniqueId(), startFrame = item:GetStart(), endFrame = item:GetEnd(), error = json.null, fontNote = err })
       else
         -- Don't leave an untagged clip behind that KathaCut could never manage again.
         pcall(function() timeline:DeleteClips({ item }, false) end)
@@ -714,7 +845,7 @@ handlers["updateClips"] = function(params)
       table.insert(results, { clipId = entry.clipId, error = "The clip is no longer on the KathaCut track" })
     else
       local ok, err = pcall(applySpec, item, entry.spec)
-      table.insert(results, { clipId = entry.clipId, error = ok and json.null or tostring(err) })
+      table.insert(results, { clipId = entry.clipId, error = ok and json.null or tostring(err), fontNote = ok and err or nil })
     end
   end
   return { clips = results }

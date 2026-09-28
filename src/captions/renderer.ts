@@ -144,7 +144,7 @@ export function layoutCaptionWords(layout: CaptionLayout, cue: MotionCue, measur
 /** Base-line opacity when Emphasis mode is "spotlight" — non-active words are dimmed, not hidden. */
 export const SPOTLIGHT_DIM = .35
 
-export const DEFAULT_FONT_STACK = '"Noto Sans Malayalam", "Malayalam Sangam MN", "Kartika", "Nirmala UI", Arial, sans-serif'
+export const DEFAULT_FONT_STACK = '"Anek Malayalam", "Noto Sans Malayalam", "Malayalam Sangam MN", "Kartika", "Nirmala UI", Arial, sans-serif'
 export function defaultCaptionInputs(viewport: Size): LayoutInputs {
   return {
     viewport, safeArea: { top: .08, right: .1, bottom: .12, left: .1 },

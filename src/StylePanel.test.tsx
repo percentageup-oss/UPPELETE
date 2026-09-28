@@ -67,7 +67,7 @@ it('shows "Same as caption font" on the emphasis family dropdown until a font is
 
 it('renders the caption font as a searchable popover trigger showing the current font', () => {
   const html = render()
-  expect(html).toMatch(/id="style-font-family"[^>]*aria-haspopup="listbox"[^]*?<span>Noto Sans Malayalam<\/span>/)
+  expect(html).toMatch(/id="style-font-family"[^>]*aria-haspopup="listbox"[^]*?<span>Anek Malayalam<\/span>/)
 })
 
 it('puts the emphasis font and face in the Emphasis section and uses a dropdown for the caption font', () => {

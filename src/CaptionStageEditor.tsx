@@ -96,9 +96,9 @@ export function CaptionStageEditor({ frame, composition, appearance, selected, o
     const end = (event: PointerEvent, commit: boolean) => {
       if (event.pointerId !== drag.pointerId) return
       setDrag(null)
-      if (commit) commitRef.current(patchFor(drag.kind, placementAt(event)), drag.scope)
-      if (commit && drag.kind === 'move' && !drag.fresh && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < 3) clickThroughRef.current?.(event.clientX, event.clientY)
-      else draftRef.current(patchFor(drag.kind, drag.base), drag.scope)
+      if (!commit) { draftRef.current(patchFor(drag.kind, drag.base), drag.scope); return }
+      commitRef.current(patchFor(drag.kind, placementAt(event)), drag.scope)
+      if (drag.kind === 'move' && !drag.fresh && Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY) < 3) clickThroughRef.current?.(event.clientX, event.clientY)
     }
     const up = (event: PointerEvent) => end(event, true)
     const cancel = (event: PointerEvent) => end(event, false)

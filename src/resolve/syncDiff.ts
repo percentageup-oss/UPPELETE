@@ -103,8 +103,10 @@ export function diffSync<S extends SyncSpecLike>({ specs, synced, remote }: { sp
       continue
     }
     if (!spec) { result.remove.push({ clipId: clip.clipId, previous: entry }); continue }
-    if (spec.hash === entry.hash) { result.carried.push({ ...entry, clipId: clip.clipId }); result.unchanged++; continue }
-    if (spec.startFrame === entry.startFrame && spec.endFrame === entry.endFrame) result.update.push({ clipId: clip.clipId, spec })
+    const placedAsPlanned = spec.startFrame === entry.startFrame && spec.endFrame === entry.endFrame
+    // A clip Resolve placed off its planned frames (recorded as placed) is replaced even when nothing changed locally.
+    if (spec.hash === entry.hash && placedAsPlanned) { result.carried.push({ ...entry, clipId: clip.clipId }); result.unchanged++; continue }
+    if (placedAsPlanned) result.update.push({ clipId: clip.clipId, spec })
     else result.replace.push({ clipId: clip.clipId, spec, previous: { ...entry, clipId: clip.clipId } })
   }
 
@@ -159,6 +161,16 @@ export function planSync<S extends SyncSpecLike>(diff: SyncDiff<S>, decisions: R
   return plan
 }
 
+/**
+ * "Replace all in Resolve": clear the KathaCut track and send every caption fresh. Every clip on the track is
+ * removed, including ones KathaCut didn't make and ones kept as Resolve's version; nothing is carried or updated in
+ * place. `previous` keeps a synced clip recorded if its delete never happens.
+ */
+export function replaceAllPlan<S extends SyncSpecLike>(specs: S[], synced: SyncedEntry[], remote: RemoteClip[]): SyncPlan<S> {
+  const previousFor = (clip: RemoteClip) => synced.find((entry) => entry.clipId === clip.clipId) ?? (clip.key === null ? undefined : synced.find((entry) => entry.key === clip.key))
+  return { insert: [...specs], update: [], replace: [], carried: [], remove: remote.map((clip) => ({ clipId: clip.clipId, previous: previousFor(clip) })) }
+}
+
 /** Changes a Sync would send, from local state only (no Resolve round trip): for the button's badge. */
 export function countPendingChanges(specs: SyncSpecLike[], synced: SyncedEntry[]): number {
   const syncedByKey = new Map(synced.map((entry) => [entry.key, entry]))
@@ -166,7 +178,8 @@ export function countPendingChanges(specs: SyncSpecLike[], synced: SyncedEntry[]
   let count = 0
   for (const spec of specs) {
     const entry = syncedByKey.get(spec.key)
-    if (!entry || (entry.hash !== RELEASED_HASH && entry.hash !== spec.hash)) count++
+    if (!entry || (entry.hash !== RELEASED_HASH
+      && (entry.hash !== spec.hash || entry.startFrame !== spec.startFrame || entry.endFrame !== spec.endFrame))) count++
   }
   for (const entry of synced) if (entry.hash !== RELEASED_HASH && !specKeys.has(entry.key)) count++
   return count

@@ -27,24 +27,63 @@ export const TEXT_PLUS_INPUTS = {
 export const LUA_INPUT_WHITELIST: readonly string[] = Object.values(TEXT_PLUS_INPUTS)
 
 /**
- * KathaCut px (1080-composition-wide units, `captionAppearanceSchema.fontSize` after `captionStyleInputs`'
- * viewport scale) -> Text+'s `Size`.
+ * The laid-out font size (composition px: `layoutCaption`'s `font.size`, i.e. after the max-lines shrink, times its
+ * `fitScale`) -> Text+'s `Size`. The composition has the timeline's aspect ratio (`compositionFor`), so one uniform
+ * scale maps it onto the timeline frame.
  *
- * `Size` is the em size as a fraction of the frame height (ADR 0009, E8: `Size = 0.08` gave a 0.0583 h cap
- * height with Open Sans, i.e. a 0.0817 h em). Measured on one 16:9 still only; portrait is unmeasured.
+ * Fusion's `Size` is relative to the frame *width*: em = `Size` × width × 9/16. ADR 0009, E8: `Size = 0.08` gave a
+ * 0.0583 h cap height with Open Sans (a 0.0817 h = 0.046 w em) on 16:9, where width × 9/16 is the height. Dividing
+ * by the height instead drew portrait captions ~0.32× too small on a 9:16 timeline. The timeline width cancels out, so
+ * `Size` depends only on the composition size. **UNVERIFIED** off 16:9 beyond that one visual report.
  */
-export function textPlusSize(px: number, compositionWidth: number, timelineWidth: number, timelineHeight: number): number {
-  const outputPx = px * (timelineWidth / compositionWidth)
-  return outputPx / timelineHeight
+export function textPlusSize(fontPx: number, compositionWidth: number): number {
+  return fontPx / (compositionWidth * 9 / 16)
 }
 
 /**
- * KathaCut's `horizontal`/`vertical` position fractions (0..1, y-down: 0 = top, 1 = bottom,
- * `captionAppearanceSchema`) -> Text+'s `Center` point.
- * `Center` y points up (ADR 0009, E8: y = 0.2 rendered 0.8 of the way down), hence `1 - vFraction`.
+ * The laid-out caption block (`layoutCaption`'s `bounds`, composition px) -> Text+'s `Center`: the block's centre as
+ * a frame fraction. The preview positions that block inside the safe area with `position` as a fraction of the
+ * *free* space, so the raw `horizontal`/`vertical` fractions are not the text's centre.
+ * `Center` y points up (ADR 0009, E8: y = 0.2 rendered 0.8 of the way down), hence `1 - y`.
  */
-export function centerFor(hFraction: number, vFraction: number): { x: number; y: number } {
-  return { x: hFraction, y: 1 - vFraction }
+export function centerFor(bounds: { x: number; y: number; width: number; height: number }, composition: { width: number; height: number }): { x: number; y: number } {
+  return {
+    x: (bounds.x + bounds.width / 2) / composition.width,
+    y: 1 - (bounds.y + bounds.height / 2) / composition.height,
+  }
+}
+
+/**
+ * KathaCut `letterSpacing` (composition px added between glyphs) -> Text+'s `CharacterSpacing`, a multiplier whose
+ * default is `1` (ADR 0008). Sending the px value raw (usually `0`) collapsed glyph advances, so Malayalam words
+ * rendered overlapped and right-to-left. **UNVERIFIED** scale: assumes Text+ adds `(value - 1)` em per glyph.
+ */
+export function textPlusCharacterSpacing(letterSpacingPx: number, fontSizePx: number): number {
+  return fontSizePx > 0 ? 1 + letterSpacingPx / fontSizePx : 1
+}
+
+/**
+ * Natural line height (ascender - descender + line gap, in em) of Anek Malayalam, KathaCut's default caption font:
+ * 2865 / 2000 units from its hhea and OS/2 typo metrics (identical in every installed static and variable file).
+ */
+const NATURAL_LINE_HEIGHT_EM = 1.4325
+
+/**
+ * KathaCut `lineHeight` (line pitch as a multiple of the font size, as the preview lays it out) -> Text+'s
+ * `LineSpacing`, a multiplier of the font's own natural line height (default `1`, ADR 0008). Sending `1.6` raw
+ * spaced lines 1.6 x 1.43 em apart and pushed the second and third lines off the frame. **UNVERIFIED** that
+ * `LineSpacing` scales the natural line height; other fonts' metrics differ, so their spacing is approximate.
+ */
+export function textPlusLineSpacing(lineHeight: number): number {
+  return lineHeight / NATURAL_LINE_HEIGHT_EM
+}
+
+/**
+ * KathaCut `outlineWidth` (composition px) -> Text+'s `Thickness2`. Sending the px value raw (1-8) drew a huge
+ * black outline blob. **UNVERIFIED** scale: assumes thickness is relative to the em size, like `Size`'s em basis.
+ */
+export function textPlusOutlineThickness(outlineWidthPx: number, fontSizePx: number): number {
+  return fontSizePx > 0 ? outlineWidthPx / fontSizePx : 0
 }
 
 /**
@@ -65,6 +104,23 @@ export function colorToRgba01(css: string): { r: number; g: number; b: number; a
  */
 export function horizontalJustificationFor(alignment: CaptionAlignment): number {
   return { left: 0, center: 1, right: 2 }[alignment]
+}
+
+const MALAYALAM = /[ഀ-ൿ]/u
+/** Families in KathaCut's font stack (`DEFAULT_FONT_STACK`) that carry Malayalam glyphs, in stack order. */
+const MALAYALAM_FAMILIES = ['Anek Malayalam', 'Noto Sans Malayalam', 'Malayalam Sangam MN', 'Kartika', 'Nirmala UI']
+
+/**
+ * The family Text+ should use for `text`. The preview asks for `"<family>", <DEFAULT_FONT_STACK>`, so when the
+ * chosen family has no Malayalam (e.g. Arial) the browser draws each Malayalam character in the stack's first
+ * Malayalam font. Text+ has no per-character fallback and draws Malayalam in Arial as broken glyphs, so Malayalam
+ * text in such a family is sent in that stack font instead. `substituted` marks it for the support report. A family
+ * counts as Malayalam-capable when it's in the stack's Malayalam list or has "Malayalam" in its name.
+ */
+export function textPlusFontFamily(family: string, text: string): { family: string; substituted: boolean } {
+  if (!MALAYALAM.test(text)) return { family, substituted: false }
+  const capable = MALAYALAM_FAMILIES.some((name) => name.toLowerCase() === family.toLowerCase()) || /malayalam/i.test(family)
+  return capable ? { family, substituted: false } : { family: MALAYALAM_FAMILIES[0], substituted: true }
 }
 
 /**

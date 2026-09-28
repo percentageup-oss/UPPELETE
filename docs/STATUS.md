@@ -1,5 +1,203 @@
 # Status
 
+## 2026-09-28 — Fix: Resolve Text+ size on portrait timelines (width-relative `Size`)
+
+**Changes:** After the layout fix below, a portrait sync still drew 62 px captions at roughly a third of their
+preview size (user screenshot: three short lines ≈ 23 % of the frame width). Fusion's Text+ `Size` is relative to
+the frame **width** (em = `Size` × width × 9/16), not the height. ADR 0009 E8's single 16:9 measurement
+(0.08 → 0.0817 h em = 0.046 w) can't tell the two apart, but on a 9:16 timeline the height-based formula is
+9/16 ÷ 16/9 ≈ 0.32× too small. `textPlusSize(fontPx, compositionWidth)` now returns `fontPx / (compositionWidth × 9/16)`.
+The timeline size cancels out, so the unused width/height parameters are dropped. The support note is updated.
+Every clip's input hash changes, so the next Sync rewrites them all. Landscape 16:9 output is unchanged.
+
+The Anek Malayalam font in Resolve is by design (entry below): the project style is Arial, which has no Malayalam
+glyphs. The preview itself draws that Malayalam in Anek Malayalam through the fallback stack.
+
+**Verification:** `npx tsc --noEmit -p .`. Not run against Resolve. The width-relative model fits both the E8
+landscape still and the ratio seen in the portrait screenshot. Nothing has measured it directly.
+
+**Limitations:** Only one portrait data point, a visual estimate from a screenshot. Outline thickness and CLS sizes
+derive from `Size`, so they scale with it.
+
+**Next:** re-sync the portrait project and compare line widths with the preview. If they still differ, measure the
+cap height in a Resolve still, as E8 did.
+
+## 2026-09-28 — Fix: Resolve captions in Arial (root cause: the project's font is Arial)
+
+**Changes:** The Arial captions came from KathaCut, not Resolve. Every comp the bridge exported during syncs
+(`%APPDATA%\caption-studio\resolve-bridge\cls-*.comp`, from 13:01 on, before any of today's bridge changes) has
+`Font = "Arial"`, `Style = "Regular"`. The linked projects (`test-newplan.cstudio`, `davinci-saved.cstudio`) have
+`captionStyle.appearance.fontFamily = "Arial"`, weight 400. The preview asks for `"Arial", <DEFAULT_FONT_STACK>`,
+so the browser draws each Malayalam character in Anek Malayalam and the captions look right. Text+ has no
+per-character fallback, so it drew Malayalam in Arial as broken glyphs. New `textPlusFontFamily(family, text)`
+(`textPlusInputs.ts`): Malayalam text in a family with no Malayalam is sent in the stack's first Malayalam font,
+Anek Malayalam. The plan's support report gains an `approximated` "Malayalam in a non-Malayalam font" entry.
+English words in those clips are drawn in Anek Malayalam too. The earlier font entries today (per-user install,
+Font/Style order) chased the wrong cause. Their changes (style fallback, write order) are kept as harmless
+hardening.
+
+**Verification:** `npx tsc --noEmit -p .`; `vitest run src/resolve` (11 tests). The diagnosis is confirmed from
+the exported comps and the project files; the fix itself is not run against Resolve.
+
+**Limitations:** Only Malayalam is handled. The Malayalam-capable list is the stack's own list plus any family
+named "…Malayalam…", not a glyph check. Weight 400 is sent as "Regular". Only `AnekMalayalam-Bold.ttf` is
+installed for all users on this machine, so a Regular face depends on the bridge's style fallback.
+
+## 2026-09-28 — Resolve Text+ position and size from the shared layout
+
+**Changes:** In a 1440×2560 portrait sequence, Resolve captions were tiny and sat at the very bottom of the frame
+(user screenshots). Two causes, both in `src/resolve/textPlusPlan.ts` / `textPlusInputs.ts`:
+- **Position:** `Center` was `(horizontal, 1 - vertical)` from the raw style fractions. The preview instead places
+  the caption block inside the safe area (top 8 %, bottom 12 %, sides 10 %), with `position` as a fraction of the
+  free space, so `vertical = 0.966` meant "block bottom near 88 %", not "text centre at 96.6 %". `centerFor` now
+  takes `layoutCaption`'s `bounds` (the block the preview draws) and sends its centre.
+- **Size:** `a.fontSize` is in 1080-wide units, but it was scaled as if it were composition px (1440 wide), so
+  text was 25 % small. The max-lines shrink and `fitScale` were also ignored. `textPlusSize` now takes
+  `layout.font.size × layout.fitScale`.
+Both now come from the same layout the preview and export use. Existing clips update on the next Sync because
+their input hash changes.
+
+**Verification:** `npx tsc --noEmit -p .`; `vitest run src/resolve` (11 tests). Not run against Resolve.
+
+**Limitations:** `Size` = em / frame height is ADR 0009 E8's one 16:9 measurement. Portrait is still unmeasured.
+If Text+ sizes against the width (or a 16:9 reference), portrait text will still come out small by a constant
+factor, and one measurement will settle it. Text+ `Center` is assumed to anchor the block's centre (the template
+has `VerticalJustificationNew = 3`), which is unverified. A "Characters" transform Offset Y of 0.193 appeared on a
+synced clip; KathaCut never writes `Offset`, so its source is unknown.
+
+## 2026-09-28 — Fix: Resolve captions in Arial (Font/Style write order)
+
+**Changes:** Captions were still Arial after the style-fallback change below. The earlier per-user-install theory
+is contradicted by the CLS spike's own comp (`test-data/kathacut-cls-write-D-after.comp`). That comp has
+`Font = "Anek Malayalam"`, `Style = "SemiBold"` set by hand, so Resolve lists the per-user static faces under one
+family. Likely cause: `applySpec` wrote inputs in `pairs()` order, which is arbitrary, so `Style` was often set
+before `Font`. Setting Font resets Style to the family's default face, and this install has no "Regular" face
+(Thin, Light, Medium, SemiBold, Bold), so Text+ fell back to Arial. `bridge.lua` now writes Font, then Style, then
+everything else. Per-word CLS style ranges (e.g. an italic emphasis) also go through `resolveFont`, via a
+`mapStyle` passed to `applyClsRoundTrip`/`clsArrayEntries`.
+
+**Verification:** `npx luaparse` only. Not run against Resolve. External scripting couldn't be used to inspect
+Resolve here: `fusionscript.dll` crashes Python 3.13 on import.
+
+**Limitations:** "Font resets Style" is inferred from the symptom plus how the Inspector behaves; it isn't
+confirmed via the API. Existing clips need **Replace captions** to be rewritten.
+
+**Correction (same day):** still Arial after this; the Inspector shows `Font = Arial`, `Style = Regular`. The
+premise above was wrong. The D-after comp's `Font = "Anek Malayalam"` was written by `cls-write-spike.lua` through
+the API, not picked in the Inspector, and ADR 0008 says `SetInput` stores any font name unvalidated. So nothing
+shows that Resolve can see the per-user Anek Malayalam install. Missing family (install for all users) is again
+the leading cause. The write-order change is kept; it is harmless and still needed for families with no Regular
+face.
+
+## 2026-09-28 — Resolve sync: fall back to an available font style
+
+**Changes:** Text+ accepts any Font/Style string and silently draws Arial when Resolve lacks that exact face. Your
+synced captions still showed Arial. `bridge.lua` `applySpec` now checks the requested Font/Style against Fusion's
+font list (`resolve:Fusion().FontManager:GetFontList()`, re-read at most every 10 s) before writing:
+- exact family + style available → sent unchanged;
+- style missing → the nearest available weight of the same family is used, italic kept where possible, heavier on a
+  tie. Windows' legacy per-weight families ("Anek Malayalam SemiBold" / "Regular") count as the same family;
+  width variants ("Expanded") don't;
+- family missing → sent unchanged, with a note telling the user to install the font for all users.
+- font list unreadable → sent unchanged, as before.
+The note comes back as `fontNote` on each `insertClips`/`updateClips` result (`resolveIpc.ts`). `applySync`
+collects each distinct note once into `fontNotes`, and the sync notice appends them as a warning.
+
+**Verification:** `npx luaparse`; `npx tsc --noEmit -p .`; `vitest run src/resolve` (11 tests). Not run against
+Resolve. `FontManager:GetFontList()` and its `{ family = { style = path } }` shape come from Fusion scripting
+convention and aren't verified in this Resolve version. If the call fails, the bridge silently keeps the old
+behaviour.
+
+**Limitations:** Only clips that are inserted or updated get the check. An unchanged caption isn't re-sent, so
+existing Arial clips need "Replace captions" (or any edit). The weight is read from style names only; the variable
+font's named instances aren't enumerated separately unless Fusion lists them.
+
+## 2026-09-28 — Fix: Resolve sync placing clips too long on a 30 fps timeline
+
+**Changes:** A sync reported "placed at frames 108003–108111 instead of 108003–108090" and similar. Each clip
+started on the right frame but was 1.25× too long, and the next clip's head was trimmed where the two overlapped
+(87→108, 33→41, 57→71 frames). `AppendToTimeline`'s `startFrame`/`endFrame` count in the media pool item's own
+fps (ADR 0009, E6), and the template title in `kathacut-captions.drb` is evidently 24 fps. `bridge.lua`
+`insertClips` now reads the template's `FPS` clip property and the timeline's `timelineFrameRate`, and when they
+differ sends `endFrame = (length + 0.25) × templateFps / timelineFps`. The API accepts float frames. The quarter
+frame lands on the exact length whether Resolve floors (as observed) or rounds. When the rates match, nothing
+changes.
+
+`src/resolve/syncDiff.ts`: a synced clip whose recorded (placed) frames differ from the plan is now replaced even
+when its hash is unchanged. It used to count as unchanged, so the clips misplaced before this fix would never
+have been corrected. `countPendingChanges` counts these clips too.
+
+**Verification:** `npx luaparse` on `bridge.lua`; `npx tsc --noEmit -p .` passes; `vitest run src/resolve` passes
+(11 tests). No new test for the frame-mismatch replace. Not re-run against Resolve.
+
+**Limitations:** Assumes Resolve floors or rounds the converted length. The existing position check in
+`electron/resolve/sync.ts` still reports any clip that lands off by a frame.
+
+**Next:** Re-sync the same 30 fps timeline and confirm there are no "placed at frames" errors. Also try a 24 fps
+timeline to check the unchanged path.
+
+## 2026-09-28 — Sync to Resolve: dialog with "Replace captions"
+
+**Changes:** Sync to Resolve opens a short dialog again (user request), replacing the one-click sync from earlier
+today. It shows one status line ("Ready to send: 2 added, 1 updated." / "Resolve is already up to date."), the
+foreign-clip note, conflicts only when there are any, and a **Replace in Resolve** group with one checkbox,
+**Replace captions**. That option deletes every clip on the linked caption track, including clips KathaCut didn't
+make and clips kept as Resolve's version, then inserts every caption fresh. Other tracks are never touched.
+- `src/resolve/syncDiff.ts`: `replaceAllPlan(specs, synced, remote)`.
+- `src/core/resolveIpc.ts`: optional `replaceAll` on the apply request; `trackClips` on the preview.
+- `electron/resolve/sync.ts`: `applySync` uses `replaceAllPlan` when `replaceAll` is set. No `bridge.lua` change
+  (`deleteClips` already deletes any clip id on the track).
+- `src/resolve/ResolveSync.tsx`: `ResolveSyncDialog` replaces `ResolveConflictDialog`.
+
+**Verification:** `npx tsc --noEmit` passes; `src/resolve/ResolveSync.test.tsx` (dialog markup, replace-all plan)
+passes. Not run against Resolve or clicked through in the app.
+
+**Limitations / next:** "Replace video cuts" is deferred by user decision. It has to delete and re-place video
+clips on an existing timeline, so Resolve-side grades and effects on them would be lost. Agree how to handle that
+first; the dialog's "Replace in Resolve" group is where it would go.
+
+## 2026-09-28 — Fix: dragged caption snapping back
+
+**Changes:** `src/CaptionStageEditor.tsx` drag end. The click-through check (ef4a28c) was inserted between
+`if (commit) …` and its `else`, so the revert-to-base draft ran after every real commit; the draft outranks the
+committed style, so every move/resize/rotate of a caption or title snapped back on release. Now: cancel reverts,
+release commits, and a click with no movement still clicks through.
+
+**Verification:** `npx tsc --noEmit` passes. No DOM test environment, so not covered by a test; not yet checked in
+the running app.
+
+## 2026-09-28 — Sync to Resolve: one-click sync, conflict-only dialog
+
+**Changes:** `src/resolve/ResolveSync.tsx` no longer opens a review dialog on every click. Sync to Resolve now
+previews, then applies straight away when nothing conflicts; progress shows in the button ("Checking Resolve…",
+"Syncing 3/10…") instead of a modal, and the outcome is one notice ("Synced to Resolve: 2 added, 1 updated.",
+plus any not-sent styling, or "Already in sync with DaVinci Resolve."). A dialog appears only when clips changed
+in Resolve: "N captions changed in Resolve", each conflict shown as a Resolve-vs-KathaCut choice (default Keep
+Resolve), with Keep all / Use all shortcuts when there are several. Dropped from the UI: the add/update/remove/
+unchanged counts, track name, foreign-clip note and the sent/approximated support list (approximated features
+are not surfaced; not-sent ones go in the notice). The modal progress dialog is removed. Styles in `styles.css`.
+
+**Verification:** `npx tsc --noEmit` passes; new `src/resolve/ResolveSync.test.tsx` (change summary, conflict
+dialog markup) passes. The full `vitest run` has 98 failures in unrelated suites (schema version 26 vs expected,
+no H.264 encoder on this machine, etc.). Not run against Resolve or clicked through in the app.
+
+**Limitations:** A no-conflict sync no longer asks for confirmation. It only touches KathaCut-made clips on the
+linked track, and Resolve's undo still works. No DOM test environment, so the click flow isn't tested.
+
+Follow-up: the notice again says when clips on the linked track weren't made by KathaCut and were left alone
+(the dropped foreign-clip note; a user read those untouched pre-existing captions as a failed sync).
+
+**Open issue (font):** a user's synced Text+ clips fell back to Arial. That machine has Anek Malayalam installed
+per-user only (`%LOCALAPPDATA%\Microsoft\Windows\Fonts`) and has no static Regular/Bold face (Light, SemiBold,
+Thin, Expanded-Medium, variable). KathaCut sends `Font = "Anek Malayalam"`, `Style = "Bold"` (weight 700). Not yet
+confirmed which of these Resolve can't resolve. `styleNameFor` also maps weight 600 to "Bold", not "SemiBold".
+Update: the name table of `AnekMalayalam-Bold.ttf` is family "Anek Malayalam", subfamily "Bold", so the names
+KathaCut sends match. The likely cause is the per-user install: none of the faces are in `C:\Windows\Fonts`, and
+Resolve/Fusion on Windows is widely reported to list only fonts installed for all users. Suggested fix: "Install
+for all users", then restart Resolve. Still unconfirmed.
+
+**Next:** Try it in the app against Resolve: a no-conflict sync, a conflict sync, and a sync with nothing to do.
+
 ## 2026-09-28 — Resolve Text+ 18: full-line active-word highlight and word pop
 
 **Changes:** `active-word-highlight`/`word-pop` in full-line display now reach Resolve — previously `not-sent`
@@ -260,6 +458,40 @@ one comp, but this is this session's judgment call, not a confirmed Resolve beha
 
 **Next:** the user runs the spike (optionally with the hand prep) and sends back the report, `.setting` dumps,
 stills and (if hand-prepped) screenshots/notes. A findings session (brief 16) turns that into ADR 0011.
+
+## 2026-09-27 — Resolve sync: template import diagnostics
+
+**Changes:** Sync failed with "Could not import the KathaCut Text+ template into the Media Pool" (`bridge.lua`
+`ensureTemplate`). The `.drb` import path (`ImportFolderFromFile`) had never been exercised; the spikes used a
+hand-made bin. `findTemplate` now searches every `KathaCut` bin (a leftover spike bin no longer hides the imported
+one) and falls back to any clip whose `Type` contains `Title`/`Generator` when no clip is named `Fusion Title`. The
+error now reports `ImportFolderFromFile`'s return value, whether the `.drb` file exists, and each `KathaCut` bin's
+clip names and types.
+
+**Verification:** Lua syntax check only (`npx luaparse`). Not run against Resolve.
+
+**Limitations:** If `ImportFolderFromFile` itself returns false, this only makes the failure explicit; the root
+cause is still unknown.
+
+**Follow-up (same day, after the first real Sync):** the template imported and clips were placed, which revealed
+three bugs. (1) Every clip ended one frame early. `insertClips` sent `endFrame = duration - 1`, but a title
+template's `AppendToTimeline` `endFrame` is exclusive, so it now sends `duration`. Clips already placed short get
+replaced on the next Sync because their recorded frames differ from the plan. (2) `CharacterSpacing` was sent as
+KathaCut's letter-spacing px, usually `0`. Text+ treats it as a multiplier with default `1`, so glyphs overlapped
+and Malayalam words rendered piled up and reversed. It is now sent as `1 + letterSpacing / fontSize`. (3)
+`Thickness2` was sent as outline px (1-8), which drew giant black outline blobs. It is now sent as
+`outlineWidth / fontSize`. The scales in (2) and (3) are guesses (`textPlusInputs.ts`), not measured.
+
+**Verification:** `npx tsc --noEmit -p .` and `npx luaparse` only. Not re-run against Resolve.
+
+**Follow-up 2:** a re-sync then crashed at `bridge.lua:534` ("attempt to index local 'item' (a number value)"),
+so none of the fixes above reached Resolve. Replacing the short clips calls `deleteClips`, and
+`GetItemListInTrack` returned a numeric entry. `itemsOnTrack` now drops non-item entries for every caller.
+`LineSpacing` was sent as KathaCut's `lineHeight` (1.6) raw, which pushed lines 2-3 off the frame. It is now
+`lineHeight / 1.4325`, Anek Malayalam's natural line height from its hhea/OS/2 metrics. Verification: typecheck
+only; not run against Resolve.
+
+**Next:** re-sync, compare Resolve with the preview, and calibrate the outline thickness if it still differs.
 
 ## 2026-09-27 — Resolve Text+ 14: unpack compound clips on import
 

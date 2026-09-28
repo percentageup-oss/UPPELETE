@@ -13,7 +13,7 @@ export type CaptionMotion = z.infer<typeof motionSchema>
 export const motionSpeedSchema = z.number().min(.25).max(4)
 
 /** Local installed system faces only (CAPTION_RENDERER.md); no font is bundled or downloaded. */
-export const FONT_FAMILY_CHOICES = ['Noto Sans Malayalam', 'Anek Malayalam', 'Malayalam Sangam MN', 'Kartika', 'Nirmala UI', 'Helvetica Neue', 'Arial'] as const
+export const FONT_FAMILY_CHOICES = ['Anek Malayalam', 'Noto Sans Malayalam', 'Malayalam Sangam MN', 'Kartika', 'Nirmala UI', 'Helvetica Neue', 'Arial'] as const
 const color = z.string().regex(/^#[\da-fA-F]{6}$/)
 const fontWeight = z.number().int().min(100).max(900).multipleOf(100)
 export const TEXT_TRANSFORMS = ['none', 'uppercase', 'lowercase', 'capitalize'] as const
@@ -108,7 +108,7 @@ export const savedCaptionPresetSchema = z.strictObject({
 export type SavedCaptionPreset = z.infer<typeof savedCaptionPresetSchema>
 export const DEFAULT_CAPTION_STYLE: CaptionStyle = {
   motion: 'static-clean', motionSpeed: 1, appearance: {
-    fontFamily: 'Noto Sans Malayalam', fontSize: 59.4, primaryColor: '#ffffff', secondaryColor: '#c8ff3d',
+    fontFamily: 'Anek Malayalam', fontSize: 59.4, primaryColor: '#ffffff', secondaryColor: '#c8ff3d',
     outlineColor: '#000000', outlineWidth: 1, shadowColor: '#000000', shadowBlur: 3, shadowOffset: 2,
     backgroundColor: '#000000', backgroundOpacity: .6, padding: 6, horizontal: .5, vertical: 1, rotation: 0, maxLines: 3,
     fontWeight: 700, fontItalic: false,

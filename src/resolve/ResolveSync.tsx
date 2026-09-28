@@ -10,18 +10,27 @@ import { editSignature } from './editSignature'
 type Phase =
   | { kind: 'idle' }
   | { kind: 'previewing' }
-  | { kind: 'review'; preview: ResolveSyncPreview; specs: ResolveSyncSpec[]; synced: ResolveLink['synced']; support: TextPlusPlan['support'] }
+  | { kind: 'review'; preview: ResolveSyncPreview; specs: ResolveSyncSpec[]; synced: ResolveLink['synced']; notSent: string[] }
   | { kind: 'applying'; progress: ResolveSyncProgress | null }
 
-const PHASE_LABEL: Record<ResolveSyncProgress['phase'], string> = {
-  template: 'Checking the Text+ template', track: 'Preparing the track', delete: 'Removing clips', insert: 'Adding clips', update: 'Updating clips',
-}
+type Pending = Omit<Extract<Phase, { kind: 'review' }>, 'kind'>
+/** What the dialog asks for: an incremental sync (with conflict choices), or a fresh copy of the captions. */
+export type SyncChoice = { replaceCaptions: boolean; decisions: Record<string, SyncDecision> }
+
 const CONFLICT_LABEL = {
-  'changed-in-resolve': 'Changed in Resolve',
+  'changed-in-resolve': 'Edited in Resolve',
   'deleted-in-resolve': 'Deleted in Resolve',
-  'untracked-in-resolve': 'Made by KathaCut, not in this project’s sync record',
+  'untracked-in-resolve': 'Not in this project’s sync record',
 } as const
-const LEVEL_LABEL = { sent: 'Sent', approximated: 'Approximated', 'not-sent': 'Not sent' } as const
+
+const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? '' : 's'}`
+
+/** "2 added, 1 updated" for the notice after a sync; empty when nothing changed. */
+export const changeSummary = (preview: ResolveSyncPreview, overwritten: number) => [
+  preview.insert && `${preview.insert} added`,
+  preview.update + preview.replace + overwritten && `${preview.update + preview.replace + overwritten} updated`,
+  preview.remove && `${preview.remove} removed`,
+].filter(Boolean).join(', ')
 
 /** What the bridge needs from a planned clip (drops the planner-only `cueId`). */
 const toSyncSpec = (spec: TextPlusPlan['specs'][number]): ResolveSyncSpec => ({
@@ -32,8 +41,9 @@ const toSyncSpec = (spec: TextPlusPlan['specs'][number]): ResolveSyncSpec => ({
 const errorText = (error: unknown) => error instanceof Error ? error.message : 'The sync to DaVinci Resolve failed.'
 
 /**
- * Sync to Resolve (docs/plans/resolve-textplus/06-sync.md): the header button with a pending-change badge, the
- * review dialog (counts, conflicts, support list) and apply progress. Shown only for a linked project.
+ * Sync to Resolve (docs/plans/resolve-textplus/06-sync.md): the header button with a pending-change badge. A click
+ * reads Resolve and opens a short dialog (what will change, conflicts if any, "Replace in Resolve" options);
+ * progress then shows in the button and the outcome in a notice. Shown only for a linked project.
  */
 export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, onMessage }: {
   project: CaptionProject
@@ -72,27 +82,38 @@ export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, on
     : phase.kind !== 'idle' ? 'A sync is in progress.'
     : null
 
-  const startPreview = async () => {
+  const startSync = async () => {
     if (!plan || disabledReason) return
     const specs = plan.specs.map(toSyncSpec)
+    const notSent = plan.support.filter((item) => item.level === 'not-sent').map((item) => item.feature)
     setPhase({ kind: 'previewing' })
     try {
       const preview = await window.captionStudio!.resolveSyncPreview({ timelineId: link.timelineId, trackName: link.trackName, specs, synced: link.synced })
-      setPhase({ kind: 'review', preview, specs, synced: link.synced, support: plan.support })
+      setPhase({ kind: 'review', preview, specs, synced: link.synced, notSent })
     } catch (error) {
       setPhase({ kind: 'idle' })
       onMessage('error', errorText(error))
     }
   }
 
-  const apply = async (review: Extract<Phase, { kind: 'review' }>, decisions: Record<string, SyncDecision>) => {
+  const apply = async ({ preview, specs, synced, notSent }: Pending, { replaceCaptions, decisions }: SyncChoice) => {
     setPhase({ kind: 'applying', progress: null })
     const unsubscribe = window.captionStudio!.onResolveSyncProgress((progress) => setPhase((current) => current.kind === 'applying' ? { kind: 'applying', progress } : current))
     try {
-      const result = await window.captionStudio!.resolveSyncApply({ timelineId: link.timelineId, trackName: link.trackName, specs: review.specs, synced: review.synced, decisions })
+      const result = await window.captionStudio!.resolveSyncApply({ timelineId: link.timelineId, trackName: link.trackName, specs, synced,
+        decisions: replaceCaptions ? {} : decisions, ...(replaceCaptions ? { replaceAll: true } : {}) })
       onSynced(result.synced)
-      if (result.errors.length) onMessage('warning', `Synced to Resolve with problems: ${result.errors.slice(0, 3).join('; ')}${result.errors.length > 3 ? ` (+${result.errors.length - 3} more)` : ''}`)
-      else onMessage('info', `Synced ${review.specs.length} caption${review.specs.length === 1 ? '' : 's'} to the “${link.trackName}” track in DaVinci Resolve.`)
+      const fontNotes = result.fontNotes ?? []
+      const skipped = (notSent.length ? ` Not sent (Resolve can’t show it): ${notSent.join(', ')}.` : '')
+        + (fontNotes.length ? ` ${fontNotes.join(' ')}` : '')
+      const level = notSent.length || fontNotes.length ? 'warning' : 'info'
+      if (result.errors.length) onMessage('warning', `Synced to Resolve with problems: ${result.errors.slice(0, 3).join('; ')}${result.errors.length > 3 ? ` (+${result.errors.length - 3} more)` : ''}${fontNotes.length ? ` ${fontNotes.join(' ')}` : ''}`)
+      else if (replaceCaptions) onMessage(level, `Replaced the captions on “${link.trackName}” in Resolve: ${plural(specs.length, 'caption')} sent.${skipped}`)
+      else {
+        const overwritten = Object.values(decisions).filter((decision) => decision === 'overwrite').length
+        const summary = changeSummary(preview, overwritten)
+        onMessage(level, `Synced to Resolve${summary ? `: ${summary}` : ''}.${skipped}`)
+      }
     } catch (error) {
       onMessage('error', errorText(error))
     } finally {
@@ -101,86 +122,96 @@ export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, on
     }
   }
 
+  const busyLabel = phase.kind === 'previewing' ? 'Checking Resolve…'
+    : phase.kind === 'applying' ? (phase.progress?.total ? `Syncing ${phase.progress.done}/${phase.progress.total}…` : 'Syncing…')
+    : null
   const badge = pending === null ? '…' : pending === 0 ? 'Synced' : `${pending} change${pending === 1 ? '' : 's'}`
   return <>
-    <button type="button" className="resolve-sync-button" disabled={disabledReason !== null}
-      title={disabledReason ?? `Send caption changes to the “${link.trackName}” track in DaVinci Resolve`} onClick={() => void startPreview()}>
-      {phase.kind === 'previewing' ? 'Reading Resolve…' : 'Sync to Resolve'}
-      <span className={`resolve-sync-badge${pending ? ' pending' : ''}`}>{badge}</span>
+    <button type="button" className="resolve-sync-button" disabled={disabledReason !== null} aria-busy={busyLabel !== null}
+      title={disabledReason ?? `Send caption changes to the “${link.trackName}” track in DaVinci Resolve`} onClick={() => void startSync()}>
+      {busyLabel ?? 'Sync to Resolve'}
+      {!busyLabel && <span className={`resolve-sync-badge${pending ? ' pending' : ''}`}>{badge}</span>}
     </button>
-    {phase.kind === 'review' && <ResolveSyncDialog review={phase} trackName={link.trackName}
+    {phase.kind === 'review' && <ResolveSyncDialog pending={phase} trackName={link.trackName}
       onJump={(frame) => void window.captionStudio?.resolveJumpTo(link.timelineId, frame).catch((error: unknown) => onMessage('error', errorText(error)))}
-      onCancel={() => setPhase({ kind: 'idle' })} onSync={(decisions) => void apply(phase, decisions)} />}
-    {phase.kind === 'applying' && <ResolveSyncProgressDialog progress={phase.progress} />}
+      onCancel={() => setPhase({ kind: 'idle' })} onSync={(choice) => void apply(phase, choice)} />}
   </>
 }
 
-function ResolveSyncDialog({ review, trackName, onJump, onCancel, onSync }: {
-  review: Extract<Phase, { kind: 'review' }>
+/**
+ * The Sync dialog: one line on what will change, the conflicts (only when a clip changed in Resolve) and the
+ * "Replace in Resolve" options. Replacing captions clears the whole track, so conflicts don't apply then.
+ */
+export function ResolveSyncDialog({ pending, trackName, onJump, onCancel, onSync }: {
+  pending: Pending
   trackName: string
   onJump(frame: number): void
   onCancel(): void
-  onSync(decisions: Record<string, SyncDecision>): void
+  onSync(choice: SyncChoice): void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
+  const { preview, specs } = pending
+  const { conflicts } = preview
   const [decisions, setDecisions] = useState<Record<string, SyncDecision>>({})
+  const [replaceCaptions, setReplaceCaptions] = useState(false)
   useEffect(() => { if (dialog.current && !dialog.current.open) dialog.current.showModal() }, [])
-  const { preview } = review
-  const overwriting = preview.conflicts.filter((conflict) => decisions[conflict.key] === 'overwrite').length
-  const nothingToDo = !preview.insert && !preview.update && !preview.replace && !preview.remove && !overwriting
-  const levels = (['sent', 'approximated', 'not-sent'] as const).map((level) => ({ level, items: review.support.filter((item) => item.level === level) })).filter((group) => group.items.length)
+  const setAll = (value: SyncDecision) => setDecisions(Object.fromEntries(conflicts.map((conflict) => [conflict.key, value])))
+
+  const summary = changeSummary(preview, 0)
+  const inSync = !summary && !conflicts.length
+  const status = replaceCaptions ? `Clears the “${trackName}” track and sends all ${plural(specs.length, 'caption')} again.`
+    : inSync ? 'Resolve is already up to date.'
+    : summary ? `Ready to send: ${summary}.`
+    : 'Nothing else to send.'
+  const replaceHint = `Deletes ${preview.trackClips ? `all ${plural(preview.trackClips, 'clip')}` : 'everything'} on “${trackName}”${preview.foreign ? `, including ${preview.foreign} not made by KathaCut` : ''}, then adds every caption fresh. Other tracks aren’t touched.`
+  const showConflicts = !replaceCaptions && conflicts.length > 0
 
   return <dialog ref={dialog} className="model-dialog resolve-sync-dialog" aria-labelledby="resolve-sync-title" onClose={onCancel} onKeyDown={(event) => event.stopPropagation()}>
-    <div className="model-panel-heading"><h2 id="resolve-sync-title">Sync to Resolve</h2><button onClick={onCancel}>Close</button></div>
-    <p>Track: <strong>{trackName}</strong>{preview.trackExists ? '' : ' (will be created at the top)'}</p>
-    <ul className="resolve-sync-counts">
-      <li><strong>{preview.insert}</strong> add</li>
-      <li><strong>{preview.update + preview.replace}</strong> update</li>
-      <li><strong>{preview.remove}</strong> remove</li>
-      <li><strong>{preview.unchanged}</strong> unchanged</li>
-    </ul>
-    {preview.foreign > 0 && <p className="resolve-sync-note">{preview.foreign} clip{preview.foreign === 1 ? '' : 's'} on the {trackName} track weren’t made by KathaCut and won’t be touched.</p>}
-    {preview.conflicts.length > 0 && <section className="resolve-sync-conflicts">
-      <h3>Conflicts ({preview.conflicts.length})</h3>
-      <p className="resolve-sync-note">These clips changed in Resolve since the last sync. Keeping the Resolve version stops KathaCut from managing that clip.</p>
-      {preview.conflicts.map((conflict) => {
-        const choice = decisions[conflict.key] ?? 'keep-resolve'
-        const set = (value: SyncDecision) => setDecisions((current) => ({ ...current, [conflict.key]: value }))
-        return <div key={conflict.key} className="resolve-sync-conflict">
-          <div className="resolve-sync-conflict-head">
-            <span>{CONFLICT_LABEL[conflict.kind]}</span>
-            {conflict.startFrame !== undefined && conflict.kind !== 'deleted-in-resolve' && <button type="button" onClick={() => onJump(conflict.startFrame!)}>Show in Resolve</button>}
-          </div>
-          {conflict.resolveText != null && <div>Resolve: “{conflict.resolveText}”</div>}
-          <div>KathaCut: {conflict.keptText === null ? <em>caption deleted</em> : `“${conflict.keptText}”`}</div>
-          <label><input type="radio" name={`conflict-${conflict.key}`} checked={choice === 'keep-resolve'} onChange={() => set('keep-resolve')} /> Keep Resolve version</label>
-          <label><input type="radio" name={`conflict-${conflict.key}`} checked={choice === 'overwrite'} onChange={() => set('overwrite')} /> Overwrite{conflict.keptText === null ? ' (delete the clip)' : ''}</label>
-        </div>
-      })}
+    <h2 id="resolve-sync-title">Sync to Resolve</h2>
+    <p className="resolve-sync-status">{status}</p>
+    {!replaceCaptions && preview.foreign > 0 && <p className="resolve-sync-note">{plural(preview.foreign, 'clip')} on “{trackName}” weren’t made by KathaCut and will be left alone.</p>}
+
+    {showConflicts && <section aria-labelledby="resolve-sync-conflicts-title">
+      <h3 id="resolve-sync-conflicts-title">{plural(conflicts.length, 'caption')} changed in Resolve</h3>
+      <p className="resolve-sync-note">Choose which version to keep. A clip you keep from Resolve won’t be updated by KathaCut again.</p>
+      {conflicts.length > 1 && <div className="resolve-sync-bulk">
+        <button type="button" onClick={() => setAll('keep-resolve')}>Keep all from Resolve</button>
+        <button type="button" onClick={() => setAll('overwrite')}>Use all from KathaCut</button>
+      </div>}
+      <div className="resolve-sync-conflict-list">
+        {conflicts.map((conflict) => {
+          const choice = decisions[conflict.key] ?? 'keep-resolve'
+          const set = (value: SyncDecision) => setDecisions((current) => ({ ...current, [conflict.key]: value }))
+          const canJump = conflict.startFrame !== undefined && conflict.kind !== 'deleted-in-resolve'
+          return <fieldset key={conflict.key} className="resolve-sync-conflict">
+            <legend>{CONFLICT_LABEL[conflict.kind]}</legend>
+            {canJump && <button type="button" className="resolve-sync-jump" onClick={() => onJump(conflict.startFrame!)}>Show</button>}
+            <label className={choice === 'keep-resolve' ? 'selected' : ''}>
+              <input type="radio" name={`conflict-${conflict.key}`} checked={choice === 'keep-resolve'} onChange={() => set('keep-resolve')} />
+              <span>Resolve</span>{conflict.resolveText != null ? <q>{conflict.resolveText}</q> : <em>clip deleted</em>}
+            </label>
+            <label className={choice === 'overwrite' ? 'selected' : ''}>
+              <input type="radio" name={`conflict-${conflict.key}`} checked={choice === 'overwrite'} onChange={() => set('overwrite')} />
+              <span>KathaCut</span>{conflict.keptText !== null ? <q>{conflict.keptText}</q> : <em>caption deleted</em>}
+            </label>
+          </fieldset>
+        })}
+      </div>
     </section>}
-    {levels.length > 0 && <section className="resolve-sync-support">
-      <h3>What Resolve gets</h3>
-      <p className="resolve-sync-note">Text+ is Resolve’s own renderer, so the result won’t match the KathaCut preview exactly.</p>
-      {levels.map(({ level, items }) => <div key={level}>
-        <h4>{LEVEL_LABEL[level]}</h4>
-        <ul>{items.map((item) => <li key={item.feature}><strong>{item.feature}</strong>{item.note ? ` — ${item.note}` : ''}</li>)}</ul>
-      </div>)}
-    </section>}
-    {nothingToDo && levels.some((group) => group.level === 'not-sent') &&
-      <p className="resolve-sync-note">Nothing to sync. Some styling can’t be sent to Resolve; see “What Resolve gets” below.</p>}
+
+    <fieldset className="resolve-sync-replace">
+      <legend>Replace in Resolve</legend>
+      <label>
+        <input type="checkbox" checked={replaceCaptions} onChange={(event) => setReplaceCaptions(event.target.checked)} />
+        <span><strong>Replace captions</strong><small>{replaceHint}</small></span>
+      </label>
+    </fieldset>
+
     <div className="dialog-actions">
       <button type="button" onClick={onCancel}>Cancel</button>
-      <button type="button" className="accent" disabled={nothingToDo} onClick={() => onSync(decisions)}>{nothingToDo ? 'Nothing to sync' : 'Sync'}</button>
+      <button type="button" className="accent" disabled={!replaceCaptions && inSync} onClick={() => onSync({ replaceCaptions, decisions })}>
+        {replaceCaptions ? 'Replace captions' : inSync ? 'Up to date' : 'Sync'}
+      </button>
     </div>
-  </dialog>
-}
-
-function ResolveSyncProgressDialog({ progress }: { progress: ResolveSyncProgress | null }) {
-  const dialog = useRef<HTMLDialogElement>(null)
-  useEffect(() => { if (dialog.current && !dialog.current.open) dialog.current.showModal() }, [])
-  return <dialog ref={dialog} className="model-dialog resolve-sync-dialog" aria-labelledby="resolve-sync-progress-title" onCancel={(event) => event.preventDefault()}>
-    <h2 id="resolve-sync-progress-title">Syncing to Resolve…</h2>
-    <p>{progress ? `${PHASE_LABEL[progress.phase]} (${progress.done}/${progress.total})` : 'Reading the Resolve track…'}</p>
-    <progress max={progress?.total || 1} value={progress?.done ?? 0} />
   </dialog>
 }

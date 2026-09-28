@@ -9,7 +9,7 @@ import { usToTimelineFrame } from './frames'
 import { stableStringify, fnv1a32Hex } from './specHash'
 import { computeMotion, type Keyframe } from './textPlusMotion'
 import {
-  TEXT_PLUS_INPUTS, textPlusSize, centerFor, colorToRgba01, horizontalJustificationFor, styleNameFor, applyTextTransform,
+  TEXT_PLUS_INPUTS, textPlusSize, centerFor, textPlusFontFamily, colorToRgba01, horizontalJustificationFor, styleNameFor, applyTextTransform,
   textPlusCharacterSpacing, textPlusOutlineThickness, textPlusLineSpacing,
 } from './textPlusInputs'
 import { emphasisStyleRanges, activeWordRange, mergeActiveWordRange, type TextPlusStyleRange } from './textPlusStyleRanges'
@@ -168,6 +168,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
   }
 
   const specs: TextPlusClipSpec[] = []
+  const malayalamFontFallbacks = new Set<string>()
   for (let index = 0; index < drafts.length; index++) {
     const draft = drafts[index]
     const next = drafts[index + 1]
@@ -197,7 +198,9 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     const fill = colorToRgba01(a.primaryColor)
     const outline = colorToRgba01(a.outlineColor)
     const secondaryFill = colorToRgba01(a.secondaryColor)
-    const size = textPlusSize(a.fontSize, composition.width, link.width, link.height)
+    // From the same layout the preview draws: the fitted font size and the positioned block, not the raw style
+    // fields (`a.fontSize` is in 1080-wide units and `a.vertical` is a fraction of the safe area's free space).
+    const size = textPlusSize(layout.font.size * layout.fitScale, composition.width)
 
     // Full-line active-word split (brief 18): colour the one word active during this draft's window via
     // Character Level Styling, merged with this cue's own emphasis ranges (17) — `mergeActiveWordRange` makes
@@ -213,9 +216,11 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
       )
       if (active) styleRanges = mergeActiveWordRange(emphasisRanges, active)
     }
+    const { family: fontFamily, substituted: fontSubstituted } = textPlusFontFamily(a.fontFamily, text)
+    if (fontSubstituted) malayalamFontFallbacks.add(a.fontFamily)
     const inputs: TextPlusClipSpec['inputs'] = {
       [TEXT_PLUS_INPUTS.text]: text,
-      [TEXT_PLUS_INPUTS.font]: a.fontFamily,
+      [TEXT_PLUS_INPUTS.font]: fontFamily,
       [TEXT_PLUS_INPUTS.style]: styleNameFor(a.fontWeight, a.fontItalic),
       [TEXT_PLUS_INPUTS.size]: size,
       [TEXT_PLUS_INPUTS.fillEnabled]: 1,
@@ -225,7 +230,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
       [TEXT_PLUS_INPUTS.outlineThickness]: textPlusOutlineThickness(a.outlineWidth, a.fontSize),
       [TEXT_PLUS_INPUTS.shadowEnabled]: a.shadowEnabled ? 1 : 0,
       [TEXT_PLUS_INPUTS.backgroundEnabled]: a.backgroundEnabled ? 1 : 0,
-      [TEXT_PLUS_INPUTS.center]: centerFor(a.horizontal, a.vertical),
+      [TEXT_PLUS_INPUTS.center]: centerFor(layout.bounds, composition),
       [TEXT_PLUS_INPUTS.lineSpacing]: textPlusLineSpacing(a.lineHeight),
       [TEXT_PLUS_INPUTS.characterSpacing]: textPlusCharacterSpacing(a.letterSpacing, a.fontSize),
       [TEXT_PLUS_INPUTS.horizontalJustification]: horizontalJustificationFor(a.alignment),
@@ -255,7 +260,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     push('Text', 'sent', 'StyledText round-tripped a mixed Malayalam/English string unchanged (T9); the user visually confirmed correct conjunct/vowel-sign shaping.')
     push('Font family', 'approximated', 'Font accepts any string with no existence validation (ADR 0008); an unavailable font silently falls back, with no error from the API.')
     push('Font weight / italic (Style)', 'approximated', 'Mapped to a guessed Style name (Regular/Italic/Bold/Bold Italic); Style is free text with no validation and may not match the font\'s real named styles (ADR 0008).')
-    push('Font size', 'approximated', 'Size = em size ÷ frame height, measured on one 16:9 still (ADR 0009); fonts with different metrics and portrait timelines are unmeasured.')
+    push('Font size', 'approximated', 'Size = em size ÷ (frame width × 9/16), Fusion\'s width-relative scale, measured on one 16:9 still (ADR 0009); fonts with different metrics and non-16:9 timelines are not measured.')
     push('Primary color (fill)', 'sent', 'Uses the same Red1/Green1/Blue1/Alpha1 mechanism T9 confirmed working for the outline color.')
     push('Outline enable + color', 'sent', 'Enabled2/Red2/Green2/Blue2 confirmed set-and-read-back correctly by T9.')
     push('Outline thickness', 'approximated', 'Thickness2 is assumed by analogy with Thickness1 and scaled as outline px ÷ font px; neither is confirmed (ADR 0008).')
@@ -266,6 +271,7 @@ export function planTextPlus(project: CaptionProject, measure: Measure): TextPlu
     push('Alignment', 'approximated', 'HorizontalJustificationNew\'s mapping is unconfirmed: values 0/1/2 render a single line identically (ADR 0009); multi-line alignment uses a guessed 0/1/2 = left/center/right.')
     push('Line breaks', 'approximated', 'Lines are joined with \'\\n\' to match KathaCut\'s own wrapping, but no confirmed Resolve input sets Text+\'s own layout/wrap width, so Text+ could still re-wrap inside its own text box.')
   }
+  if (malayalamFontFallbacks.size) push('Malayalam in a non-Malayalam font', 'approximated', `${[...malayalamFontFallbacks].join(', ')} has no Malayalam; the preview draws Malayalam in Anek Malayalam from its fallback stack, and Text+ has no per-character fallback, so those clips are sent entirely in Anek Malayalam (English words included).`)
   if (anyTextTransform) push('Text transform (uppercase/lowercase/capitalize)', 'sent', 'Applied to the text itself before sending, grapheme-safe; Text+ has no text-transform of its own.')
   if (anyGradient) push('Gradient fill', 'not-sent', 'No confirmed Text+ gradient-fill input; the solid primary/outline color is sent instead.')
   if (anyGlow) push('Glow', 'not-sent', 'No Text+ equivalent identified.')

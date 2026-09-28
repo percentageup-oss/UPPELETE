@@ -5,7 +5,7 @@ import {
   type ResolveSyncApplyRequest, type ResolveSyncPreview, type ResolveSyncPreviewRequest, type ResolveSyncProgress,
   type ResolveSyncResult, type ResolveSyncSpec,
 } from '../../src/core/resolveIpc'
-import { diffSync, planSync, type RemoteClip, type SyncDiff, type SyncedEntry } from '../../src/resolve/syncDiff'
+import { diffSync, planSync, replaceAllPlan, type RemoteClip, type SyncDiff, type SyncedEntry } from '../../src/resolve/syncDiff'
 import { parseResolveFps, timelineFrameToTimecode } from '../../src/resolve/frames'
 import { z } from 'zod'
 import type { ResolveBridge } from './bridge'
@@ -60,9 +60,9 @@ async function readRemote(bridge: ResolveBridge, timelineId: string, trackName: 
   return { trackIndex, clips }
 }
 
-function previewOf(diff: SyncDiff<ResolveSyncSpec>, trackExists: boolean): ResolveSyncPreview {
+function previewOf(diff: SyncDiff<ResolveSyncSpec>, trackExists: boolean, trackClips: number): ResolveSyncPreview {
   return {
-    trackExists,
+    trackExists, trackClips,
     insert: diff.insert.length, update: diff.update.length, replace: diff.replace.length, remove: diff.remove.length,
     unchanged: diff.unchanged, foreign: diff.foreign,
     conflicts: diff.conflicts.map(({ key, kind, clipId, resolveText, keptText, startFrame }) => ({
@@ -76,20 +76,22 @@ function previewOf(diff: SyncDiff<ResolveSyncSpec>, trackExists: boolean): Resol
 
 export async function previewSync(bridge: ResolveBridge, request: ResolveSyncPreviewRequest): Promise<ResolveSyncPreview> {
   const remote = await readRemote(bridge, request.timelineId, request.trackName)
-  return previewOf(diffSync({ specs: request.specs, synced: request.synced, remote: remote.clips }), remote.trackIndex !== null)
+  return previewOf(diffSync({ specs: request.specs, synced: request.synced, remote: remote.clips }), remote.trackIndex !== null, remote.clips.length)
 }
 
 /**
- * Applies a sync: recomputes the diff from a fresh `readClips`, then template, track, deletes, inserts and updates
+ * Applies a sync: recomputes the diff (or, with `replaceAll`, clears the track) from a fresh `readClips`, then template, track, deletes, inserts and updates
  * in batches. Stops at the first failing batch and returns the synced list for what actually happened, so
  * `resolveLink.synced` never claims a clip that isn't in Resolve.
  */
 export async function applySync(bridge: ResolveBridge, request: ResolveSyncApplyRequest, onProgress: (progress: ResolveSyncProgress) => void): Promise<ResolveSyncResult> {
   const { timelineId, trackName } = request
   const remote = await readRemote(bridge, timelineId, trackName)
-  const plan = planSync(diffSync({ specs: request.specs, synced: request.synced, remote: remote.clips }), request.decisions)
+  const plan = request.replaceAll ? replaceAllPlan(request.specs, request.synced, remote.clips)
+    : planSync(diffSync({ specs: request.specs, synced: request.synced, remote: remote.clips }), request.decisions)
 
   const errors: string[] = []
+  const fontNotes = new Set<string>()
   const synced: SyncedEntry[] = [...plan.carried]
   // Entries whose clip is still in Resolve until its delete/update actually happens.
   const pendingUpdate = new Map(plan.update.map((item) => [item.clipId, request.synced.find((entry) => entry.key === item.spec.key)]))
@@ -105,7 +107,7 @@ export async function applySync(bridge: ResolveBridge, request: ResolveSyncApply
   const finish = (): ResolveSyncResult => {
     for (const previous of pendingDelete.values()) if (previous) synced.push(previous)
     for (const previous of pendingUpdate.values()) if (previous) synced.push(previous)
-    return { synced, errors }
+    return { synced, errors, ...(fontNotes.size ? { fontNotes: [...fontNotes] } : {}) }
   }
 
   try {
@@ -131,6 +133,7 @@ export async function applySync(bridge: ResolveBridge, request: ResolveSyncApply
         for (const placed of clips) {
           const spec = specByKey.get(placed.key)
           if (!spec) continue
+          if (placed.fontNote) fontNotes.add(placed.fontNote)
           if (placed.clipId === null || placed.startFrame === null || placed.endFrame === null) { failed++; errors.push(`${placed.key}: ${placed.error ?? 'not placed'}`); continue }
           if (placed.startFrame !== spec.startFrame || placed.endFrame !== spec.endFrame) {
             errors.push(`${placed.key}: placed at frames ${placed.startFrame}–${placed.endFrame} instead of ${spec.startFrame}–${spec.endFrame}`)
@@ -144,6 +147,7 @@ export async function applySync(bridge: ResolveBridge, request: ResolveSyncApply
       for (const batch of chunkForCls(plan.update, UPDATE_BATCH, (item) => item.spec.styleRanges.length > 0)) {
         const { clips } = await bridge.request('updateClips', { timelineId, trackIndex, clips: batch.map((item) => ({ clipId: item.clipId, spec: bridgeSpec(item.spec) })) }, resolveUpdateClipsResultSchema, COMMAND_TIMEOUT_MS)
         const errorById = new Map(clips.map((clip) => [clip.clipId, clip.error]))
+        for (const clip of clips) if (clip.fontNote) fontNotes.add(clip.fontNote)
         let failed = 0
         for (const item of batch) {
           const error = errorById.get(item.clipId)

@@ -216,6 +216,8 @@ export type ResolveSyncPreviewRequest = z.infer<typeof resolveSyncPreviewRequest
 export const resolveSyncApplyRequestSchema = z.strictObject({
   ...syncBaseSchema,
   decisions: z.record(z.string().max(256), z.enum(['keep-resolve', 'overwrite'])),
+  /** Clear the whole track (every clip on it, KathaCut's or not) and send every caption again; ignores `decisions`. */
+  replaceAll: z.boolean().optional(),
 })
 export type ResolveSyncApplyRequest = z.infer<typeof resolveSyncApplyRequestSchema>
 
@@ -238,6 +240,8 @@ export const resolveSyncPreviewSchema = z.strictObject({
   remove: z.number().int(),
   unchanged: z.number().int(),
   foreign: z.number().int(),
+  /** Every clip on the track now, KathaCut's or not: what "Replace all" would delete. */
+  trackClips: z.number().int(),
   conflicts: z.array(resolveSyncConflictViewSchema),
 })
 export type ResolveSyncPreview = z.infer<typeof resolveSyncPreviewSchema>
@@ -245,6 +249,8 @@ export type ResolveSyncPreview = z.infer<typeof resolveSyncPreviewSchema>
 export const resolveSyncResultSchema = z.strictObject({
   synced: resolveLinkSchema.shape.synced,
   errors: z.array(z.string()),
+  /** Font substitutions Resolve needed, once each. */
+  fontNotes: z.array(z.string()).optional(),
 })
 export type ResolveSyncResult = z.infer<typeof resolveSyncResultSchema>
 
@@ -438,9 +444,11 @@ export const resolveInsertClipsResultSchema = z.strictObject({
     startFrame: z.number().int().nullable(),
     endFrame: z.number().int().nullable(),
     error: z.string().nullable(),
+    /** Set when Resolve lacked the requested font/style and the bridge used another (or had to leave a fallback). */
+    fontNote: z.string().max(1000).optional(),
   })),
 })
 export const resolveUpdateClipsResultSchema = z.strictObject({
-  clips: z.array(z.strictObject({ clipId: z.string(), error: z.string().nullable() })),
+  clips: z.array(z.strictObject({ clipId: z.string(), error: z.string().nullable(), fontNote: z.string().max(1000).optional() })),
 })
 export const resolveDeleteClipsResultSchema = z.strictObject({ deleted: z.number().int().nonnegative(), missing: z.number().int().nonnegative() })

@@ -103,6 +103,46 @@ export function describeJob(job: JobSnapshot | null): { label: string; percent: 
   return job.progress.kind === 'measured' ? { label, percent: Math.floor(job.progress.completed * 100 / job.progress.total) } : { label, percent: null }
 }
 
+/** A compact multi-select: the trigger summarizes the choice, the popover lists every target as a checkbox. */
+function TranslateDropdown({ value, onChange }: { value: TranslationTarget[]; onChange: (next: TranslationTarget[]) => void }) {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false) }
+    document.addEventListener('pointerdown', onPointer)
+    return () => document.removeEventListener('pointerdown', onPointer)
+  }, [open])
+  const full = value.length >= MAX_TRANSLATION_TARGETS
+  const summary = value.length === 0 ? 'None — keep spoken language only'
+    : value.length <= 2 ? value.map(translationTargetLabel).join(', ')
+    : `${translationTargetLabel(value[0])}, ${translationTargetLabel(value[1])} +${value.length - 2} more`
+  return <div className="translate-dropdown" ref={root}
+    onKeyDown={(event) => { if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(false); root.current?.querySelector('button')?.focus() } }}>
+    <button type="button" className="translate-dropdown-trigger" aria-haspopup="true" aria-expanded={open} aria-labelledby="transcription-translate-label transcription-translate-summary" onClick={() => setOpen(!open)}>
+      <span id="transcription-translate-summary" className={value.length ? undefined : 'placeholder'}>{summary}</span>
+      <span aria-hidden="true" className="translate-dropdown-caret">▾</span>
+    </button>
+    {open && <div className="translate-dropdown-menu" role="group" aria-label="Translation languages">
+      <div className="translate-dropdown-head">
+        <span>{value.length} of {MAX_TRANSLATION_TARGETS} selected</span>
+        <button type="button" className="link-button" disabled={!value.length} onClick={() => onChange([])}>Clear</button>
+      </div>
+      <div className="translate-dropdown-options">
+        {TRANSLATION_TARGETS.map((target) => {
+          const checked = value.includes(target.code)
+          return <label key={target.code} className={checked ? 'checked' : undefined}>
+            <input type="checkbox" checked={checked} disabled={!checked && full}
+              onChange={() => onChange(checked ? value.filter((code) => code !== target.code) : [...value, target.code])} />
+            <span>{target.label}{target.hint && <small>{target.hint}</small>}</span>
+          </label>
+        })}
+      </div>
+      <p className="transcription-hint">Audio is transcribed once; each extra language is a small text call.{full && ` Limit of ${MAX_TRANSLATION_TARGETS} reached.`}</p>
+    </div>}
+  </div>
+}
+
 /** A request from outside the dialog (the timeline menu) to open it on `assetId` with `range` filled in. */
 export type TranscribeOpenRequest = { assetId: string; range: SourceRange; nonce: number }
 const MAX_GAP_ROWS = 8
@@ -282,15 +322,10 @@ export function TranscriptionPanel({ media, mediaReady, cues, runs = [], openReq
     } catch (error) { setPhase({ kind: 'error', message: errorText(error), diagnostic: null }) }
   }
 
-  const translatePicker = <fieldset className="transcription-translate">
-    <legend>Translate to (optional)</legend>
-    {TRANSLATION_TARGETS.map((target) => {
-      const checked = translateTo.includes(target.code)
-      return <label key={target.code} title={target.hint}><input type="checkbox" checked={checked} disabled={!checked && translateTo.length >= MAX_TRANSLATION_TARGETS}
-        onChange={() => setTranslateTo(checked ? translateTo.filter((code) => code !== target.code) : [...translateTo, target.code])} /> {target.label}{target.hint && <small className="transcription-hint"> {target.hint}</small>}</label>
-    })}
-    <p className="transcription-hint">Audio is transcribed once. Each extra language is a small text call. Leave all unticked to keep the spoken language only (up to {MAX_TRANSLATION_TARGETS}).</p>
-  </fieldset>
+  const translatePicker = <>
+    <span id="transcription-translate-label">Translate to</span>
+    <TranslateDropdown value={translateTo} onChange={setTranslateTo} />
+  </>
   const described = phase.kind === 'running' ? describeJob(phase.job) : null
   const running = described && phase.kind === 'running' && phase.engine !== 'whisper' && phase.job?.progress?.phase === 'recognizing'
     ? { ...described, label: `Uploading speech to ${providerLabel(phase.engine)} and transcribing…` } : described
