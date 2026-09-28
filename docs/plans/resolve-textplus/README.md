@@ -46,6 +46,11 @@ idle" as a later opt-in.
 | 08 | [Docs + license inventory](08-docs.md) | 07, 11, 12 | session | S |
 | 13 | [Spike 3: what's inside a compound clip](13-compound-spike.md) | 11 | session, then **the user runs it**, then a findings session (ADR 0010) | S |
 | 14 | [Import: unpack compound clips](14-unpack-compound.md) | 13 findings | session | M |
+| 15 | [Spike 4: Character Level Styling](15-cls-spike.md) | 06 | session, then **the user runs it** | S |
+| 16 | [CLS findings → ADR 0011](16-cls-findings.md) | 15 + the user's report | session | S |
+| 19 | [Spike 5: CLS write method](19-cls-write-spike.md) | 16 | session, then **the user runs it** | S |
+| 17 | [Send emphasis to Resolve (CLS)](17-cls-emphasis.md) | 16, 19 findings | session | M |
+| 18 | [Full-line active-word highlight + word pop](18-cls-word-motion.md) | 16, 17 | session | M |
 
 Run order: 09 → 10 → 11 → 12 → 07 → 08. Brief 10 doesn't need the spike, so it can run while the user runs the
 spike.
@@ -67,6 +72,16 @@ Import (11) skips compound clips. The user chose to **unpack** them: the inner f
 clips (14). The scripting API can't open a compound, so 13 checks first that `timeline:Export` (OTIO/FCPXML)
 carries the inner edit, and how its times are counted. Render stays the fallback for what can't be unpacked.
 Run order: 13 → (user runs it) → findings → 14.
+
+### Emphasis and per-word styling (added 2026-09-27)
+Emphasis, and full-line active-word highlight / word pop, need Text+ **Character Level Styling**, whose format no
+spike has captured yet (ADR 0008 T11 and ADR 0009 E10 had no data). 15 adds a spike that works even without hand
+prep. 16 records ADR 0011: it confirmed the data shape, property ids and counting unit, but every write brief 15
+tried used the old guessed shape/ids/unit, so **no write has ever been confirmed working**. 19 retries the write
+with ADR 0011's confirmed values; its findings extend ADR 0011's "Write method" section. 17 sends emphasis (blocked
+until 19 confirms a write). 18 moves the styling word by word: one clip with keyframes if 19 confirms that works,
+otherwise one clip per word step with the full line text (user decision). Run order: 15 → (user runs it) → 16 →
+19 → (user runs it) → ADR 0011 update → 17 → 18.
 
 **Gate:** if the spike (02) finds that Resolve's Text+ breaks Malayalam shaping, **stop after 02** and tell the
 user. AGENTS.md forbids broken Malayalam shaping, so the Text+-only choice would have to be revisited (the

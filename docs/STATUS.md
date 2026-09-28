@@ -1,5 +1,31 @@
 # Status
 
+## 2026-09-28 — Resolve Text+ 19: CLS write-method spike (brief added)
+
+**Changes:** docs + a new spike script only; no app code. ADR 0011 (run 2) confirmed the CLS data shape,
+property ids and counting unit, but flagged that every write brief 15 tried used the old guessed
+ids/shape/unit, so **no script write has ever been confirmed working**. Added brief
+`docs/plans/resolve-textplus/19-cls-write-spike.md`, a new spike script
+`resources/resolve/dev/cls-write-spike.lua` and its instructions `resources/resolve/dev/SPIKE5.md`. The
+script builds a `.setting`-shaped snippet using ADR 0011's confirmed ids (2401-2403 colour, 102 absolute
+size) and unit (0-based code points, end inclusive), parses it with `bmd.readstring` (a plain Lua table
+didn't work in brief 15), and tries the three untried methods in order: `comp:Paste()`, `mod:LoadSettings()`,
+`mod:SetInput()`. It verifies with `comp:CopySettings()` dumps and stills, never `GetInput` (ADR 0011 found
+that returns `""` even when styling is present). If any method looks like it worked, it also retries the
+clear, keyframe and timing tests from brief 15 with the confirmed values. Updated
+`docs/plans/resolve-textplus/README.md`'s table and "Emphasis and per-word styling" section to insert this
+step between 16 and 17.
+
+**Verification:** `npx luaparse resources/resolve/dev/cls-write-spike.lua` (syntax only). Not run against
+Resolve.
+
+**Limitations:** nothing here is a write confirmation — it's a script for the user to run. Whether any of
+the three methods actually applies visible styling is still unknown until the user reports back.
+
+**Next:** the user runs `cls-write-spike.lua` (see `SPIKE5.md`) and sends back the report, `.setting`
+dumps and stills. Extend ADR 0011's "Write method" section with the result (don't rewrite the confirmed
+sections above it). Only then do briefs 17 and 18 unblock.
+
 ## 2026-09-28 — Resolve Text+ 16 (run 2): CLS format and counting unit confirmed
 
 **Changes:** docs only. The user re-ran `cls-spike.lua` with a hand-styled Text+ clip (R1). ADR 0011 is
