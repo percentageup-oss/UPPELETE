@@ -1,6 +1,6 @@
 {
   "name": "caption-studio",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "description": "Local-first subtitle editor for Malayalam and English creator videos",
   "type": "module",
