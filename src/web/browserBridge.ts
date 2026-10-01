@@ -35,13 +35,19 @@ interface StoredProjectEntry {
   thumbnailDataUrl?: string
 }
 
-const STORAGE_KEY_PROJECTS = 'kathacut.saved_projects'
-const STORAGE_KEY_GEMINI = 'kathacut.gemini_key'
+const STORAGE_KEY_PROJECTS = 'uppelete.saved_projects'
+const STORAGE_KEY_GEMINI = 'uppelete.gemini_key'
+const LEGACY_STORAGE_KEY_PROJECTS = 'kathacut.saved_projects'
+const LEGACY_STORAGE_KEY_GEMINI = 'kathacut.gemini_key'
 const fileRegistry = new Map<string, { file: File; url: string; media: ProjectMedia }>()
+
+function getStoredGeminiKey(): string | null {
+  return localStorage.getItem(STORAGE_KEY_GEMINI) || localStorage.getItem(LEGACY_STORAGE_KEY_GEMINI)
+}
 
 function getStoredProjects(): StoredProjectEntry[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY_PROJECTS)
+    const raw = localStorage.getItem(STORAGE_KEY_PROJECTS) || localStorage.getItem(LEGACY_STORAGE_KEY_PROJECTS)
     return raw ? JSON.parse(raw) : []
   } catch {
     return []
@@ -345,7 +351,7 @@ export function createBrowserCaptionStudio(): NonNullable<Window['captionStudio'
     cancelCaptionTranslation: async () => {},
     onCaptionTranslationProgress: () => () => {},
     alignmentSettingsStatus: async (): Promise<AlignmentSettingsStatus> => ({
-      configured: Boolean(localStorage.getItem(STORAGE_KEY_GEMINI)),
+      configured: Boolean(getStoredGeminiKey()),
       source: 'keychain',
     }),
     saveGeminiApiKey: async (apiKey: string): Promise<AlignmentSettingsStatus> => {
@@ -354,10 +360,11 @@ export function createBrowserCaptionStudio(): NonNullable<Window['captionStudio'
     },
     removeGeminiApiKey: async (): Promise<AlignmentSettingsStatus> => {
       localStorage.removeItem(STORAGE_KEY_GEMINI)
+      localStorage.removeItem(LEGACY_STORAGE_KEY_GEMINI)
       return { configured: false, source: 'keychain' }
     },
     providerKeyStatuses: async (): Promise<ProviderKeyStatuses> => {
-      const configured = Boolean(localStorage.getItem(STORAGE_KEY_GEMINI))
+      const configured = Boolean(getStoredGeminiKey())
       const geminiStatus: ProviderKeyStatus = { configured, source: 'keychain' }
       const missingStatus: ProviderKeyStatus = { configured: false, source: 'keychain' }
       return {
@@ -368,7 +375,7 @@ export function createBrowserCaptionStudio(): NonNullable<Window['captionStudio'
     },
     saveProviderApiKey: async (provider: CloudProviderId, apiKey: string): Promise<ProviderKeyStatuses> => {
       if (provider === 'gemini' && apiKey.trim()) localStorage.setItem(STORAGE_KEY_GEMINI, apiKey.trim())
-      const configured = Boolean(localStorage.getItem(STORAGE_KEY_GEMINI))
+      const configured = Boolean(getStoredGeminiKey())
       return {
         gemini: { configured, source: 'keychain' },
         openai: { configured: false, source: 'keychain' },
@@ -376,7 +383,10 @@ export function createBrowserCaptionStudio(): NonNullable<Window['captionStudio'
       }
     },
     removeProviderApiKey: async (provider: CloudProviderId): Promise<ProviderKeyStatuses> => {
-      if (provider === 'gemini') localStorage.removeItem(STORAGE_KEY_GEMINI)
+      if (provider === 'gemini') {
+        localStorage.removeItem(STORAGE_KEY_GEMINI)
+        localStorage.removeItem(LEGACY_STORAGE_KEY_GEMINI)
+      }
       return {
         gemini: { configured: false, source: 'keychain' },
         openai: { configured: false, source: 'keychain' },

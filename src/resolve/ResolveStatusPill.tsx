@@ -28,7 +28,7 @@ export function ResolveStatusPill({ onMessage }: { onMessage(tone: 'info' | 'err
 
   const install = async () => {
     setBusy(true)
-    try { setPluginInfo(await window.captionStudio!.installResolvePlugin()); onMessage('info', 'DaVinci Resolve plugin installed. Restart Resolve if it was already open, then Workspace → Scripts → KathaCut.') }
+    try { setPluginInfo(await window.captionStudio!.installResolvePlugin()); onMessage('info', 'DaVinci Resolve plugin installed. Restart Resolve if it was already open, then Workspace → Scripts → UPPELETE.') }
     catch (error) { onMessage('error', error instanceof Error ? error.message : 'Could not install the DaVinci Resolve plugin.') }
     finally { setBusy(false) }
   }
@@ -54,7 +54,7 @@ export function ResolveStatusPill({ onMessage }: { onMessage(tone: 'info' | 'err
           <div className="dialog-actions"><button type="button" onClick={() => void disconnect()}>Disconnect</button></div>
         </>
         : <>
-          <p>In Resolve: Workspace → Scripts → KathaCut</p>
+          <p>In Resolve: Workspace → Scripts → UPPELETE</p>
           {pluginInfo && pluginInfo.supported && !pluginInfo.installed
             && <div className="dialog-actions"><button type="button" className="accent" disabled={busy} onClick={() => void install()}>Install plugin</button></div>}
         </>}

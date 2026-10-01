@@ -9,7 +9,7 @@ const preview = (overrides: Partial<ResolveSyncPreview> = {}): ResolveSyncPrevie
   trackExists: true, insert: 0, update: 0, replace: 0, remove: 0, unchanged: 0, foreign: 0, trackClips: 0, conflicts: [], ...overrides,
 })
 const spec = (key: string): ResolveSyncSpec => ({ key, startFrame: 0, endFrame: 10, text: key, inputs: {}, keyframes: [], styleRanges: [], hash: key })
-const render = (overrides: Partial<ResolveSyncPreview>) => renderToStaticMarkup(<ResolveSyncDialog trackName="KathaCut"
+const render = (overrides: Partial<ResolveSyncPreview>) => renderToStaticMarkup(<ResolveSyncDialog trackName="UPPELETE"
   onJump={noop} onCancel={noop} onSync={noop} pending={{ specs: [spec('a'), spec('b')], synced: [], notSent: [], preview: preview(overrides) }} />)
 
 it('summarises only the kinds of change that happened', () => {
@@ -22,7 +22,7 @@ it('shows one status line and the replace option, with Sync disabled when Resolv
   const html = render({ unchanged: 2, foreign: 3, trackClips: 5 })
   expect(html).toContain('Resolve is already up to date.')
   expect(html).toContain('Replace captions')
-  expect(html).toContain('Deletes all 5 clips on “KathaCut”, including 3 not made by KathaCut')
+  expect(html).toContain('Deletes all 5 clips on “UPPELETE”, including 3 not made by UPPELETE')
   expect(html).toMatch(/<button type="button" class="accent" disabled="">Up to date<\/button>/)
   expect(html).not.toContain('changed in Resolve')
 })

@@ -127,7 +127,7 @@ export class ResolveBridge {
   }
 
   private async runRequest<T>(command: string, params: unknown, schema: z.ZodType<T>, timeoutMs: number): Promise<T> {
-    if (this.status.state !== 'connected') throw new Error('DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → KathaCut.')
+    if (this.status.state !== 'connected') throw new Error('DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → UPPELETE.')
     const { sessionId } = this.status
     const seq = ++this.seq
     await writeJsonAtomic(this.mailboxPath('request.json'), { v: 1, sessionId, seq, command, params })
@@ -144,7 +144,7 @@ export class ResolveBridge {
       if (!response.ok) throw new Error(response.error)
       return schema.parse(response.result)
     }
-    throw new Error('DaVinci Resolve did not answer. Is the KathaCut script still running in Resolve?')
+    throw new Error('DaVinci Resolve did not answer. Is the UPPELETE script still running in Resolve?')
   }
 }
 

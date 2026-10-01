@@ -253,7 +253,7 @@ export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error',
       </div>}
       {settings.desktopConfig
         ? <div className="agent-snippet">
-          <p>Connect from Claude Desktop — add this to <code>claude_desktop_config.json</code> (Settings → Developer → Edit Config), merge it with any existing <code>mcpServers</code>, then restart Claude Desktop. KathaCut must be open with agent access on:</p>
+          <p>Connect from Claude Desktop — add this to <code>claude_desktop_config.json</code> (Settings → Developer → Edit Config), merge it with any existing <code>mcpServers</code>, then restart Claude Desktop. UPPELETE must be open with agent access on:</p>
           <pre><code>{settings.desktopConfig}</code></pre>
           <button type="button" onClick={() => copy(settings.desktopConfig!)}>Copy config</button>
         </div>
@@ -263,9 +263,9 @@ export function AgentSettings({ onMessage }: { onMessage(tone: 'info' | 'error',
 }
 
 /**
- * DaVinci Resolve plugin install (03): installs, reinstalls or removes the generated `KathaCut.lua`
+ * DaVinci Resolve plugin install (03): installs, reinstalls or removes the generated `UPPELETE.lua`
  * launcher in Resolve's Scripts folder. Connecting itself happens from inside Resolve (Workspace →
- * Scripts → KathaCut) — this tab only manages the one file that makes that menu entry exist.
+ * Scripts → UPPELETE) — this tab only manages the one file that makes that menu entry exist.
  */
 export function ResolveSettings({ onMessage }: { onMessage(tone: 'info' | 'error', text: string): void }) {
   const [info, setInfo] = useState<ResolvePluginInfo | null>(null)
@@ -303,7 +303,7 @@ export function ResolveSettings({ onMessage }: { onMessage(tone: 'info' | 'error
       <ol className="resolve-steps">
         <li>Install the plugin above.</li>
         <li>Restart DaVinci Resolve if it was already open.</li>
-        <li>In Resolve: Workspace → Scripts → KathaCut.</li>
+        <li>In Resolve: Workspace → Scripts → UPPELETE.</li>
       </ol>
     </>}
   </section>

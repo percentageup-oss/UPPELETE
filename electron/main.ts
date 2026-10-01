@@ -45,9 +45,9 @@ import { clipEndUs } from '../src/core/timelineModel'
 // Display name for menus, the About panel and the dock. userData stays at the original 'caption-studio' folder so
 // downloaded models, caches, logs and stored secrets survive the rename.
 const userDataPath = path.join(app.getPath('appData'), 'caption-studio')
-app.setName('KathaCut')
+app.setName('UPPELETE')
 app.setPath('userData', userDataPath)
-app.setAboutPanelOptions({ applicationName: 'KathaCut', credits: 'Your local AI video toolkit.' })
+app.setAboutPanelOptions({ applicationName: 'UPPELETE', credits: 'Your local AI video toolkit.' })
 
 // Must run before the app is ready. Marks the scheme as fetchable from any page origin (dev
 // server included) and as a secure context, without weakening default webSecurity/CSP elsewhere.
@@ -97,7 +97,7 @@ function createWindow() {
     minWidth: 940,
     minHeight: 680,
     backgroundColor: '#090b10',
-    title: 'KathaCut',
+    title: 'UPPELETE',
     icon: appIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -508,7 +508,7 @@ async function requireRecent(value: unknown) {
 
 const managedProjectsDir = () => path.join(app.getPath('documents'), MANAGED_FOLDER_NAME)
 
-// New projects from the home screen live in Documents/KathaCut Projects and autosave from their first edit.
+// New projects from the home screen live in Documents/UPPELETE Projects and autosave from their first edit.
 ipcMain.handle('project:create-managed', async (_event, request: { project: unknown }) => {
   const project = projectSchema.parse(request?.project)
   const dir = managedProjectsDir()

@@ -41,7 +41,7 @@ export function CreateInResolveControl({ project, onLinked, onMessage }: {
   if (project.cues.length === 0) return null
 
   const disabledReason = !window.captionStudio ? 'Create in DaVinci is available in the desktop app.'
-    : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → KathaCut.'
+    : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → UPPELETE.'
     : phase.kind !== 'idle' ? 'Already in progress.'
     : null
 
@@ -49,7 +49,7 @@ export function CreateInResolveControl({ project, onLinked, onMessage }: {
     if (disabledReason) return
     try {
       const plan = planPush(project)
-      setPhase({ kind: 'dialog', plan, name: project.title || 'KathaCut', captionCount: captionCountOf(project) })
+      setPhase({ kind: 'dialog', plan, name: project.title || 'UPPELETE', captionCount: captionCountOf(project) })
     } catch (error) { onMessage('error', errorText(error)) }
   }
 
@@ -73,7 +73,7 @@ export function CreateInResolveControl({ project, onLinked, onMessage }: {
       const provisionalLink: ResolveLink = {
         projectName: result.projectName, timelineName: result.timelineName, timelineId: result.timelineId,
         startFrame: result.startFrame, fps: result.fps, width: result.width, height: result.height,
-        origin: 'pushed', editSignature: editSignature(project), trackName: 'KathaCut', synced: [],
+        origin: 'pushed', editSignature: editSignature(project), trackName: 'UPPELETE', synced: [],
       }
       setPhase({ kind: 'creating', step: 'captions', progress: null })
       const measurer = createDomMeasurer(document)
@@ -84,7 +84,7 @@ export function CreateInResolveControl({ project, onLinked, onMessage }: {
         keyframes: spec.keyframes, styleRanges: spec.styleRanges, hash: spec.hash,
       }))
       const syncResult = specs.length
-        ? await captionStudio.resolveSyncApply({ timelineId: result.timelineId, trackName: 'KathaCut', specs, synced: [], decisions: {} })
+        ? await captionStudio.resolveSyncApply({ timelineId: result.timelineId, trackName: 'UPPELETE', specs, synced: [], decisions: {} })
         : { synced: [], errors: [] }
       onLinked({ ...provisionalLink, synced: syncResult.synced })
       const problems = [...result.errors, ...syncResult.errors]

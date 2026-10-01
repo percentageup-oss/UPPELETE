@@ -16,11 +16,12 @@ export type SyncSpecLike = { key: string; startFrame: number; endFrame: number; 
 export type RemoteClip = { clipId: string; startFrame: number; endFrame: number; key: string | null; text: string | null }
 
 /**
- * `hash` of a synced entry the user chose to keep as Resolve's version. KathaCut never updates or deletes that
+ * `hash` of a synced entry the user chose to keep as Resolve's version. UPPELETE never updates or deletes that
  * clip again and never re-inserts its caption, while the entry stays in `synced`. (Dropping the entry instead, as
  * the brief first suggested, would make the still-tagged clip show up as a conflict again on every later sync.)
  */
-export const RELEASED_HASH = 'kathacut:kept-resolve'
+export const RELEASED_HASH = 'uppelete:kept-resolve'
+export const isReleasedHash = (hash: string | undefined): boolean => hash === RELEASED_HASH || hash === 'kathacut:kept-resolve'
 
 export type SyncConflictKind =
   | 'changed-in-resolve' // edited (text or timing) in Resolve since the last sync
@@ -85,7 +86,7 @@ export function diffSync<S extends SyncSpecLike>({ specs, synced, remote }: { sp
     const clip = findRemote(entry)
     if (clip) claimed.add(clip.clipId)
 
-    if (entry.hash === RELEASED_HASH) {
+    if (isReleasedHash(entry.hash)) {
       // Kept as Resolve's version: never touched. Forget it only once both sides have let it go.
       if (clip || spec) { result.carried.push(clip ? { ...entry, clipId: clip.clipId } : entry); result.unchanged++ }
       continue
@@ -178,9 +179,9 @@ export function countPendingChanges(specs: SyncSpecLike[], synced: SyncedEntry[]
   let count = 0
   for (const spec of specs) {
     const entry = syncedByKey.get(spec.key)
-    if (!entry || (entry.hash !== RELEASED_HASH
+    if (!entry || (!isReleasedHash(entry.hash)
       && (entry.hash !== spec.hash || entry.startFrame !== spec.startFrame || entry.endFrame !== spec.endFrame))) count++
   }
-  for (const entry of synced) if (entry.hash !== RELEASED_HASH && !specKeys.has(entry.key)) count++
+  for (const entry of synced) if (!isReleasedHash(entry.hash) && !specKeys.has(entry.key)) count++
   return count
 }

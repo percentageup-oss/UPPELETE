@@ -26,22 +26,22 @@ export class BridgeSetupError extends Error {}
 export async function readBridgeTarget(configPath: string): Promise<{ url: URL; token: string }> {
   let raw: string
   try { raw = await readFile(configPath, 'utf8') }
-  catch { throw new BridgeSetupError('KathaCut has not enabled agent access yet. Open KathaCut → Settings → AI agents and turn on "Allow agent access", then restart Claude Desktop.') }
+  catch { throw new BridgeSetupError('UPPELETE has not enabled agent access yet. Open UPPELETE → Settings → AI agents and turn on "Allow agent access", then restart Claude Desktop.') }
   let config: z.infer<typeof bridgeConfigSchema>
   try { config = bridgeConfigSchema.parse(JSON.parse(raw)) }
-  catch { throw new BridgeSetupError('KathaCut\'s agent settings file is unreadable. Turn agent access off and on again in Settings → AI agents.') }
-  if (!config.enabled || !config.port || !config.token) throw new BridgeSetupError('Agent access is off in KathaCut. Turn on "Allow agent access" in Settings → AI agents, then restart Claude Desktop.')
+  catch { throw new BridgeSetupError('UPPELETE\'s agent settings file is unreadable. Turn agent access off and on again in Settings → AI agents.') }
+  if (!config.enabled || !config.port || !config.token) throw new BridgeSetupError('Agent access is off in UPPELETE. Turn on "Allow agent access" in Settings → AI agents, then restart Claude Desktop.')
   return { url: new URL(`http://127.0.0.1:${config.port}/mcp`), token: config.token }
 }
 
 const isRequest = (message: JSONRPCMessage): message is JSONRPCMessage & { id: string | number; method: string } => 'method' in message && 'id' in message
 
 /** Pipes two transports into each other. A failed forward to the app answers the pending request with
- * a JSON-RPC error instead of leaving the client waiting, e.g. when KathaCut was closed mid-session. */
+ * a JSON-RPC error instead of leaving the client waiting, e.g. when UPPELETE was closed mid-session. */
 export function pipeTransports(local: Transport, remote: Transport): void {
   local.onmessage = (message) => {
     void remote.send(message).catch((error) => {
-      if (isRequest(message)) void local.send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: `KathaCut is not reachable: ${error instanceof Error ? error.message : String(error)}. Is the app open with agent access on?` } }).catch(() => {})
+      if (isRequest(message)) void local.send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: `UPPELETE is not reachable: ${error instanceof Error ? error.message : String(error)}. Is the app open with agent access on?` } }).catch(() => {})
     })
   }
   remote.onmessage = (message) => { void local.send(message).catch(() => {}) }

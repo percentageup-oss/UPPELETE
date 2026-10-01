@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { PROJECT_FILE_EXTENSION } from '../src/core/model'
 
 export const RECENT_PROJECTS_FILE = 'recent-projects.json'
-export const MANAGED_FOLDER_NAME = 'KathaCut Projects'
+export const MANAGED_FOLDER_NAME = 'UPPELETE Projects'
 const MAX_ENTRIES = 100
 export const MAX_THUMBNAIL_BYTES = 500_000
 

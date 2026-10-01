@@ -1,5 +1,5 @@
 :root {
-  /* KathaCut brand theme, from the blue end of the logo's diagonal stroke (img/logo-icon-only.png). --accent is for
+  /* UPPELETE brand theme, from the blue end of the logo's diagonal stroke (img/logo-icon-only.png). --accent is for
      fills, borders, outlines and the playhead; --accent-text is the lighter tint for accent text/icons on dark surfaces. */
   --accent: #6a58fc; --accent-hover: #7b6bff; --accent-text: #a597ff; --on-accent: #ffffff;
   --accent-bg: #17152c; --accent-bg-strong: rgba(106, 88, 252, .2); --accent-dim: #3b3480; --accent-glow: rgba(106, 88, 252, .4);
@@ -379,7 +379,7 @@ button.accent:hover:not(:disabled) { background: var(--accent-hover); border-col
  * Blur, Clip) and the cue editor's timing fields. Tokens live on :root so any inspector control
  * resolves them regardless of where in the tree it renders (e.g. dialogs mounted outside
  * .inspector-panel); .inspector-panel/.side-panel just apply the panel background. Accent is the
- * app-wide brand --accent (KathaCut violet). */
+ * app-wide brand --accent (UPPELETE violet). */
 :root {
   --ins-bg: #0f1218; --ins-line: #1f232c; --ins-text: #e7eaf0; --ins-muted: #868d9b; --ins-label: #a9afba;
   --ins-control: #171a21; --ins-control-hi: #20242d; --ins-accent: var(--accent); --ins-on-accent: var(--on-accent); --ins-radius: 7px;
@@ -850,7 +850,7 @@ button.attention { border-color: #806838; color: #ffda8b; }
 .match-field { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
 .match-field input[type="range"] { flex: 1; }
 .match-field input[type="text"] { flex: 1; }
-/* KathaCut wordmark, after img/logo-with-text.png: one colour, "Katha" heavy, "Cut" light. */
+/* UPPELETE wordmark: one colour, "UPPELETE" bold. */
 .wordmark { display: inline; font-size: 15px; font-weight: 800; letter-spacing: -0.01em; color: #f3f5f8; white-space: nowrap; }
 .wordmark span { font-weight: 400; }
 /* Launch splash (markup in index.html so it paints before the bundle runs; main.tsx dismisses it). */

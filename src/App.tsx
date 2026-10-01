@@ -1325,7 +1325,7 @@ export default function App() {
           origin: 'proxy',
           editSignature: editSignature(current),
           proxyAssetId: proxyAsset.id,
-          trackName: 'KathaCut',
+          trackName: 'UPPELETE',
           synced: [],
         },
       }))
@@ -1380,7 +1380,7 @@ export default function App() {
     const assetIds = result.assets.map((inspected) => findAssetByFingerprint(videos, inspected.media)?.id ?? null)
     if (assetIds.some((id) => id === null)) { setNotice({ tone: 'error', text: 'The DaVinci timeline’s media could not be added to the project.' }); return }
 
-    // One KathaCut video track per Resolve video track that has clips, created bottom-up in Resolve's order.
+    // One UPPELETE video track per Resolve video track that has clips, created bottom-up in Resolve's order.
     const emptyVideoTrack = current.tracks.find((track) => track.kind === 'video' && !track.locked && !current.clips.some((clip) => clip.trackId === track.id))
     const targets = new Map<number, { id: string; track?: Track }>()
     ;[...new Set(result.clips.map((clip) => clip.trackIndex))].sort((a, b) => a - b).forEach((trackIndex, order) => {
@@ -1419,7 +1419,7 @@ export default function App() {
         height: result.timeline.height,
         origin: 'edit',
         editSignature: editSignature(present),
-        trackName: 'KathaCut',
+        trackName: 'UPPELETE',
         synced: [],
       },
     }))
@@ -1832,7 +1832,7 @@ export default function App() {
       if (!frame) throw new Error('There is no preview to read a frame from.')
       if (playback.playing) playback.pause()
       seekTo(at)
-      if (!(await waitForFramePaint(frame, () => clock.getUs(), at))) throw new Error('The preview did not finish drawing that frame in time. Make sure the KathaCut window is visible, then retry.')
+      if (!(await waitForFramePaint(frame, () => clock.getUs(), at))) throw new Error('The preview did not finish drawing that frame in time. Make sure the UPPELETE window is visible, then retry.')
       const source = captureFrame(playback.transport.elementFor(under.clip.trackId, under.clip.assetId) as HTMLVideoElement | null, 320)
       if (!source) throw new Error('The frame could not be read from the video (still decoding, or an unsupported codec).')
       const reference = await loadReferencePixels(`data:${mimeType};base64,${imageBase64}`)
@@ -1885,7 +1885,7 @@ export default function App() {
       const target = Math.min(Math.max(0, Math.round(sequenceUs)), durationUs)
       if (playback.playing) playback.pause()
       seekTo(target)
-      if (!(await waitForFramePaint(frame, () => clock.getUs(), target))) throw new Error('The preview did not finish drawing that frame in time. Make sure the KathaCut window is visible and the media is available, then retry.')
+      if (!(await waitForFramePaint(frame, () => clock.getUs(), target))) throw new Error('The preview did not finish drawing that frame in time. Make sure the UPPELETE window is visible and the media is available, then retry.')
       const { x, y, width, height } = frame.getBoundingClientRect()
       return { x, y, width, height }
     },
@@ -2471,7 +2471,7 @@ export default function App() {
     {resolveRender && <ResolveRenderProgress timelineName={resolveRender.timelineName} percent={resolveRender.percent} onCancel={cancelResolveRender} />}
     {resolveImport && <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="resolve-import-title">
       <small>DAVINCI RESOLVE</small><h2 id="resolve-import-title">Importing “{resolveImport.timelineName}”…{resolveImport.total ? ` ${resolveImport.done} of ${resolveImport.total} files checked` : ''}</h2>
-      <p>KathaCut reads the cuts and uses the original files. Nothing in Resolve or your media is changed.</p>
+      <p>UPPELETE reads the cuts and uses the original files. Nothing in Resolve or your media is changed.</p>
     </section></div>}
     {pendingResolveImport && <ResolveImportReview result={pendingResolveImport} onImport={() => applyResolveImport(pendingResolveImport)}
       onRender={renderInsteadOfImport} onCancel={() => setPendingResolveImport(null)} />}
@@ -3192,7 +3192,7 @@ function CaptionShortcutHint() {
 function ResolveRenderProgress({ timelineName, percent, onCancel }: { timelineName: string; percent: number; onCancel: () => void }) {
   return <div className="relink-backdrop"><section className="relink-review" role="dialog" aria-modal="true" aria-labelledby="resolve-render-title">
     <small>DAVINCI RESOLVE</small><h2 id="resolve-render-title">Rendering “{timelineName}”… {percent}%</h2>
-    <p>KathaCut changes the render format on Resolve's Deliver page for this render and sets it back afterwards.</p>
+    <p>UPPELETE changes the render format on Resolve's Deliver page for this render and sets it back afterwards.</p>
     <div><button onClick={onCancel}>Cancel</button></div>
   </section></div>
 }

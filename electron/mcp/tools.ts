@@ -59,7 +59,7 @@ function outcomesOf(response: Extract<AgentResponse, { ok: true }>) {
 
 /** Guidance for an agent asked to enhance a video from its transcript. Served both as the MCP server's
  * `instructions` (every client sees it at initialize) and as the `auto_edit` prompt. */
-export const EDITING_GUIDE = `You are directing a KathaCut edit. Work like a senior editor who has watched the footage: the user should never have to name a VHS overlay, a moving grid or a zoom - you decide, apply and explain. When asked to edit, enhance or "make it better", do the whole job without asking what to add.
+export const EDITING_GUIDE = `You are directing an UPPELETE edit. Work like a senior editor who has watched the footage: the user should never have to name a VHS overlay, a moving grid or a zoom - you decide, apply and explain. When asked to edit, enhance or "make it better", do the whole job without asking what to add.
 1. Orient: call get_project, then get_transcript (words: true for exact timing). Transcript times are SEQUENCE microseconds, the same clock as clips, zoom regions, effects and titles - never mix in get_captions' source times.
 2. Look before you plan: call render_frame at about 4 evenly spaced times to judge framing, setting and the footage's existing colour.
 3. Diagnose the genre, tone, pace and platform (aspect ratio). Call list_creative_options once and commit to ONE styleRecipe, stating it in a line. Every look, background, title and effect carries mood/useWhen/avoidWhen - follow them; never invent ids or ranges.
@@ -78,7 +78,7 @@ const cueTarget = z.strictObject({ startUs: z.number().int().nonnegative(), endU
 export function registerTools(server: McpServer, deps: McpToolDeps): void {
   server.registerTool('get_project', {
     title: 'Get project',
-    description: 'Overview of the open KathaCut project: title, output format, assets, tracks, clips, blur regions, frame-paint effects (vignette/letterbox/fade), caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
+    description: 'Overview of the open UPPELETE project: title, output format, assets, tracks, clips, blur regions, frame-paint effects (vignette/letterbox/fade), caption style, caption count, the playhead position and current selection (sequence microseconds), and any validation warnings. Call this first to orient yourself.',
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false, idempotentHint: true },
     inputSchema: {},
   }, async () => relay(deps, { id: randomUUID(), kind: 'get-state' }, stateOf))
@@ -246,7 +246,7 @@ Goal: ${goal?.trim() || 'Edit this video like a senior editor: choose a coherent
 
   server.registerTool('render_frame', {
     title: 'Render frame',
-    description: 'Shows you the preview exactly as the user sees it (video, zooms, titles, effects, look and captions) at one or more SEQUENCE times, as images. Use it to check your own edits - "did the zoom land on the face?", "is the title readable?", "does the grade match the reference?" - then fix and re-check. Seeks the playhead (visible to the user). The KathaCut window must be visible. Up to 6 times per call; images are downscaled JPEG.',
+    description: 'Shows you the preview exactly as the user sees it (video, zooms, titles, effects, look and captions) at one or more SEQUENCE times, as images. Use it to check your own edits - "did the zoom land on the face?", "is the title readable?", "does the grade match the reference?" - then fix and re-check. Seeks the playhead (visible to the user). The UPPELETE window must be visible. Up to 6 times per call; images are downscaled JPEG.',
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false, idempotentHint: false },
     inputSchema: { sequenceUs: z.array(z.number().int().nonnegative()).min(1).max(6).describe('Sequence-time positions in microseconds.') },
   }, async ({ sequenceUs }) => {

@@ -66,7 +66,7 @@ export type FetchLike = (input: string, init: { redirect: 'manual'; signal: Abor
 export async function fetchImageBytes(rawUrl: string, fetchImpl: FetchLike = (input, init) => fetch(input, init)): Promise<{ bytes: Buffer; mime: ImageMime }> {
   let url = assertImportUrl(rawUrl)
   for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
-    const response = await fetchImpl(url.toString(), { redirect: 'manual', signal: AbortSignal.timeout(IMPORT_FETCH_TIMEOUT_MS), headers: { accept: 'image/*', 'user-agent': 'KathaCut' } })
+    const response = await fetchImpl(url.toString(), { redirect: 'manual', signal: AbortSignal.timeout(IMPORT_FETCH_TIMEOUT_MS), headers: { accept: 'image/*', 'user-agent': 'UPPELETE' } })
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location')
       if (!location) throw new Error(`The image server redirected without a location (HTTP ${response.status}).`)

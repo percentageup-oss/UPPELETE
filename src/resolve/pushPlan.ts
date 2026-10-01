@@ -83,7 +83,7 @@ export function planPush(project: CaptionProject): PushPlan {
   const notSent = [...counts.entries()].map(([feature, count]) => ({ feature, count }))
 
   return {
-    timeline: { name: project.title || 'KathaCut', fps: timelineFps, width: format.width, height: format.height },
+    timeline: { name: project.title || 'UPPELETE', fps: timelineFps, width: format.width, height: format.height },
     media, clips, notSent,
   }
 }

@@ -95,11 +95,11 @@ const importSource: NonNullable<McpToolDeps['importSource']> = async (source) =>
  * an image stays cheap in the agent's context. Rect is CSS px; Electron wants device-independent px. */
 const captureRect: NonNullable<McpToolDeps['captureRect']> = async (rect) => {
   const window = projectWindow()
-  if (!window || window.isDestroyed()) throw new Error('KathaCut has no open project window.')
-  if (window.isMinimized()) throw new Error('The KathaCut window is minimized; restore it so the preview can be captured.')
+  if (!window || window.isDestroyed()) throw new Error('UPPELETE has no open project window.')
+  if (window.isMinimized()) throw new Error('The UPPELETE window is minimized; restore it so the preview can be captured.')
   const zoom = window.webContents.getZoomFactor()
   const image = await window.webContents.capturePage({ x: Math.round(rect.x * zoom), y: Math.round(rect.y * zoom), width: Math.round(rect.width * zoom), height: Math.round(rect.height * zoom) })
-  if (image.isEmpty()) throw new Error('The preview could not be captured. Bring the KathaCut window to the front and retry.')
+  if (image.isEmpty()) throw new Error('The preview could not be captured. Bring the UPPELETE window to the front and retry.')
   const size = image.getSize()
   const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(size.width, size.height))
   const output = scale < 1 ? image.resize({ width: Math.round(size.width * scale), height: Math.round(size.height * scale), quality: 'best' }) : image
@@ -126,7 +126,7 @@ function desktopConfig(): string | null {
   const script = path.join(app.getAppPath(), 'dist-electron', 'mcp-stdio.cjs')
   if (!existsSync(script)) return null
   const entry = { command: process.execPath, args: [script, path.join(app.getPath('userData'), MCP_CONFIG_FILE)], env: { ELECTRON_RUN_AS_NODE: '1' } }
-  return JSON.stringify({ mcpServers: { kathacut: entry } }, null, 2)
+  return JSON.stringify({ mcpServers: { uppelete: entry } }, null, 2)
 }
 
 async function settingsView(): Promise<McpSettingsView> {

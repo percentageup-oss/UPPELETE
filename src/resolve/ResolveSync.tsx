@@ -75,7 +75,7 @@ export function ResolveSyncControl({ project, link, liveTimelineId, onSynced, on
   const disabledReason = !window.captionStudio ? 'Sync to Resolve is available in the desktop app.'
     : proxyMissing ? 'The DaVinci proxy video was removed from this project.'
     : editChanged ? 'The video edit changed since this project was linked to DaVinci. Use Create in DaVinci to make a new timeline.'
-    : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → KathaCut.'
+    : status.state !== 'connected' ? 'DaVinci Resolve is not connected. In Resolve: Workspace → Scripts → UPPELETE.'
     : liveTimelineId === null ? 'Checking which timeline Resolve has open…'
     : liveTimelineId !== link.timelineId ? `Resolve has a different timeline open. Switch to “${link.timelineName}” in Resolve.`
     : !plan ? 'Preparing captions…'
@@ -163,20 +163,20 @@ export function ResolveSyncDialog({ pending, trackName, onJump, onCancel, onSync
     : inSync ? 'Resolve is already up to date.'
     : summary ? `Ready to send: ${summary}.`
     : 'Nothing else to send.'
-  const replaceHint = `Deletes ${preview.trackClips ? `all ${plural(preview.trackClips, 'clip')}` : 'everything'} on “${trackName}”${preview.foreign ? `, including ${preview.foreign} not made by KathaCut` : ''}, then adds every caption fresh. Other tracks aren’t touched.`
+  const replaceHint = `Deletes ${preview.trackClips ? `all ${plural(preview.trackClips, 'clip')}` : 'everything'} on “${trackName}”${preview.foreign ? `, including ${preview.foreign} not made by UPPELETE` : ''}, then adds every caption fresh. Other tracks aren’t touched.`
   const showConflicts = !replaceCaptions && conflicts.length > 0
 
   return <dialog ref={dialog} className="model-dialog resolve-sync-dialog" aria-labelledby="resolve-sync-title" onClose={onCancel} onKeyDown={(event) => event.stopPropagation()}>
     <h2 id="resolve-sync-title">Sync to Resolve</h2>
     <p className="resolve-sync-status">{status}</p>
-    {!replaceCaptions && preview.foreign > 0 && <p className="resolve-sync-note">{plural(preview.foreign, 'clip')} on “{trackName}” weren’t made by KathaCut and will be left alone.</p>}
+    {!replaceCaptions && preview.foreign > 0 && <p className="resolve-sync-note">{plural(preview.foreign, 'clip')} on “{trackName}” weren’t made by UPPELETE and will be left alone.</p>}
 
     {showConflicts && <section aria-labelledby="resolve-sync-conflicts-title">
       <h3 id="resolve-sync-conflicts-title">{plural(conflicts.length, 'caption')} changed in Resolve</h3>
-      <p className="resolve-sync-note">Choose which version to keep. A clip you keep from Resolve won’t be updated by KathaCut again.</p>
+      <p className="resolve-sync-note">Choose which version to keep. A clip you keep from Resolve won’t be updated by UPPELETE again.</p>
       {conflicts.length > 1 && <div className="resolve-sync-bulk">
         <button type="button" onClick={() => setAll('keep-resolve')}>Keep all from Resolve</button>
-        <button type="button" onClick={() => setAll('overwrite')}>Use all from KathaCut</button>
+        <button type="button" onClick={() => setAll('overwrite')}>Use all from UPPELETE</button>
       </div>}
       <div className="resolve-sync-conflict-list">
         {conflicts.map((conflict) => {
@@ -192,7 +192,7 @@ export function ResolveSyncDialog({ pending, trackName, onJump, onCancel, onSync
             </label>
             <label className={choice === 'overwrite' ? 'selected' : ''}>
               <input type="radio" name={`conflict-${conflict.key}`} checked={choice === 'overwrite'} onChange={() => set('overwrite')} />
-              <span>KathaCut</span>{conflict.keptText !== null ? <q>{conflict.keptText}</q> : <em>caption deleted</em>}
+              <span>UPPELETE</span>{conflict.keptText !== null ? <q>{conflict.keptText}</q> : <em>caption deleted</em>}
             </label>
           </fieldset>
         })}
