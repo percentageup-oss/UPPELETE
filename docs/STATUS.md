@@ -1,6 +1,25 @@
 # Status
 
-## 2026-10-01 — Mobile-First Android Drawers & Full-Width Canvas Preview
+## 2026-10-01 — UPPELETE Brand Consistency & Web Import Migration
+
+**Changes:**
+- Synced all brand references across the application from "KathaCut" to **UPPELETE**:
+  - `index.html`: Synced `<title>` and `<meta property="og:title">` to `"UPPELETE - Video Caption Studio"`.
+  - `src/App.tsx`: Replaced all notices, warnings, and Resolve track names with `UPPELETE`.
+  - `src/SettingsDialog.tsx`, `src/resolve/ResolveSync.tsx`, `src/resolve/ResolveStatusPill.tsx`, `src/resolve/CreateInResolve.tsx`: Updated script launcher names (`UPPELETE.lua`), script menu instructions (`Workspace → Scripts → UPPELETE`), dialog hints, and default timeline/track names.
+  - `src/web/browserBridge.ts`: Updated browser `localStorage` keys to `'uppelete.saved_projects'` and `'uppelete.gemini_key'` with seamless backward-compatible fallbacks for existing entries.
+  - `electron/main.ts`, `electron/projectLibrary.ts`, `electron/mcp-stdio.ts`, `electron/mcp/tools.ts`, `electron/mcp/ipc.ts`, `electron/mcp/stdioBridge.ts`, `electron/mcp/importMedia.ts`, `electron/exportHostFlag.ts`, `electron/resolve/bridge.ts`, `electron/resolve/install.ts`: Updated application metadata, user-agent headers, and MCP tool instructions to UPPELETE.
+  - `.env.example`: Created with documented `GEMINI_API_KEY`, `OPENAI_API_KEY`, and `ELEVENLABS_API_KEY`.
+  - `vite.config.ts`: Configured `allowedHosts: true` for the AI Studio preview environment on port 3000.
+
+**Verification:**
+- Verified compilation with `compile_applet` (succeeded).
+- Verified TypeScript type checking with `lint_applet` (`tsc --noEmit`, succeeded with 0 errors).
+- Verified dev server startup on port 3000.
+
+**Limitations:** None.
+
+**Next:** Multi-touch pinch-to-zoom on the timeline ruler.
 
 **Changes:**
 - Implemented mobile-first off-screen drawers architecture:
