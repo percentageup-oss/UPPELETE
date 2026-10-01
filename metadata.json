@@ -1,0 +1,5 @@
+{
+  "name": "KathaCut",
+  "description": "Local-first subtitle editor and video caption studio for Malayalam and English creator videos.",
+  "capabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

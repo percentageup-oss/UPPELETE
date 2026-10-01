@@ -1,5 +1,89 @@
 # Status
 
+## 2026-10-01 — Mobile-First Android Drawers & Full-Width Canvas Preview
+
+**Changes:**
+- Implemented mobile-first off-screen drawers architecture:
+  - The main video preview / canvas now occupies the entire screen width and height on mobile devices without clutter.
+  - Left tools (Media bin, Captions, Overlays, Titles, Effects, Color, Layers) moved into an off-screen Left Drawer.
+  - Properties & Inspector (Clip, Text, Shape, Color, Zoom, Blur, Effect inspectors) moved into an off-screen Right Drawer.
+  - Multi-track timeline and controls moved into an off-screen Bottom Drawer.
+- Edge Dragging with Pointer Events (`src/mobile/useEdgeDragDrawers.ts`):
+  - Added edge drag zones with `pointerdown`, `pointermove`, `pointerup`, and `pointercancel` using `setPointerCapture` and `touch-action: none`.
+  - Drawers follow finger displacement in real time and snap open or closed based on drag threshold (25%) and flick velocity (>0.35 px/ms).
+- Backup Ways to Open (`src/mobile/MobileDrawerControls.tsx`):
+  - Visible handle tabs on screen edges (`Tools ☰`, `Inspect ⚙`, `Timeline ⏱`) allowing 1-tap or drag access without conflicting with Android system back gestures.
+  - Floating Canvas HUD overlay with 1-tap drawer buttons, Play/Pause toggle, seek buttons, and contextual action buttons (Split, Delete, + Cue, Undo, Redo).
+  - Tapping outside an open drawer (on the blurred backdrop) or clicking the `✕` close button closes the active drawer.
+- Touch Fixes & Input Handling:
+  - Enforced minimum 44px touch targets across all mobile buttons, tabs, and tools.
+  - Touch long-press (450ms hold) triggers the native mobile bottom-sheet context menu on preview canvas and timeline tracks.
+  - Replaced keyboard shortcuts with dedicated on-screen touch buttons (Undo, Redo, Split, Delete, Play/Pause).
+  - Disabled accidental page rubber-banding and pinch-zoom with `touch-action: none` on drag handles and `overscroll-behavior: none`.
+- Preserved 100% desktop functionality via CSS `display: contents !important` on desktop viewports (>=900px).
+- Added unit tests in `src/mobile/useEdgeDragDrawers.test.ts`.
+
+**Verification:** Ran unit tests with Vitest (4/4 passing). Verified type safety with `npm run lint` (`tsc --noEmit`). Verified build with `compile_applet`. Verified HTTP 200 OK on dev server.
+
+**Limitations:** None.
+
+**Next:** Multi-touch pinch-to-zoom on the timeline ruler.
+
+## 2026-10-01 — Mobile Bottom-Sheet Context Menu
+
+**Changes:**
+- Upgraded `src/ContextMenu.tsx` to automatically render an Android/iOS native-style bottom-sheet context menu on mobile screens (viewport <= 899px or touch devices), replacing the desktop-style pointer popover.
+- Features of the mobile bottom-sheet:
+  - Dark translucent backdrop (`.bottom-sheet-backdrop`) with blur and tap-to-dismiss.
+  - Centered drag handle pill with touch gesture swipe-down to dismiss.
+  - Header with context title and close (`✕`) button.
+  - Touch-friendly 48px action items with clear labels, disabled reasons, shortcuts, and danger styling for destructive operations (delete/trash/remove).
+  - Explicit "Cancel" button at the bottom and safe-area inset padding.
+  - Full keyboard accessibility and focus trapping preserved.
+- Added automated unit test in `src/ContextMenu.test.tsx` verifying bottom-sheet markup and action rendering on mobile.
+
+**Verification:** Ran `npx vitest run src/ContextMenu.test.tsx` (2/2 passing). Verified type safety with `npm run lint` (`tsc --noEmit`). Verified compilation with `compile_applet`.
+
+**Limitations:** None.
+
+**Next:** Touch pinch-to-zoom and multi-touch ripple effects.
+
+## 2026-10-01 — Android & Mobile UI: Responsive bottom navigation, bottom sheets, PWA manifest and UPPELETE branding
+
+**Changes:**
+- Replaced desktop-fixed `min-width: 940px` with fluid responsive viewport and added Android/mobile touch optimizations (`-webkit-tap-highlight-color: transparent`, safe-area insets).
+- Re-architected editor layout for viewports <= 899px:
+  - Video preview stage occupies top section with responsive aspect ratios.
+  - Multi-track timeline sits in middle section with touch-scrollable toolbar and tracks.
+  - Left navigation rail transforms into an Android-style bottom navigation bar with icons for Media, Captions, Overlays, Titles, Effects, Color, and Layers.
+  - Tool and Inspector panels transform into slide-up Android Bottom Sheets / Modal Drawers with drag handles and close (`✕`) toggles.
+- Redesigned HomeScreen for Android / mobile screens:
+  - Added mobile header with brand mark and settings action.
+  - Fixed bottom navigation bar for Home, Templates, and Settings.
+  - Single-column card grid with touch-friendly project tiles.
+- Added Web App Manifest (`public/manifest.json`) and mobile/PWA meta tags in `index.html` for Android installability (standalone display, theme color, maskable icons).
+- Updated app title and branding to **UPPELETE** across `index.html`, topbar, splash screen, and HomeScreen.
+
+**Verification:** Ran `lint_applet` (`tsc --noEmit`) passing with 0 errors. Verified build with `compile_applet`. Verified HTTP 200 OK on `http://localhost:3000`.
+
+**Limitations:** Video scrubbing performance on mobile devices depends on browser hardware decoding of imported media formats.
+
+**Next:** Add touch gesture enhancements for multi-touch pinch-to-zoom on the timeline ruler.
+
+## 2026-10-01 — Web Migration: AI Studio dev runtime & browser bridge
+
+**Changes:** Configured the application for web runtime in AI Studio per the GitHub Import Migration skill.
+- Added `metadata.json` and synced `<title>`, meta description, and OpenGraph tags in `index.html`. Removed restrictive CSP header that prevented web preview asset loading and WebSocket HMR connections.
+- Updated `vite.config.ts` to bind server to `0.0.0.0:3000` and updated `npm run dev` script to `vite --host 0.0.0.0 --port 3000`.
+- Added `"lint": "tsc --noEmit"` to `package.json` for validation.
+- Created `src/web/browserBridge.ts` providing an in-browser implementation of `window.captionStudio`: HTML5 file pickers for video/audio/image/subtitles, object URL streaming, client-side metadata inspection, sampled SHA-256 fingerprinting, web audio waveform extraction, project persistence with `localStorage`, and SRT export downloading.
+
+**Verification:** Ran `lint_applet` (`tsc --noEmit`) passing with 0 errors. Verified build with `compile_applet`. Verified HTTP 200 OK on `http://localhost:3000`.
+
+**Limitations:** Native Electron desktop features (local Whisper CLI binaries, native DaVinci Resolve script installer, NVENC GPU exporter) are desktop-only; web mode supports SRT/project imports, timeline editing, caption styling, audio waveforms, and SRT export.
+
+**Next:** Enable Gemini API key integration for cloud transcription and auto-alignment in web mode.
+
 ## 2026-09-28 — Fix: Resolve Text+ size on portrait timelines (width-relative `Size`)
 
 **Changes:** After the layout fix below, a portrait sync still drew 62 px captions at roughly a third of their

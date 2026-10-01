@@ -2,15 +2,22 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#090b10" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="color-scheme" content="dark" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' media: blob:; img-src 'self' data: blob: media:; connect-src 'self' ws: http://localhost:* media:" />
     <link rel="icon" type="image/png" href="./favicon.png" />
-    <title>KathaCut</title>
+    <link rel="manifest" href="./manifest.json" />
+    <title>UPPELETE - Video Caption Studio</title>
+    <meta name="description" content="Local-first subtitle editor and video caption studio for Malayalam and English creator videos." />
+    <meta property="og:title" content="UPPELETE - Video Caption Studio" />
+    <meta property="og:description" content="Local-first subtitle editor and video caption studio for Malayalam and English creator videos." />
   </head>
   <body>
-    <div id="splash" role="status" aria-label="Loading KathaCut" style="position:fixed;inset:0;background:#090b10">
-      <div class="splash-inner"><img src="/src/assets/brand/logo-dark.png" alt="KathaCut" /><p class="splash-tagline">Your local AI video toolkit.</p><div class="splash-bar"></div></div>
+    <div id="splash" role="status" aria-label="Loading UPPELETE" style="position:fixed;inset:0;background:#090b10">
+      <div class="splash-inner"><img src="/src/assets/brand/logo-dark.png" alt="UPPELETE" /><p class="splash-tagline">Your AI video toolkit on mobile & desktop.</p><div class="splash-bar"></div></div>
     </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>

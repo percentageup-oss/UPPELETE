@@ -1,0 +1,24 @@
+{
+  "name": "UPPELETE - Video Caption Studio",
+  "short_name": "UPPELETE",
+  "description": "Local-first subtitle editor and video caption studio for Malayalam and English creator videos.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#090b10",
+  "theme_color": "#090b10",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "./favicon.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./favicon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

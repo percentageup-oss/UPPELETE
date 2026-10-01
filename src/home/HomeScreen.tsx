@@ -78,8 +78,17 @@ export function HomeScreen({ onCreate, onOpenFile, onOpenRecent, onSettings, onM
   }
 
   return <div className="home">
+    <header className="home-mobile-header">
+      <div className="home-brand">
+        <img src={brandIcon} alt="" aria-hidden="true" draggable={false} />
+        <strong>UPPELETE</strong>
+      </div>
+      <button type="button" className="icon-button" onClick={onSettings} aria-label="Settings">
+        <SettingsIcon />
+      </button>
+    </header>
     <nav className="home-sidebar" aria-label="Home">
-      <div className="home-brand"><img src={brandIcon} alt="" aria-hidden="true" draggable={false} /><strong>Katha<span>Cut</span></strong></div>
+      <div className="home-brand"><img src={brandIcon} alt="" aria-hidden="true" draggable={false} /><strong>UPPELETE</strong></div>
       <div role="tablist" aria-orientation="vertical" aria-label="Home sections" onKeyDown={(event) => {
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
         event.preventDefault()

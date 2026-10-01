@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from 'react'
+import type { CSSProperties, DragEvent as ReactDragEvent, KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, TouchEvent as ReactTouchEvent } from 'react'
 import type { CaptionWord, Cue } from './core/model'
 import type { BlurRegion, CaptionTrack, Clip, EffectRegion, Group, Marker, ProjectAsset, Shape, TextOverlay, Track, ZoomRegion } from './core/edit'
 import { anchoredScrollLeft, dragCueBy, pixelToTime, snapDelta, timeToPixel, type CueDragMode } from './core/timeline'
@@ -680,6 +680,33 @@ export function Timeline(props: TimelineProps) {
     props.onContextMenu({ kind: 'empty', trackId, atUs, captionLane: target.closest('[data-caption-track-id]') !== null }, clientX, clientY)
   }
   const onContentContextMenu = (event: ReactMouseEvent<HTMLDivElement>) => openContextMenu(event, event.clientX, event.clientY)
+  const longPressTimerRef = useRef<number | null>(null)
+  const onContentTouchStart = (event: ReactTouchEvent<HTMLDivElement>) => {
+    if (event.touches.length !== 1) return
+    const touch = event.touches[0]
+    const clientX = touch.clientX
+    const clientY = touch.clientY
+    const target = event.target as HTMLElement
+    longPressTimerRef.current = window.setTimeout(() => {
+      openContextMenu({
+        preventDefault: () => {},
+        target,
+        altKey: false,
+      } as unknown as ReactMouseEvent<HTMLElement>, clientX, clientY)
+    }, 450)
+  }
+  const onContentTouchMove = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
+  const onContentTouchEnd = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
+    }
+  }
   const onContentKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
     const box = (event.target as HTMLElement).getBoundingClientRect()
@@ -794,6 +821,7 @@ export function Timeline(props: TimelineProps) {
       <div className="timeline-viewport" ref={viewportRef} onScroll={(event) => { const left = event.currentTarget.scrollLeft; setViewport((state) => state.scrollLeft === left ? state : { ...state, scrollLeft: left }) }}>
         <div className="timeline-content" ref={contentRef} style={{ ...gridStyle, width: `${zoom * 100}%` }}
           onContextMenu={onContentContextMenu} onKeyDown={onContentKeyDown}
+          onTouchStart={onContentTouchStart} onTouchMove={onContentTouchMove} onTouchEnd={onContentTouchEnd} onTouchCancel={onContentTouchEnd}
           onDragOver={onContentDragOver} onDragLeave={() => setDropIndicator(null)} onDrop={onContentDrop}>
           {rows.map((row, rowIndex) => {
             if (row.kind === 'ruler') return <TimelineRuler key="ruler" ticks={ticks} durationUs={durationUs} onPointerDown={beginScrub} onPointerMove={scrub} onPointerUp={endScrub}

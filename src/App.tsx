@@ -61,6 +61,8 @@ import { applyTranscription, rebuildableRun, rebuildOriginalCues } from './core/
 import { translationTargetLabel } from './core/translationLanguages'
 import { Timeline, type TimelineMenuTarget } from './Timeline'
 import { ContextMenu } from './ContextMenu'
+import { useEdgeDragDrawers } from './mobile/useEdgeDragDrawers'
+import { MobileDrawerControls } from './mobile/MobileDrawerControls'
 import type { MediaCandidate } from '../electron/projectMedia'
 import type { MediaMetadata, ProjectMedia } from './core/media'
 import { assetUsers, bindUnboundItems, clipCountByAsset, hasTrimmedClips, primaryVideoAsset, videoAssets } from './core/projectClips'
@@ -312,6 +314,10 @@ export default function App() {
   // The left rail's active panel. `initial` (module scope) never has media, so 'media' is always
   // the correct default at first mount, matching a fresh project with nothing to caption yet.
   const [railTab, setRailTab] = useState<RailTab>('media')
+  const drawers = useEdgeDragDrawers()
+  const stageLongPressRef = useRef<number | null>(null)
+  const [mobilePanelOpen, setMobilePanelOpen] = useState(true)
+  const [mobileInspectorOpen, setMobileInspectorOpen] = useState(false)
   const [pendingSrt, setPendingSrt] = useState<{ name: string; parsed: ReturnType<typeof parseSrt> } | null>(null)
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null)
   const [silenceDialogOpen, setSilenceDialogOpen] = useState(false)
@@ -2475,7 +2481,7 @@ export default function App() {
   return <main className="app-shell">
     <header className="topbar">
       <div className="topbar-left"><button className="icon-button" aria-label="Home" title="Home: all projects" onClick={() => void goHome()}><HomeIcon width={16} height={16} /></button>
-      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="KathaCut — Your local AI video toolkit." aria-label="KathaCut">Katha<span>Cut</span></strong><small title={project.title}>{project.title}</small></div></div></div>
+      <div className="brand"><img className="brand-mark" src={brandIcon} alt="" aria-hidden="true" draggable={false} /><div><strong className="wordmark" title="UPPELETE — Your AI video toolkit." aria-label="UPPELETE">UPPELETE</strong><small title={project.title}>{project.title}</small></div></div></div>
       <div className="toolbar toolbar-workflow" role="group" aria-label="Captions">
         {pickedVideo && <AlignmentControls fingerprint={pickedVideo.fingerprint} mediaReady={pickedReady}
           cues={project.cues.filter((cue) => cue.mediaAssetId === pickedVideo.id || !cue.mediaAssetId)} keyConfigured={Boolean(geminiKey?.configured)}
@@ -2529,8 +2535,26 @@ export default function App() {
       onDetect={detectSilence} onCancelDetect={cancelSilenceDetection} onApply={applySilenceRemoval} hasExistingCuts={hasTrimmedClips(project)} />
 
     <section className="workspace">
-      <LeftRail active={railTab} onChange={setRailTab} onSettings={() => setSettingsTab('models')} />
-      <aside className="panel side-panel" aria-label={railTab === 'media' ? 'Media' : railTab === 'captions' ? 'Captions' : railTab === 'overlays' ? 'Overlays' : railTab === 'effects' ? 'Effects' : railTab === 'color' ? 'Color' : railTab === 'layers' ? 'Layers' : 'Titles'}>
+      {/* Left Off-Screen Drawer (Tools & Panels) */}
+      <aside
+        className={`mobile-drawer mobile-drawer-left ${drawers.activeDrawer === 'left' ? 'open' : ''}`}
+        style={drawers.getDrawerStyle('left')}
+        aria-label="Tools Drawer"
+      >
+        <div
+          className="drawer-header"
+          onPointerDown={(e) => drawers.handleDrawerPointerDown('left', e)}
+          style={{ touchAction: 'none' }}
+        >
+          <div className="drawer-handle-bar"><div className="drawer-drag-pill" /></div>
+          <div className="drawer-title-row">
+            <span className="drawer-title">Tools & Panels</span>
+            <button type="button" className="drawer-close-btn" aria-label="Close Tools Drawer" onClick={drawers.closeDrawer}>✕</button>
+          </div>
+        </div>
+        <div className="drawer-content drawer-content-left">
+          <LeftRail active={railTab} onChange={(tab) => { setRailTab(tab); drawers.openDrawer('left') }} onSettings={() => setSettingsTab('models')} />
+          <aside className="panel side-panel" aria-label={railTab === 'media' ? 'Media' : railTab === 'captions' ? 'Captions' : railTab === 'overlays' ? 'Overlays' : railTab === 'effects' ? 'Effects' : railTab === 'color' ? 'Color' : railTab === 'layers' ? 'Layers' : 'Titles'}>
         {railTab === 'media' && <MediaBin assets={project.assets} assetUrls={media.assetUrls} assetIssues={media.issues} useCountByAsset={useCountByAsset}
           videoReady={(asset) => media.urlOf(asset) !== null}
           onImportFiles={() => void importAssetFiles()} onDropFiles={(files) => inspectAndAdd(files)}
@@ -2584,10 +2608,33 @@ export default function App() {
           onFocus={focusLayer} onAddMask={addMask} onEditOnStage={(row) => setMaskEdit({ key: row.key, drawing: false })} onStopEditing={() => setMaskEdit(null)}
           onDraft={draftMask} onCommit={commitMask} onLookDraft={draftLook} onLookCommit={commitLook} onBlendChange={changeBlend} onRemove={(row) => { setMaskEdit(null); commitMask(row, null) }} onReset={resetMask}
           onJumpToSelection={() => { const at = selection ? itemStartUs(project, selection) : null; if (at !== null) playback.seek(at) }} />}
+          </aside>
+        </div>
       </aside>
 
       <section className="stage-panel" aria-label="Video preview and transport">
         <div ref={videoStageRef} className={`video-stage ${project.clips.length || project.cues.length ? '' : 'empty-stage'}`}
+          onTouchStart={(event) => {
+            if (event.touches.length !== 1) return
+            const touch = event.touches[0]
+            const clientX = touch.clientX
+            const clientY = touch.clientY
+            stageLongPressRef.current = window.setTimeout(() => {
+              setContextMenu({ x: clientX, y: clientY, target: { kind: 'empty', trackId: null, atUs: currentUs, captionLane: false } })
+            }, 450)
+          }}
+          onTouchMove={() => {
+            if (stageLongPressRef.current) {
+              clearTimeout(stageLongPressRef.current)
+              stageLongPressRef.current = null
+            }
+          }}
+          onTouchEnd={() => {
+            if (stageLongPressRef.current) {
+              clearTimeout(stageLongPressRef.current)
+              stageLongPressRef.current = null
+            }
+          }}
           onDragOver={(event) => { if (dropContent(event.dataTransfer)?.kind === 'files') { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }}
           onDrop={(event) => {
             const content = dropContent(event.dataTransfer)
@@ -2673,10 +2720,47 @@ export default function App() {
         </div>
         {/* The transport is the only one: with stacked tracks no single <video> owns playback. */}
         <div className="transport" role="group" aria-label="Playback transport"><span aria-label={`Current time ${formatClock(currentUs)}`}>{formatClock(currentUs)}</span><button onClick={togglePlayback} disabled={!project.clips.length && !project.cues.length} aria-label={playback.playing ? 'Pause' : 'Play'} title="Play or pause (Space)">{playback.playing ? 'Pause' : 'Play'}</button><button onClick={() => seekBy(-US_PER_SECOND)} aria-label="Seek backward one second" title="Seek backward (Left Arrow)">−1 s</button><RangeInput ariaLabel="Playhead position" min={0} max={durationUs} value={Math.min(currentUs, durationUs)} onChange={seekTo} /><button onClick={() => seekBy(US_PER_SECOND)} aria-label="Seek forward one second" title="Seek forward (Right Arrow)">+1 s</button><span aria-label={`Duration ${formatClock(durationUs)}`}>{formatClock(durationUs)}</span>{previewChipLabel && <MenuButton label={previewChipLabel} entries={previewEntries} className="preview-quality-chip" title="Preview quality and sequence settings" />}</div>
+
+        <MobileDrawerControls
+          drawers={drawers}
+          playing={playback.playing}
+          canPlay={Boolean(project.clips.length || project.cues.length)}
+          onTogglePlay={togglePlayback}
+          onSeekBy={seekBy}
+          hasSelection={Boolean(selection || selected)}
+          onSplit={canSplitClips ? splitClips : selected && canSplitSelected ? splitSelectedCue : undefined}
+          onDelete={selectedClip ? () => deleteClip(false) : selected ? deleteSelectedCue : undefined}
+          onAddCue={canAddCue ? addCue : undefined}
+          canSplit={Boolean(canSplitClips || (selected && canSplitSelected))}
+          canDelete={Boolean(selectedClip || selected)}
+          canAddCue={canAddCue}
+          hasPastUndo={history.past.length > 0}
+          hasFutureRedo={history.future.length > 0}
+          onUndo={undo}
+          onRedo={redo}
+        />
       </section>
 
-      <aside className="panel inspector-panel" aria-labelledby="inspector-heading">
-        <h2 id="inspector-heading" className="sr-only">Caption inspector</h2>
+      {/* Right Off-Screen Drawer (Properties & Inspector) */}
+      <aside
+        className={`mobile-drawer mobile-drawer-right ${drawers.activeDrawer === 'right' ? 'open' : ''}`}
+        style={drawers.getDrawerStyle('right')}
+        aria-label="Inspector Drawer"
+      >
+        <div
+          className="drawer-header"
+          onPointerDown={(e) => drawers.handleDrawerPointerDown('right', e)}
+          style={{ touchAction: 'none' }}
+        >
+          <div className="drawer-handle-bar"><div className="drawer-drag-pill" /></div>
+          <div className="drawer-title-row">
+            <span className="drawer-title">Properties & Inspector</span>
+            <button type="button" className="drawer-close-btn" aria-label="Close Inspector Drawer" onClick={drawers.closeDrawer}>✕</button>
+          </div>
+        </div>
+        <div className="drawer-content drawer-content-right">
+          <aside className="panel inspector-panel" aria-labelledby="inspector-heading">
+            <h2 id="inspector-heading" className="sr-only">Caption inspector</h2>
         <InspectorTabs active={inspectorTab} onChange={setInspectorTab}
           edit={<>
             {selectedClip ? <ClipInspector
@@ -2798,38 +2882,60 @@ export default function App() {
             onClick={exportVideoBlocker === null ? () => setExportDialogOpen(true) : () => void exportSrt()}>Export</button>}
         </div>
       </aside>
+        </div>
+      </aside>
     </section>
 
-    <Timeline cues={timelineCues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} shapes={project.shapes} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
-      selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
-      warningCueIds={warningCueIds} waveforms={waveforms}
-      waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
-      onCancelWaveform={waveformsLoading > 0 ? cancelWaveforms : undefined}
-      onSeek={seekTo} onDragPreview={previewCueDrag} onDragCommit={commitCueDrag}
-      editMode={editMode} onEditMode={setEditMode}
-      onSelectClip={(clipId, options) => setSelection({ kind: 'clip', id: clipId, ...(options?.unlinked ? { unlinked: true } : {}) })}
-      onClipMove={moveClip} onClipClone={(clip) => placeCopy(clip, clip.timelineStartUs, clip.trackId)} onClipTrim={trimClip}
-      onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomClone={(region) => { runCommand({ type: 'zoom-region-add', region }) }} onZoomTrim={trimZoomRegion}
-      onSelectBlur={(blurId) => setSelection({ kind: 'blur', id: blurId })} onBlurMove={moveBlurRegion} onBlurTrim={trimBlurRegion}
-      onSelectEffect={(effectId) => setSelection({ kind: 'effect', id: effectId })} onEffectMove={moveEffect} onEffectTrim={trimEffect}
-      onSelectText={(textId) => selectGraphic('text', textId)}
-      onSelectShape={(shapeId) => selectGraphic('shape', shapeId)}
-      groups={project.groups} pendingGroupIds={pendingItems.map((entry) => entry.id)}
-      onShapeMove={(shapeId, startUs) => moveGraphic('shape', shapeId, startUs)}
-      onShapeTrim={(shapeId, edge, deltaUs) => runCommand({ type: 'shape-trim', shapeId, edge, deltaUs })}
-      onAddText={() => addTextAtPlayhead()}
-      onContextMenu={(target, x, y) => setContextMenu({ x, y, target })}
-      onTextMove={(textId, startUs) => moveGraphic('text', textId, startUs)}
-      onTextTrim={(textId, edge, deltaUs) => runCommand({ type: 'text-trim', textId, edge, deltaUs })}
-      onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
-      trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
-      display={timelineDisplay} onDisplay={setTimelineDisplay} selectedWordId={selectedWord?.id ?? null} onSelectWord={onSelectWord}
-      actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1) }}
-      clipTools={{ markIn, markOut, clearRange, hasRange: activeRange !== null }}
-      edit={editTools}
-      canAdd={canAddCue} canMerge={canMergeSelected}
-      onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} onDropPreset={(payload, sequenceUs) => addEffectPreset(payload.preset, sequenceUs)} onDropBackground={(payload, sequenceUs, trackId) => addBackground(payload, sequenceUs, trackId)}
-      onDropColor={(payload, sequenceUs, trackId) => addAdjustment(payload.grade, sequenceUs, trackId)} thumbnailQueue={thumbnailQueue} />
+    {/* Bottom Off-Screen Drawer (Timeline & Tracks) */}
+    <aside
+      className={`mobile-drawer mobile-drawer-bottom ${drawers.activeDrawer === 'bottom' ? 'open' : ''}`}
+      style={drawers.getDrawerStyle('bottom')}
+      aria-label="Timeline Drawer"
+    >
+      <div
+        className="drawer-header"
+        onPointerDown={(e) => drawers.handleDrawerPointerDown('bottom', e)}
+        style={{ touchAction: 'none' }}
+      >
+        <div className="drawer-handle-bar"><div className="drawer-drag-pill" /></div>
+        <div className="drawer-title-row">
+          <span className="drawer-title">Timeline & Tracks</span>
+          <button type="button" className="drawer-close-btn" aria-label="Close Timeline Drawer" onClick={drawers.closeDrawer}>✕</button>
+        </div>
+      </div>
+      <div className="drawer-content drawer-content-bottom">
+        <Timeline cues={timelineCues} tracks={project.tracks} captionTracks={project.captionTracks} clips={project.clips} zoomRegions={project.zoomRegions} blurRegions={project.blurRegions} effects={project.effects} textOverlays={project.textOverlays} shapes={project.shapes} assets={project.assets} currentUs={currentUs} range={activeRange} durationUs={timelineViewSpanUs(Math.max(durationUs, 1))} programUs={Math.max(durationUs, 1)}
+          selection={selection} markers={project.markers} onSelectMarker={(markerId) => setSelection({ kind: 'marker', id: markerId })}
+          warningCueIds={warningCueIds} waveforms={waveforms}
+          waveformStatus={waveformsLoading > 0 ? 'Extracting waveforms…' : null}
+          onCancelWaveform={waveformsLoading > 0 ? cancelWaveforms : undefined}
+          onSeek={seekTo} onDragPreview={previewCueDrag} onDragCommit={commitCueDrag}
+          editMode={editMode} onEditMode={setEditMode}
+          onSelectClip={(clipId, options) => setSelection({ kind: 'clip', id: clipId, ...(options?.unlinked ? { unlinked: true } : {}) })}
+          onClipMove={moveClip} onClipClone={(clip) => placeCopy(clip, clip.timelineStartUs, clip.trackId)} onClipTrim={trimClip}
+          onSelectZoom={(zoomId) => setSelection({ kind: 'zoomRegion', id: zoomId })} onZoomMove={moveZoomRegion} onZoomClone={(region) => { runCommand({ type: 'zoom-region-add', region }) }} onZoomTrim={trimZoomRegion}
+          onSelectBlur={(blurId) => setSelection({ kind: 'blur', id: blurId })} onBlurMove={moveBlurRegion} onBlurTrim={trimBlurRegion}
+          onSelectEffect={(effectId) => setSelection({ kind: 'effect', id: effectId })} onEffectMove={moveEffect} onEffectTrim={trimEffect}
+          onSelectText={(textId) => selectGraphic('text', textId)}
+          onSelectShape={(shapeId) => selectGraphic('shape', shapeId)}
+          groups={project.groups} pendingGroupIds={pendingItems.map((entry) => entry.id)}
+          onShapeMove={(shapeId, startUs) => moveGraphic('shape', shapeId, startUs)}
+          onShapeTrim={(shapeId, edge, deltaUs) => runCommand({ type: 'shape-trim', shapeId, edge, deltaUs })}
+          onAddText={() => addTextAtPlayhead()}
+          onContextMenu={(target, x, y) => setContextMenu({ x, y, target })}
+          onTextMove={(textId, startUs) => moveGraphic('text', textId, startUs)}
+          onTextTrim={(textId, edge, deltaUs) => runCommand({ type: 'text-trim', textId, edge, deltaUs })}
+          onCloseGap={(trackId, atUs) => runCommand({ type: 'gap-close', trackId, atUs })}
+          trackActions={trackActions} captionTrackActions={captionTrackActions} assetDurationUs={(assetId) => assetById.get(assetId)?.metadata?.durationUs ?? null}
+          display={timelineDisplay} onDisplay={setTimelineDisplay} selectedWordId={selectedWord?.id ?? null} onSelectWord={onSelectWord}
+          actions={{ addLine: addCue, addWord, merge: mergeSelectedCue, previous: () => selectAdjacentCue(-1), next: () => selectAdjacentCue(1) }}
+          clipTools={{ markIn, markOut, clearRange, hasRange: activeRange !== null }}
+          edit={editTools}
+          canAdd={canAddCue} canMerge={canMergeSelected}
+          onDropAsset={onTimelineDropAsset} onDropFiles={onTimelineDropFiles} onDropPreset={(payload, sequenceUs) => addEffectPreset(payload.preset, sequenceUs)} onDropBackground={(payload, sequenceUs, trackId) => addBackground(payload, sequenceUs, trackId)}
+          onDropColor={(payload, sequenceUs, trackId) => addAdjustment(payload.grade, sequenceUs, trackId)} thumbnailQueue={thumbnailQueue} />
+      </div>
+    </aside>
     {pendingAssetRelink && <RelinkReview title={pendingAssetRelink.asset.kind === 'video' ? 'Replacement video does not match' : 'Replacement file does not match'} candidate={pendingAssetRelink.candidate}
       onUse={() => { useAssetCandidate(pendingAssetRelink.asset, pendingAssetRelink.candidate); setPendingAssetRelink(null); setNotice({ tone: 'warning', text: `Using ${pendingAssetRelink.candidate.media.name} by your choice; stored identity was replaced with the selected media.` }) }}
       onChooseAgain={() => { const assetId = pendingAssetRelink.asset.id; setPendingAssetRelink(null); void relinkAsset(assetId) }}

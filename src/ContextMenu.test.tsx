@@ -14,3 +14,17 @@ test('renders actions, separators, shortcuts and disabled reasons at the pointer
   expect(html).toContain('role="separator"')
   expect(html).toMatch(/aria-disabled="true"[^>]*title="Move the playhead onto this clip"/)
 })
+
+test('renders bottom-sheet context menu for mobile devices', () => {
+  const html = renderToStaticMarkup(<ContextMenu x={0} y={0} mobile={true} onClose={() => {}} label="Clip actions" entries={[
+    { id: 'a', label: 'Unlink (2 clips)', onSelect: () => {}, shortcut: '⌘⌥L' },
+    { id: 's', separator: true },
+    { id: 'b', label: 'Delete clip', onSelect: () => {} },
+  ]} />)
+  expect(html).toContain('context-menu-bottom-sheet')
+  expect(html).toContain('Clip actions')
+  expect(html).toContain('bottom-sheet-cancel-btn')
+  expect(html).toContain('Cancel')
+  expect(html).toContain('danger')
+})
+
