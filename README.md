@@ -15,7 +15,7 @@ UPPELETE turns a video into accurately timed, styled, animated captions and lets
 The core workflow is **local and offline** once you have downloaded a speech model. There is no account, no telemetry and no subscription, and your media is never uploaded unless you choose a cloud provider yourself.
 
 <p align="center">
-  <img src="docs/media/screen-3.png" alt="The KathaCut editor: vertical video preview with styled captions, caption inspector with word timing, and a multi-track timeline with caption, text, zoom and vignette lanes" width="100%">
+  <img src="docs/media/screen-3.png" alt="The UPELETE editor: vertical video preview with styled captions, caption inspector with word timing, and a multi-track timeline with caption, text, zoom and vignette lanes" width="100%">
 </p>
 
 ## Features
@@ -72,20 +72,7 @@ npm run dist:mac      # build the macOS installer
 
 The dev scripts save tool paths to the git-ignored `caption-studio.local.json`. The app never downloads engines or searches PATH by itself. See [media worker](docs/MEDIA_WORKER.md) and [dependencies](docs/DEPENDENCIES.md). If scripts are blocked on Windows, run `powershell -ExecutionPolicy Bypass -File .\dev.ps1`.
 
-## Documentation
 
-| Topic | Doc |
-| --- | --- |
-| Product requirements | [PRODUCT.md](docs/PRODUCT.md) |
-| Architecture | [ARCHITECTURE.md](docs/ARCHITECTURE.md) |
-| Roadmap and current status | [ROADMAP.md](docs/ROADMAP.md), [STATUS.md](docs/STATUS.md) |
-| Timeline editing | [EDITING.md](docs/EDITING.md) |
-| Transcription and models | [TRANSCRIPTION.md](docs/TRANSCRIPTION.md), [MODELS.md](docs/MODELS.md) |
-| Caption rendering | [CAPTION_RENDERER.md](docs/CAPTION_RENDERER.md) |
-| Media worker and FFmpeg | [MEDIA_WORKER.md](docs/MEDIA_WORKER.md) |
-| Local agent control | [MCP.md](docs/MCP.md) |
-| Licenses of dependencies | [DEPENDENCIES.md](docs/DEPENDENCIES.md), [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt) |
-| Design decisions | [docs/decisions/](docs/decisions/) |
 
 ## Project status
 
