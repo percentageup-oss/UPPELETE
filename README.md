@@ -1,6 +1,6 @@
 <div align="center">
 
-# KathaCut
+# UPPELETE
 
 **Your local AI video toolkit.** Automatic captions, animated subtitles and a real timeline, built for Malayalam and English creator videos. It runs on your computer.
 
@@ -12,9 +12,9 @@
 
 </div>
 
-## What is KathaCut?
+## What is UPPELETE?
 
-KathaCut turns a video into accurately timed, styled, animated captions and lets you polish the whole thing in one editor. It was built for Malayalam speech mixed with English technical terms, so Malayalam text is shaped correctly and never split inside a character cluster. Vertical 9:16 and landscape videos are both supported.
+UPPELETE turns a video into accurately timed, styled, animated captions and lets you polish the whole thing in one editor. It was built for Malayalam speech mixed with English technical terms, so Malayalam text is shaped correctly and never split inside a character cluster. Vertical 9:16 and landscape videos are both supported.
 
 The core workflow is **local and offline** once you have downloaded a speech model. There is no account, no telemetry and no subscription, and your media is never uploaded unless you choose a cloud provider yourself.
 
