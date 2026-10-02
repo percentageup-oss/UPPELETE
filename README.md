@@ -44,7 +44,7 @@ The core workflow is **local and offline** once you have downloaded a speech mod
 - An off-by-default, loopback-only [MCP server](docs/MCP.md) lets a local Claude client inspect and edit the open project through the same undoable commands as the UI.
 
 <p align="center">
-  <img src="docs/media/screen-2.png" alt="The KathaCut home screen with a Create project banner and recent projects" width="70%">
+  <img src="docs/media/screen-2.png" alt="The UPPELETE  home screen with a Create project banner and recent projects" width="70%">
 </p>
 
 ## Privacy
@@ -93,14 +93,12 @@ KathaCut is **pre-1.0** and under active development. It is developed on macOS (
 
 ## ☕ Support the project
 
-<p align="center">
-  <b>KathaCut is free, open source, and built by one person.</b><br>
-  No ads, no accounts, no paywalled features.<br><br>
+<pre align="center">
+  <b>UPPELETE is free, open source, and built by one person.</b><br>
+  ,no accounts, no paywalled features.<br><br>
   If it saved you an hour of caption fixing, a coffee helps me keep building it: better Malayalam support, more effects, more platforms.<br><br>
-  <a href="https://buymeacoffee.com/sadiqsulaimn">
-    <img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=sadiqsulaimn&button_colour=FFDD00&font_colour=000000&font_family=Bree&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="50">
-  </a>
-</p>
+  
+</pre>
 
 Can't chip in? Starring the repo, sharing it with a creator friend, testing it on your hardware and reporting Malayalam rendering problems help just as much. 💜
 
@@ -108,6 +106,4 @@ Can't chip in? Starring the repo, sharing it with a creator friend, testing it o
 
 Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
-## License
 
-KathaCut is licensed under the [GNU General Public License v3.0 or later](LICENSE). The name and logo are covered separately by [TRADEMARKS.md](TRADEMARKS.md). Bundled third-party components and their licenses are listed in [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
