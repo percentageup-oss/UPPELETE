@@ -94,7 +94,7 @@ KathaCut is **pre-1.0** and under active development. It is developed on macOS (
 ## ☕ Support the project
 
 <pre align="center">
-  <b>UPPELETE is free, open source, and built by one person.</b><br>
+  <b>UPPELETE is free, open source.</b><br>
   ,no accounts, no paywalled features.<br><br>
   If it saved you an hour of caption fixing, a coffee helps me keep building it: better Malayalam support, more effects, more platforms.<br><br>
   
@@ -102,8 +102,6 @@ KathaCut is **pre-1.0** and under active development. It is developed on macOS (
 
 Can't chip in? Starring the repo, sharing it with a creator friend, testing it on your hardware and reporting Malayalam rendering problems help just as much. 💜
 
-## Contributing
 
-Contributions are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 
