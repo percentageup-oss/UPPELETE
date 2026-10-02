@@ -4,11 +4,7 @@
 
 **Your local AI video toolkit.** Automatic captions, animated subtitles and a real timeline, built for Malayalam and English creator videos. It runs on your computer.
 
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Platforms](https://img.shields.io/badge/platforms-Windows%20x64%20%C2%B7%20macOS%20Apple%20Silicon-lightgrey)
-![Status](https://img.shields.io/badge/status-pre--1.0-orange)
 
-<a href="https://buymeacoffee.com/sadiqsulaimn"><img src="https://img.buymeacoffee.com/button-api/?text=Buy%20me%20a%20coffee&emoji=%E2%98%95&slug=sadiqsulaimn&button_colour=FFDD00&font_colour=000000&font_family=Bree&outline_colour=000000&coffee_colour=ffffff" alt="Buy me a coffee" height="44"></a>
 
 </div>
 
